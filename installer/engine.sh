@@ -46,15 +46,23 @@ cmd_update() {
 }
 
 cmd_install() {
+  # Always pass an explicit ControlNet flag: the engine runs headless (GUI),
+  # so the installer must never fall through to its interactive prompt.
+  local cn_flag="--skip-controlnet"
+  [ "$WITH_CONTROLNET" = 1 ] && cn_flag="--with-controlnet"
   RS_FROM_ENGINE=1 RACCOON_ROOT="$RACCOON_ROOT" LOG_FILE="$LOG_FILE" DRY_RUN="$DRY_RUN" \
-    bash "$RACCOON_ROOT/install-linux.sh" ${DRY_RUN:+--dry-run} \
+    bash "$RACCOON_ROOT/install-linux.sh" ${DRY_RUN:+--dry-run} "$cn_flag" \
     || { emit_fail install "see $LOG_FILE"; return 1; }
   emit_done install
 }
 
 main() {
   local verb="${1:-}"; shift || true
-  for a in "$@"; do [ "$a" = "--dry-run" ] && DRY_RUN=1; done
+  WITH_CONTROLNET=0
+  for a in "$@"; do case "$a" in
+    --dry-run)         DRY_RUN=1 ;;
+    --with-controlnet) WITH_CONTROLNET=1 ;;
+  esac; done
   case "$verb" in
     status)  cmd_status ;;
     start)   cmd_start ;;

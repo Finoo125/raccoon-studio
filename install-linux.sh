@@ -36,7 +36,12 @@ set -euo pipefail
 RS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${RACCOON_ROOT:=$RS_DIR}"
 source "$RS_DIR/installer/lib.sh"
-for a in "$@"; do [ "$a" = "--dry-run" ] && DRY_RUN=1; done
+WITH_CONTROLNET=0; SKIP_CONTROLNET=0
+for a in "$@"; do case "$a" in
+  --dry-run)         DRY_RUN=1 ;;
+  --with-controlnet) WITH_CONTROLNET=1 ;;
+  --skip-controlnet) SKIP_CONTROLNET=1 ;;
+esac; done
 RS_TOTAL=13; RS_STEP=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -378,6 +383,23 @@ Keywords=AI;image;generation;ComfyUI;launcher;"
 # ── Main ───────────────────────────────────────────────────────────────────────
 main() {
   print_banner
+
+  # Optional ControlNet / IP-Adapter models (~9 GB). Explicit flags win (the
+  # engine always passes one, so headless runs never prompt); an interactive
+  # console run asks once, up front. Default is skip — the Models page can
+  # download them any time later.
+  INSTALL_CN_MODELS=0
+  if [ "$WITH_CONTROLNET" = 1 ]; then
+    INSTALL_CN_MODELS=1
+  elif [ "$SKIP_CONTROLNET" = 0 ] && [ -t 0 ]; then
+    printf "  Optional: ControlNet + IP-Adapter models (~9 GB download).\n"
+    printf "  Only the ControlNet / IP-Adapter features need them; everything else works without.\n"
+    printf "  You can also download them later from the Models page.\n"
+    printf "  Download them now? [y/N] "
+    read -r yn || yn=
+    [[ "${yn,,}" == "y" || "${yn,,}" == "yes" ]] && INSTALL_CN_MODELS=1
+    printf "\n"
+  fi
   collect_sysinfo
   detect_distro
   info "Distro: ${DISTRO_ID} ${DISTRO_VERSION} (family: ${DISTRO_FAMILY})"
@@ -661,6 +683,11 @@ main() {
   # comfyui_controlnet_aux — preprocessors (Canny, Depth, Pose, etc.) used by
   # the ControlNet graph helper (appendControlNet / appendImg2Img).
   install_node_pack "comfyui_controlnet_aux"  https://github.com/Fannovel16/comfyui_controlnet_aux.git
+  # ComfyUI_IPAdapter_plus — IPAdapterUnifiedLoader + apply nodes used by
+  # the IP-Adapter graph helper (appendIpAdapter). The node packs are small and
+  # always installed; only the multi-GB model downloads below are optional.
+  install_node_pack "ComfyUI_IPAdapter_plus"  https://github.com/cubiq/ComfyUI_IPAdapter_plus.git
+  if [ "$INSTALL_CN_MODELS" = 1 ]; then
   # comfyui_controlnet_aux fetches its preprocessor weights on FIRST use of each
   # node (OpenPose ~500 MB, DepthAnythingV2 ~1.3 GB). That first ControlNet run
   # would otherwise block on a large download and, until it finishes, emit an
@@ -687,9 +714,6 @@ main() {
         || { warn "$fname download failed — it will be fetched on first ControlNet use instead"; rm -f "$ddir/$fname"; }
     fi
   done
-  # ComfyUI_IPAdapter_plus — IPAdapterUnifiedLoader + apply nodes used by
-  # the IP-Adapter graph helper (appendIpAdapter).
-  install_node_pack "ComfyUI_IPAdapter_plus"  https://github.com/cubiq/ComfyUI_IPAdapter_plus.git
   # ControlNet Union SDXL ProMax — single model covers all 7 control types.
   # Filename must match UNION_MODEL in app/src/lib/workflows/controlnet.ts.
   local CN_DIR="$COMFYUI_DIR/models/controlnet"
@@ -733,6 +757,9 @@ main() {
       curl -fL --retry 3 -o "$MP_DIR/$ZFUN" \
         "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/$ZFUN" \
       || { warn "Z-Image Fun ControlNet download failed (grab it via the Models tab)"; rm -f "$MP_DIR/$ZFUN"; }
+  fi
+  else
+    info "Skipping ControlNet / IP-Adapter models (optional; download them any time from the Models page)."
   fi
   # SDXL fp16-fix VAE — decoded through by the SDXL/Pony/Illustrious workflows in
   # place of a checkpoint's baked VAE, which fixes washed-out / desaturated colors
