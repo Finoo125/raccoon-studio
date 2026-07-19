@@ -39,16 +39,3 @@ Locked add-on code still ships in every build — supporters get a signed key th
 1. Obtain your unlock key from Patreon (a single token string).
 2. Open Raccoon Studio and navigate to **Add-ons** in the top menu.
 3. Paste the key into the input field and click **Unlock**.
-
-Both add-ons (Photo Editing and Movie Maker) unlock at once if the key covers them. The entitlement is stored locally in `app/.entitlements.json`; removing that file re-locks the add-ons.
-
-### Revoking keys
-
-Keys are tied to a subscriber handle (`sub`). To revoke a key, add the subscriber's handle to the `REVOKED_SUBS` array in `app/src/lib/addons/public-key.ts` and ship an app update. All installs that update will reject that key on next verification.
-
-### Minting keys (creator only)
-
-Unlock keys are minted with a separate, private creator-only tool that is **not**
-part of this repository — so supporters who have the app cannot mint their own
-keys. This repo only ever **verifies** keys (against the public key embedded in
-`app/src/lib/addons/public-key.ts`).
