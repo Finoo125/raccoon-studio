@@ -185,8 +185,8 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#x2B07;" FontSize="22" Foreground="#3fc9dd" VerticalAlignment="Center" Margin="0,0,13,0"/>
             <StackPanel VerticalAlignment="Center">
-              <TextBlock Text="Install" FontSize="16" FontWeight="SemiBold" Foreground="#eaf0f2"/>
-              <TextBlock Text="Set up everything" FontSize="11" Foreground="#9aa6b4"/>
+              <TextBlock x:Name="InstallTitle" Text="Install" FontSize="16" FontWeight="SemiBold" Foreground="#eaf0f2"/>
+              <TextBlock x:Name="InstallSub" Text="Set up everything" FontSize="11" Foreground="#9aa6b4"/>
             </StackPanel>
           </StackPanel>
         </Button>
@@ -242,7 +242,7 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
 '@
 $win = [Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader $xaml))
 $ctl = @{}
-'Status','StatusDot','BtnInstall','BtnStart','BtnUpdate','BtnStop','Bar','Step','Log','TitleBar','BtnMin','BtnClose' |
+'Status','StatusDot','BtnInstall','InstallTitle','InstallSub','BtnStart','BtnUpdate','BtnStop','Bar','Step','Log','TitleBar','BtnMin','BtnClose' |
   ForEach-Object { $ctl[$_] = $win.FindName($_) }
 
 function Set-Status([string]$label, [string]$hex) {
@@ -258,7 +258,9 @@ function Refresh-State {
     'not-installed' { Set-Status 'Not installed yet' '#9aa6b4' }
     default         { Set-Status $s '#9aa6b4' }
   }
-  $ctl.BtnInstall.IsEnabled = ($s -eq 'not-installed')
+  $ctl.BtnInstall.IsEnabled = $true
+  if ($s -eq 'not-installed') { $ctl.InstallTitle.Text = 'Install';   $ctl.InstallSub.Text = 'Set up everything' }
+  else                        { $ctl.InstallTitle.Text = 'Reinstall'; $ctl.InstallSub.Text = 'Repair the setup' }
   $ctl.BtnStart.IsEnabled  = ($s -eq 'stopped')
   $ctl.BtnUpdate.IsEnabled = ($s -ne 'not-installed')
   $ctl.BtnStop.IsEnabled   = ($s -eq 'running')
