@@ -121,6 +121,7 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
       <!-- Header / drag region -->
@@ -212,8 +213,12 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
         </Button>
       </UniformGrid>
 
+      <!-- Optional big-model toggle, read when Install/Reinstall is clicked -->
+      <CheckBox x:Name="ChkModels" Grid.Row="4" Margin="2,14,0,0" Foreground="#9aa6b4" FontSize="12"
+                Content="Also download ControlNet + IP-Adapter models (~9 GB)"/>
+
       <!-- Progress -->
-      <StackPanel Grid.Row="4" Margin="0,22,0,0">
+      <StackPanel Grid.Row="5" Margin="0,22,0,0">
         <Grid>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
@@ -228,7 +233,7 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
       </StackPanel>
 
       <!-- Activity log -->
-      <Expander Grid.Row="5" Margin="0,16,0,0" Foreground="#8c98a6" FontSize="12">
+      <Expander Grid.Row="6" Margin="0,16,0,0" Foreground="#8c98a6" FontSize="12">
         <Expander.Header><TextBlock Text="Activity log" Foreground="#8c98a6" FontSize="12"/></Expander.Header>
         <Border CornerRadius="10" Background="#0c0e13" BorderBrush="#1d222b" BorderThickness="1" Margin="0,8,0,0">
           <TextBox x:Name="Log" Height="96" IsReadOnly="True" VerticalScrollBarVisibility="Auto"
@@ -242,7 +247,7 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
 '@
 $win = [Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader $xaml))
 $ctl = @{}
-'Status','StatusDot','BtnInstall','InstallTitle','InstallSub','BtnStart','BtnUpdate','BtnStop','Bar','Step','Log','TitleBar','BtnMin','BtnClose' |
+'Status','StatusDot','BtnInstall','InstallTitle','InstallSub','ChkModels','BtnStart','BtnUpdate','BtnStop','Bar','Step','Log','TitleBar','BtnMin','BtnClose' |
   ForEach-Object { $ctl[$_] = $win.FindName($_) }
 
 function Set-Status([string]$label, [string]$hex) {
@@ -299,7 +304,7 @@ $ctl.BtnMin.Add_Click({ $win.WindowState = 'Minimized' })
 $ctl.BtnClose.Add_Click({ $win.Close() })
 $win.Add_KeyDown({ if ($_.Key -eq 'Escape') { $win.Close() } })
 
-$ctl.BtnInstall.Add_Click({ Run-Verb 'install' })
+$ctl.BtnInstall.Add_Click({ Run-Verb $(if ($ctl.ChkModels.IsChecked) { 'install -WithControlNet' } else { 'install' }) })
 $ctl.BtnStart.Add_Click({ Run-Verb 'start' })
 $ctl.BtnUpdate.Add_Click({ Run-Verb 'update' })
 $ctl.BtnStop.Add_Click({ Run-Verb 'stop' })

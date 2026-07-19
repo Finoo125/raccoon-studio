@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-param([Parameter(Position=0)][string]$Verb='status', [switch]$DryRun)
+param([Parameter(Position=0)][string]$Verb='status', [switch]$DryRun, [switch]$WithControlNet)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
@@ -46,6 +46,9 @@ function Invoke-Update {
 }
 function Invoke-Install {
   $psArgs = @('-ExecutionPolicy','Bypass','-NoProfile','-File',(Join-Path $env:RACCOON_ROOT 'install-windows.ps1'))
+  # Always pass an explicit ControlNet flag: the engine runs headless (GUI/update),
+  # so the installer must never fall through to its interactive prompt.
+  $psArgs += $(if ($WithControlNet) { '-WithControlNet' } else { '-SkipControlNet' })
   if ($DryRun) { $psArgs += '-DryRun' }
   & powershell.exe @psArgs; if ($LASTEXITCODE -ne 0) { Emit-Fail 'install' "see $script:LogFile"; exit 1 }
   Emit-Done 'install'

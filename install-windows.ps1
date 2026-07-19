@@ -9,7 +9,9 @@
 param(
     [switch] $DryRun,
     [switch] $SkipCudaCheck,
-    [switch] $NoDesktopShortcut
+    [switch] $NoDesktopShortcut,
+    [switch] $WithControlNet,
+    [switch] $SkipControlNet
 )
 
 # NOTE: 'Continue', not 'Stop'. Under Windows PowerShell 5.1, $ErrorActionPreference='Stop'
@@ -425,6 +427,25 @@ print(json.dumps(r))
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Banner
 
+# ── Optional ControlNet / IP-Adapter models (~9 GB) ───────────────────────────
+# Explicit switches win; the GUI/engine always passes one, so headless runs never
+# prompt. An interactive console run asks once, up front. Default is skip — the
+# Models page can download them any time later.
+$InstallCnModels = $false
+if ($WithControlNet) { $InstallCnModels = $true }
+elseif (-not $SkipControlNet) {
+    try {
+        if (-not [Console]::IsInputRedirected) {
+            Write-Host '  Optional: ControlNet + IP-Adapter models (~9 GB download).' -ForegroundColor Cyan
+            Write-Host '  Only the ControlNet / IP-Adapter features need them; everything else works without.' -ForegroundColor DarkGray
+            Write-Host '  You can also download them later from the Models page.' -ForegroundColor DarkGray
+            $ans = Read-Host '  Download them now? [y/N]'
+            if ($ans -match '^(y|yes)$') { $InstallCnModels = $true }
+            Write-Host ''
+        }
+    } catch {}
+}
+
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
 Write-SysInfo
 
@@ -808,6 +829,11 @@ Write-Info 'Installing ControlNet / IP-Adapter nodes and models'
 # comfyui_controlnet_aux — preprocessors (Canny, Depth, Pose, etc.) used by
 # the ControlNet graph helper (appendControlNet / appendImg2Img).
 Install-NodePack 'comfyui_controlnet_aux'  'https://github.com/Fannovel16/comfyui_controlnet_aux.git'
+# ComfyUI_IPAdapter_plus — IPAdapterUnifiedLoader + apply nodes used by
+# the IP-Adapter graph helper (appendIpAdapter). The node packs are small and
+# always installed; only the multi-GB model downloads below are optional.
+Install-NodePack 'ComfyUI_IPAdapter_plus'  'https://github.com/cubiq/ComfyUI_IPAdapter_plus.git'
+if ($InstallCnModels) {
 # comfyui_controlnet_aux fetches its preprocessor weights on FIRST use of each
 # node (OpenPose ~500 MB, DepthAnythingV2 ~1.3 GB). That first ControlNet run
 # would otherwise block on a large download and, until it finishes, emit an
@@ -836,9 +862,6 @@ foreach ($m in $auxModels) {
         }
     }
 }
-# ComfyUI_IPAdapter_plus — IPAdapterUnifiedLoader + apply nodes used by
-# the IP-Adapter graph helper (appendIpAdapter).
-Install-NodePack 'ComfyUI_IPAdapter_plus'  'https://github.com/cubiq/ComfyUI_IPAdapter_plus.git'
 # ControlNet Union SDXL ProMax — single model covers all 7 control types.
 # Filename must match UNION_MODEL in app/src/lib/workflows/controlnet.ts.
 $cnModelDir  = Join-Path $ComfyDir 'models\controlnet'
@@ -900,6 +923,9 @@ if (-not (Test-Path $zFun)) {
             if (Test-Path $zFun) { Remove-Item $zFun -Force }
         }
     }
+}
+} else {
+    Write-Info 'Skipping ControlNet / IP-Adapter models (optional; download them any time from the Models page).'
 }
 # SDXL fp16-fix VAE — decoded through by the SDXL/Pony/Illustrious workflows in
 # place of a checkpoint's baked VAE, which fixes washed-out / desaturated colors
