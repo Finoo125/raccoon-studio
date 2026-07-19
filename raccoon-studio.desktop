@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Raccoon Studio
+Comment=Install, start and update Raccoon Studio
+Exec=bash -c "cd \"$(dirname %k)\" && ./raccoon-studio.sh"
+Terminal=true
+Icon=raccoon-studio
+Categories=Graphics;Utility;

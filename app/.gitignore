@@ -1,0 +1,6 @@
+
+# Gallery scan cache
+.gallery-cache.json
+
+# Movie builder projects (user data)
+projects/

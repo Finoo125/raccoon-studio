@@ -1,0 +1,11 @@
+"""RaccoonVideoNodes — Raccoon Studio's LTX 2.3 video prompt + LoRA nodes."""
+
+from .node import NODE_CLASS_MAPPINGS as _PROMPT_NODES, NODE_DISPLAY_NAME_MAPPINGS as _PROMPT_NAMES
+from .lora_forge import NODE_CLASS_MAPPINGS as _LORA_NODES, NODE_DISPLAY_NAME_MAPPINGS as _LORA_NAMES
+
+NODE_CLASS_MAPPINGS = {**_PROMPT_NODES, **_LORA_NODES}
+NODE_DISPLAY_NAME_MAPPINGS = {**_PROMPT_NAMES, **_LORA_NAMES}
+
+print(f"[RaccoonVideo] loaded — {list(NODE_DISPLAY_NAME_MAPPINGS.values())}")
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
