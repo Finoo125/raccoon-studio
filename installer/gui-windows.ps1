@@ -258,7 +258,7 @@ function Refresh-State {
     'not-installed' { Set-Status 'Not installed yet' '#9aa6b4' }
     default         { Set-Status $s '#9aa6b4' }
   }
-  $ctl.BtnInstall.IsEnabled = $true
+  $ctl.BtnInstall.IsEnabled = ($s -eq 'not-installed')
   $ctl.BtnStart.IsEnabled  = ($s -eq 'stopped')
   $ctl.BtnUpdate.IsEnabled = ($s -ne 'not-installed')
   $ctl.BtnStop.IsEnabled   = ($s -eq 'running')

@@ -24,10 +24,25 @@ function Invoke-Start {
 # engine runs it with redirected output. We're already in PowerShell anyway.
 function Invoke-Stop { Emit-Progress 1 1 'Stopping services'; if (-not $DryRun) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $env:RACCOON_ROOT 'stop.ps1') 2>&1 | Out-Null }; Emit-Done 'stop' }
 function Invoke-Update {
-  # STUB - git-pull backend (app + ComfyUI + nodes) lands later.
-  Emit-Progress 1 2 'Checking for updates'
-  if ($DryRun) { Emit-Progress 2 2 '[dry-run] update stub'; Emit-Done 'update'; return }
-  Emit-Progress 2 2 'Up to date'; Emit-Warn 'Update backend not yet implemented - no changes made.'; Emit-Done 'update'
+  # Pull the public release repo explicitly (not whatever origin points at), then
+  # re-run the idempotent installer if new code arrived so deps/vendor nodes stay
+  # in sync. --ff-only makes a pull against any non-release clone fail safely.
+  $PublicRepo = 'https://github.com/Finoo125/raccoon-studio.git'
+  Emit-Progress 1 3 'Checking the public repo for updates'
+  if ($DryRun) { Emit-Progress 2 3 '[dry-run] would git pull'; Emit-Progress 3 3 '[dry-run] up to date'; Emit-Done 'update'; return }
+  # Local EAP downgrade: git writes progress to stderr, and under WinPS 5.1 a
+  # 2>&1 redirect with EAP=Stop turns that into a fatal NativeCommandError
+  # (see install-windows.ps1 header note).
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  $before = (& git -C $env:RACCOON_ROOT rev-parse HEAD 2>&1 | Select-Object -First 1)
+  & git -C $env:RACCOON_ROOT pull --ff-only $PublicRepo main 2>&1 | ForEach-Object { Write-RsLog "[git] $_" }
+  $pullExit = $LASTEXITCODE
+  $after = (& git -C $env:RACCOON_ROOT rev-parse HEAD 2>&1 | Select-Object -First 1)
+  $ErrorActionPreference = $eap
+  if ($pullExit -ne 0) { Emit-Fail 'update' "git pull from the public repo failed - see $script:LogFile"; exit 1 }
+  if ("$before" -eq "$after") { Emit-Progress 3 3 'Already up to date'; Emit-Done 'update'; return }
+  Emit-Progress 2 3 'Update downloaded - applying (this can take a few minutes)'
+  Invoke-Install
 }
 function Invoke-Install {
   $psArgs = @('-ExecutionPolicy','Bypass','-NoProfile','-File',(Join-Path $env:RACCOON_ROOT 'install-windows.ps1'))
