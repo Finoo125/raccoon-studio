@@ -78,9 +78,16 @@ function Write-Info([string]$Msg) { Write-Host "    →  $Msg" -ForegroundColor 
 function Write-Warn([string]$Msg) { Write-Host "    !  $Msg" -ForegroundColor Yellow; Add-Log "[WARN] $Msg" }
 function Write-Fail([string]$Msg) {
     Write-Host "`n    ✗  ERROR: $Msg`n" -ForegroundColor Red
-    Write-Host "  Log saved to: $LogFile" -ForegroundColor DarkGray
-    Write-Host "  Please send this file when reporting an issue." -ForegroundColor DarkGray
     Add-Log "[FAIL] $Msg"
+    $bundle = New-SupportBundle
+    if ($bundle) {
+        Write-Host '  A support file was saved to your Desktop:' -ForegroundColor Yellow
+        Write-Host "      $bundle" -ForegroundColor Cyan
+        Write-Host '  Send us that one file and we can see exactly what went wrong.' -ForegroundColor Yellow
+    } else {
+        Write-Host "  Log saved to: $LogFile" -ForegroundColor DarkGray
+        Write-Host "  Please send this file when reporting an issue." -ForegroundColor DarkGray
+    }
     exit 1
 }
 
@@ -102,6 +109,50 @@ function Invoke-Logged([string]$Exe, [string[]]$ArgList, [string]$Label = '') {
     $code = $LASTEXITCODE
     Add-Log "[EXIT] $code"
     return $code
+}
+
+# ── Driver update guidance ─────────────────────────────────────────────────────
+# Shown when the NVIDIA driver is too old for GPU acceleration. Written for a
+# non-technical user: a numbered click-path, not jargon.
+function Show-DriverUpdateHelp([string]$Drv) {
+    $yours = if ($Drv -and $Drv -ne 'unknown') { " (yours: $Drv)" } else { '' }
+    Write-Host ''
+    Write-Host "    Your NVIDIA graphics driver is too old for GPU acceleration$yours." -ForegroundColor Yellow
+    Write-Host '    Here is exactly how to fix it:' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '      1. Open this page in your web browser:' -ForegroundColor Gray
+    Write-Host '           https://www.nvidia.com/download/index.aspx' -ForegroundColor Cyan
+    Write-Host '      2. Choose your graphics card and "Windows 11", then click Search' -ForegroundColor Gray
+    Write-Host '      3. Download the "Game Ready Driver" and run the file you downloaded' -ForegroundColor Gray
+    Write-Host '      4. Click Next through the default options, then RESTART your PC' -ForegroundColor Gray
+    Write-Host '      5. Double-click "Start Raccoon Studio" again' -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '    You do NOT need the "CUDA Toolkit" — only the driver above.' -ForegroundColor DarkGray
+    Write-Host ''
+    Add-Log "[DRIVER] shown driver-update help (driver=$Drv)"
+}
+
+# ── Support bundle ─────────────────────────────────────────────────────────────
+# One file a non-technical user can send us when something breaks: the install
+# logs plus a fresh GPU/driver dump, zipped onto the Desktop with a stable name.
+function New-SupportBundle {
+    try {
+        if (-not (Test-Path $LogDir)) { return $null }
+        # Fresh GPU dump next to the logs so it lands inside the zip.
+        try {
+            if (Get-ExePath 'nvidia-smi') {
+                & nvidia-smi 2>&1 | Set-Content -Path (Join-Path $LogDir 'nvidia-smi.txt') -Encoding UTF8
+            }
+        } catch {}
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        if (-not $desktop -or -not (Test-Path $desktop)) { $desktop = $RootDir }
+        $zip = Join-Path $desktop 'Raccoon-Studio-Support.zip'
+        Compress-Archive -Path (Join-Path $LogDir '*') -DestinationPath $zip -Force -ErrorAction Stop
+        return $zip
+    } catch {
+        Add-Log "[SUPPORT] bundle failed: $_"
+        return $null
+    }
 }
 
 # ── Spinner ────────────────────────────────────────────────────────────────────
@@ -412,9 +463,15 @@ print(json.dumps(r))
             Write-Ok "CUDA acceleration ready: $($d.device)"
             Add-Log "[CUDA] Available: $($d.device)"
         } else {
-            Write-Warn "CUDA not available: $($d.err)"
-            Write-Info "If you have an NVIDIA GPU, update your driver, reboot, then run start.bat."
-            Write-Info "You only need the NVIDIA driver — NOT the full CUDA Toolkit."
+            Write-Warn "GPU acceleration is not active yet: $($d.err)"
+            if (Get-ExePath 'nvidia-smi') {
+                Write-Info 'First, RESTART your computer and run start.bat — this fixes it in most cases.'
+                Write-Info 'If it still does not work after a restart, your driver is too old:'
+                $drvNow = (& nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>$null | Select-Object -First 1)
+                Show-DriverUpdateHelp $drvNow
+            } else {
+                Write-Info 'No NVIDIA GPU detected — generation will use the CPU (very slow).'
+            }
             Add-Log "[CUDA] Unavailable: $($d.err)"
         }
     } catch {
@@ -425,6 +482,17 @@ print(json.dumps(r))
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════════════
+# Safety net: any unhandled *terminating* error (a throw, a StrictMode violation)
+# still lands the user a support bundle instead of a raw red stack trace.
+# ErrorActionPreference is 'Continue', so native stderr never reaches here, and
+# guarded -EA Stop cmdlets carry their own try/catch — this only catches the
+# genuinely unexpected.
+trap {
+    Stop-Spinner
+    Add-Log "[TRAP] $($_ | Out-String)"
+    Write-Fail "Unexpected error: $($_.Exception.Message)"
+}
+
 Write-Banner
 
 # ── Optional ControlNet / IP-Adapter models (~9 GB) ───────────────────────────
@@ -458,6 +526,12 @@ if ($nvSmi) {
     $gpu = (& nvidia-smi --query-gpu=name          --format=csv,noheader 2>$null | Select-Object -First 1)
     if (-not $gpu) { $gpu = 'unknown' }
     Write-Ok "Driver $drv  ·  $gpu"
+    # ponytail: conservative CUDA-12.0 floor (528). The post-install torch check
+    # is the real authority; this is only an early heads-up for clearly-old drivers.
+    if ($drv -match '^(\d+)\.' -and [int]$Matches[1] -lt 528) {
+        Write-Warn "Driver $drv may be too old for GPU acceleration."
+        Show-DriverUpdateHelp $drv
+    }
 } else {
     try {
         $nvidiaGpu = Get-CimInstance Win32_VideoController -EA Stop | Where-Object Name -match 'NVIDIA' | Select-Object -First 1
@@ -1148,5 +1222,6 @@ Write-Host '    → Then open: http://localhost:3000' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  Download models from the Models page before generating.' -ForegroundColor DarkGray
 Write-Host "  Log saved to: $LogFile" -ForegroundColor DarkGray
-Write-Host '  If you hit any problems, send the log file above.' -ForegroundColor Yellow
+Write-Host '  If anything ever misbehaves, double-click collect-support.bat and send' -ForegroundColor Yellow
+Write-Host '  the file it saves to your Desktop.' -ForegroundColor Yellow
 Write-Host ''

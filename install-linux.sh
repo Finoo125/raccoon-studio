@@ -31,7 +31,7 @@ if [ "$_GS_SKIP_RELAUNCH" = 0 ] && [ ! -t 0 ] && { [ -n "${DISPLAY:-}" ] || [ -n
 fi
 unset _GS_SELF _GS_MSG _GS_SKIP_RELAUNCH _a 2>/dev/null || true
 
-set -euo pipefail
+set -Eeuo pipefail   # -E: inherit the ERR trap into functions/subshells
 
 RS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${RACCOON_ROOT:=$RS_DIR}"
@@ -85,13 +85,74 @@ run()  { if [ "$DRY_RUN" = 1 ]; then _log "[DRY] $*"; else "$@"; fi; }
 ok()   { spinner_stop; printf "  ${G}${BOLD}✓${N}  %s\n" "$*"; log_raw "[OK]   $*"; }
 info() { printf "  ${B}→${N}  %s\n" "$*"; log_raw "[INFO] $*"; }
 warn() { spinner_stop; printf "  ${Y}!${N}  %s\n" "$*"; log_raw "[WARN] $*"; }
+# ── Support bundle ─────────────────────────────────────────────────────────────
+# One file a non-technical user can send us when something breaks: the install
+# logs plus a fresh GPU dump, tarred onto the Desktop with a stable name.
+# tar is always present; zip often is not.
+make_support_bundle() {
+  [ -d "$LOG_DIR" ] || return 1
+  command -v nvidia-smi &>/dev/null && nvidia-smi > "$LOG_DIR/nvidia-smi.txt" 2>&1 || true
+  local dest
+  dest="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
+  [ -d "${dest:-}" ] || dest="$HOME/Desktop"
+  [ -d "$dest" ] || dest="$HOME"
+  local bundle="$dest/Raccoon-Studio-Support.tar.gz"
+  tar -czf "$bundle" -C "$SCRIPT_DIR" logs 2>/dev/null && printf '%s' "$bundle" || return 1
+}
+
 fail() {
   spinner_stop
   printf "\n${R}${BOLD}  ✗  ERROR: %s${N}\n\n" "$*"
-  printf "  ${DIM}Log saved to: %s${N}\n" "$INSTALL_LOG"
-  printf "  ${DIM}Please send this file when reporting an issue.${N}\n\n"
   log_raw "[FAIL] $*"
+  local bundle; bundle="$(make_support_bundle)" || bundle=""
+  if [ -n "$bundle" ]; then
+    printf "  ${Y}A support file was saved to your Desktop:${N}\n"
+    printf "      ${C}%s${N}\n" "$bundle"
+    printf "  ${Y}Send us that one file and we can see exactly what went wrong.${N}\n\n"
+  else
+    printf "  ${DIM}Log saved to: %s${N}\n" "$INSTALL_LOG"
+    printf "  ${DIM}Please send this file when reporting an issue.${N}\n\n"
+  fi
   exit 1
+}
+
+# Safety net for any unguarded command that trips set -e — route the abort through
+# fail() so the user still gets a support bundle instead of a bare non-zero exit.
+on_error() {
+  local rc=$?
+  trap - ERR   # disarm to avoid re-entry while we report
+  fail "Installation stopped unexpectedly (exit ${rc}). The log has the last command that ran."
+}
+
+# ── Driver update guidance ─────────────────────────────────────────────────────
+# Shown when the NVIDIA driver is too old for GPU acceleration. Distro-specific
+# so the command we hand the user actually works on their system.
+show_driver_update_help() {
+  local drv="${1:-}"
+  printf '\n'
+  printf "  ${Y}Your NVIDIA driver is too old for GPU acceleration"
+  [ -n "$drv" ] && [ "$drv" != "unknown" ] && printf " (yours: %s)" "$drv"
+  printf ".${N}\n"
+  printf "  ${Y}Here is exactly how to fix it:${N}\n\n"
+  case "$DISTRO_FAMILY" in
+    debian)
+      printf "    1. Open a terminal and run:\n"
+      printf "         ${C}sudo ubuntu-drivers autoinstall${N}\n"
+      printf "       (or pick the newest 'nvidia-driver-###' in Software & Updates)\n" ;;
+    arch)
+      printf "    1. Open a terminal and run:\n"
+      printf "         ${C}sudo pacman -Syu nvidia${N}\n" ;;
+    fedora)
+      printf "    1. Enable RPM Fusion, then run:\n"
+      printf "         ${C}sudo dnf install akmod-nvidia${N}\n" ;;
+    *)
+      printf "    1. Install the latest NVIDIA driver for your distribution\n"
+      printf "       (your package manager, or https://www.nvidia.com/drivers)\n" ;;
+  esac
+  printf "    2. RESTART your computer\n"
+  printf "    3. Run ${BOLD}./start.sh${N} again\n\n"
+  printf "  ${DIM}You do NOT need the full CUDA Toolkit — only the driver above.${N}\n\n"
+  log_raw "[DRIVER] shown driver-update help (driver=$drv)"
 }
 
 # ── Spinner ────────────────────────────────────────────────────────────────────
@@ -413,6 +474,13 @@ main() {
     gpu=$(nvidia-smi --query-gpu=name          --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
     ok "Driver ${drv}  ·  ${gpu}"
     log_raw "[NVIDIA] driver=$drv gpu=$gpu"
+    # ponytail: conservative CUDA-12.0 floor (525). The post-install torch check
+    # is the real authority; this is only an early heads-up for clearly-old drivers.
+    local drv_major="${drv%%.*}"
+    if [[ "$drv_major" =~ ^[0-9]+$ ]] && [ "$drv_major" -lt 525 ]; then
+      warn "Driver ${drv} may be too old for GPU acceleration."
+      show_driver_update_help "$drv"
+    fi
   else
     warn "nvidia-smi not found."
     warn "If you have an NVIDIA GPU, install the driver and re-run."
@@ -955,8 +1023,10 @@ PYCHECK
   if [ "$cuda_ok" = "True" ]; then
     ok "CUDA acceleration ready: ${cuda_dev}"
   elif command -v nvidia-smi &>/dev/null; then
-    warn "CUDA not available yet (driver may need reboot): ${cuda_err:-unknown}"
-    info "Reboot, then run './start.sh' — CUDA will activate after restart."
+    warn "GPU acceleration is not active yet: ${cuda_err:-unknown}"
+    info "First, RESTART your computer and run './start.sh' — this fixes it in most cases."
+    info "If it still does not work after a restart, your driver is too old:"
+    show_driver_update_help "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)"
   else
     warn "No CUDA GPU — generation will use CPU (slow)"
   fi
@@ -972,8 +1042,11 @@ PYCHECK
   printf "  ${G}→${N}  Then open: ${C}http://localhost:3000${N}\n\n"
   printf "  ${DIM}Download models from the Models page before generating${N}\n"
   printf "  ${DIM}Log saved to: %s${N}\n\n" "$INSTALL_LOG"
-  printf "  ${Y}If you hit any problems, send the log file above.${N}\n\n"
+  printf "  ${Y}If anything ever misbehaves, run ./collect-support.sh and send${N}\n"
+  printf "  ${Y}the file it saves to your Desktop.${N}\n\n"
 }
 
+trap 'on_error' ERR
 main "$@"
+trap - ERR   # install finished cleanly; drop the safety net before the epilogue
 [ -n "${RS_FROM_ENGINE:-}" ] || emit_done install
