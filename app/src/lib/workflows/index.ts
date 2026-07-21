@@ -1,4 +1,4 @@
-import { animaWorkflow } from './anima'
+import { animaWorkflow, animaTurboWorkflow } from './anima'
 import { ernieTurboWorkflow } from './ernie-turbo'
 import { zImageTurboWorkflow } from './z-image-turbo'
 import { sdxlWorkflow, ponyWorkflow, illustriousWorkflow } from './sdxl'
@@ -6,6 +6,7 @@ import type { WorkflowDefinition } from '@/types/workflow'
 
 export const workflows: WorkflowDefinition[] = [
   animaWorkflow,
+  animaTurboWorkflow,
   ernieTurboWorkflow,
   zImageTurboWorkflow,
   sdxlWorkflow,

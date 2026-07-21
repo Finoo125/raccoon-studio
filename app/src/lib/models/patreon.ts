@@ -13,6 +13,7 @@ export const PATREON_PATTERNS = ['muscgi', 'muscgro', 'aria'] as const
  */
 export const PATREON_FAMILIES: Record<string, { keywords: string[]; ariaKind: 'loras' | 'checkpoints' | 'diffusion_models' }> = {
   anima: { keywords: ['anima'], ariaKind: 'diffusion_models' },
+  'anima-turbo': { keywords: ['anima'], ariaKind: 'diffusion_models' },
   'ernie-turbo': { keywords: ['ernie'], ariaKind: 'diffusion_models' },
   'z-image-turbo': { keywords: ['zit', 'zimage'], ariaKind: 'diffusion_models' },
   sdxl: { keywords: ['sdxl'], ariaKind: 'checkpoints' },

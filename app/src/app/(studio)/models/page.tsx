@@ -60,6 +60,24 @@ const SDXL_VAE_FILE: ModelFile = {
   sizeMb: 335,
 }
 
+// Both Anima checkpoints run on the same Qwen text encoder + VAE, so those two
+// files appear in both presets — the download de-dupes on disk, so whichever
+// preset is grabbed second only fetches its checkpoint.
+const ANIMA_SHARED_FILES: ModelFile[] = [
+  {
+    name: 'qwen_3_06b_base.safetensors',
+    path: 'text_encoders',
+    url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors',
+    sizeMb: 1200,
+  },
+  {
+    name: 'qwen_image_vae.safetensors',
+    path: 'vae',
+    url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors',
+    sizeMb: 160,
+  },
+]
+
 const PRESETS: PresetDefinition[] = [
   {
     id: 'anima',
@@ -72,18 +90,21 @@ const PRESETS: PresetDefinition[] = [
         url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors',
         sizeMb: 4000,
       },
+      ...ANIMA_SHARED_FILES,
+    ],
+  },
+  {
+    id: 'anima-turbo',
+    name: 'Anima Turbo',
+    description: 'Distilled Anima — same look, ~3× fewer steps',
+    files: [
       {
-        name: 'qwen_3_06b_base.safetensors',
-        path: 'text_encoders',
-        url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors',
-        sizeMb: 1200,
+        name: 'anima-turbo-v1.0.safetensors',
+        path: 'diffusion_models',
+        url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.0.safetensors',
+        sizeMb: 4000,
       },
-      {
-        name: 'qwen_image_vae.safetensors',
-        path: 'vae',
-        url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors',
-        sizeMb: 160,
-      },
+      ...ANIMA_SHARED_FILES,
     ],
   },
   {

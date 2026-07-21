@@ -13,7 +13,7 @@ describe('ControlNet/IP-Adapter wiring per family', () => {
   it('controlNetKind partitions the families', () => {
     expect(sdxlFamily.map((w) => w.id).sort()).toEqual(['illustrious', 'pony', 'sdxl'])
     expect(zimage.map((w) => w.id).sort()).toEqual(['z-image-turbo'])
-    expect(others.map((w) => w.id).sort()).toEqual(['anima', 'ernie-turbo'])
+    expect(others.map((w) => w.id).sort()).toEqual(['anima', 'anima-turbo', 'ernie-turbo'])
   })
 
   for (const wf of sdxlFamily) {
