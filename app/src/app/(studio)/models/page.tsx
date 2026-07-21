@@ -657,8 +657,7 @@ export default function ModelsPage() {
         onCancel={(asset) => cancelDownload(`${FACESWAP_PRESET.id}::${asset.name}`)}
       />
 
-      {/* Local import — collapsed utility section */}
-      <LocalImportSection modelsDir={modelsDir} />
+      {/* ponytail: local-import section hidden (LocalImportSection below); re-render this when it's wanted back */}
 
       {/* Manage installed models — disk usage + delete */}
       <ManageModelsSection />
@@ -1283,6 +1282,7 @@ interface ImportResult {
   error?: string
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept, just not rendered (see above)
 function LocalImportSection({ modelsDir }: { modelsDir: string | null }) {
   const [open, setOpen] = useState(false)
   const [subfolder, setSubfolder] = useState('diffusion_models')
