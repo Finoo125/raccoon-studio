@@ -485,7 +485,7 @@ export default function GenerationForm() {
                 if (w.id === workflowId) return
                 // Stash the outgoing model's prompt boxes, then restore the
                 // incoming model's last-used text — or its own defaults (e.g.
-                // Anima's score_7 tags) on first visit, else empty.
+                // Anima's quality tags) on first visit, else empty.
                 setPromptStash((s) => ({ ...s, [workflowId]: { prompt: params.prompt, negativePrompt: params.negativePrompt ?? '' } }))
                 setWorkflowId(w.id)
                 const stashed = promptStash[w.id]

@@ -9,7 +9,7 @@ import { ANIMA_DEFAULT_POSITIVE, ANIMA_DEFAULT_NEGATIVE } from './anime-prompts'
 export const animaWorkflow: WorkflowDefinition = {
   id: 'anima',
   name: 'Anima',
-  description: 'Anime-style illustration (2B parameter model by CircleStone Labs) with optional 1.5× upscale',
+  description: 'Anime-style illustration (Anima Aesthetic v1.1 by CircleStone Labs) with optional 1.5× upscale',
   supportsNegativePrompt: true,
   supportsLoRA: true,
   supportsPromptEnhancer: false,

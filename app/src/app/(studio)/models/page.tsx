@@ -67,10 +67,10 @@ const PRESETS: PresetDefinition[] = [
     description: 'Anime-style text-to-image',
     files: [
       {
-        name: 'anima-base-v1.0.safetensors',
+        name: 'anima-aesthetic-v1.1.safetensors',
         path: 'diffusion_models',
-        url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview3-base.safetensors',
-        sizeMb: 3200,
+        url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors',
+        sizeMb: 4000,
       },
       {
         name: 'qwen_3_06b_base.safetensors',

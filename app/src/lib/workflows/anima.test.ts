@@ -47,10 +47,10 @@ describe('animaWorkflow.buildPrompt', () => {
     expect(animaWorkflow.buildPrompt({ ...base, batchSize: 8 })['60:28'].inputs.batch_size).toBe(4)
   })
 
-  it('seeds the official Anima model-card prompt convention (score_7 ladder)', () => {
-    expect(animaWorkflow.defaultParams.prompt).toBe('masterpiece, best quality, score_7, safe, ')
+  it('seeds the Anima-Aesthetic prompt convention (quality tags, no score_* ladder)', () => {
+    expect(animaWorkflow.defaultParams.prompt).toBe('masterpiece, best quality, safe, ')
     expect(animaWorkflow.defaultParams.negativePrompt).toBe(
-      'worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration',
+      'worst quality, low quality, artist name, blurry, jpeg artifacts, chromatic aberration',
     )
   })
 
@@ -87,7 +87,7 @@ describe('animaWorkflow.buildPrompt', () => {
   })
 
   it('swaps the base UNET for an Aria model and applies a manual LoRA independently', () => {
-    expect(animaWorkflow.buildPrompt(base)['60:44'].inputs.unet_name).toBe('anima-base-v1.0.safetensors')
+    expect(animaWorkflow.buildPrompt(base)['60:44'].inputs.unet_name).toBe('anima-aesthetic-v1.1.safetensors')
     // Aria swaps the UNET (60:44), not the LoRA node (60:61).
     const aria = animaWorkflow.buildPrompt({ ...base, ariaModel: 'aria_anima_01.safetensors' })
     expect(aria['60:44'].inputs.unet_name).toBe('aria_anima_01.safetensors')

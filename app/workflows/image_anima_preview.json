@@ -61,7 +61,7 @@
   },
   "60:12": {
     "inputs": {
-      "text": "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia",
+      "text": "worst quality, low quality, artist name, blurry, jpeg artifacts, chromatic aberration",
       "clip": [
         "60:45",
         0
@@ -117,7 +117,7 @@
   },
   "60:44": {
     "inputs": {
-      "unet_name": "anima-base-v1.0.safetensors",
+      "unet_name": "anima-aesthetic-v1.1.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
