@@ -32,7 +32,8 @@ stop.sh
 stop.bat
 stop.ps1
 raccoon-studio.ico
-logs/
+# Anchored: unanchored "logs/" also swallowed app/src/app/(studio)/logs/ and api/logs/.
+/logs/
 
 # ── Runtime app state (queue/history persistence, machine-specific) ───────────
 /data/
