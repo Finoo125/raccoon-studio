@@ -200,6 +200,17 @@ function Get-ExePath([string]$Name) {
     return $(if ($c) { $c.Source } else { $null })
 }
 
+# Probe a tool's version WITHOUT assuming it exists. A missing native command
+# throws a *terminating* CommandNotFoundException that `2>$null` cannot swallow —
+# unguarded, it hits the trap and kills the install before the very steps that
+# would have installed the tool. Always resolve with Get-ExePath first.
+function Get-ToolVersion([string]$Name, [string[]]$VersionArgs = @('--version')) {
+    $exe = Get-ExePath $Name
+    if (-not $exe) { return 'not found' }
+    $v = (& $exe @VersionArgs 2>$null | Select-Object -First 1)
+    return $(if ($v) { "$v".Trim() } else { 'unknown' })
+}
+
 function Get-PyVersion([string]$Exe) {
     if (-not $Exe -or -not (Test-Path $Exe -EA SilentlyContinue)) { return $null }
     $v = & $Exe -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
@@ -345,22 +356,16 @@ function Write-SysInfo {
         $gpu = Get-CimInstance Win32_VideoController -EA Stop | Where-Object Name -match 'NVIDIA' | Select-Object -First 1
         if ($gpu) {
             $lines += "GPU         : $($gpu.Name)"
-            $drv = (& nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>$null | Select-Object -First 1)
-            if (-not $drv) { $drv = 'unknown' }
-            $lines += "Driver      : $drv"
+            $lines += "Driver      : $(Get-ToolVersion 'nvidia-smi' @('--query-gpu=driver_version','--format=csv,noheader'))"
         } else {
             $lines += "GPU         : (no NVIDIA GPU detected)"
         }
     } catch { $lines += "GPU         : unknown" }
     # Tools
-    $pyV = (& python --version 2>$null); if (-not $pyV) { $pyV = 'not found' }
-    $ndV = (& node --version 2>$null);   if (-not $ndV) { $ndV = 'not found' }
-    $npV = (& npm --version 2>$null);     if (-not $npV) { $npV = 'not found' }
-    $gtV = (& git --version 2>$null);     if (-not $gtV) { $gtV = 'not found' }
-    $lines += "Python      : $pyV"
-    $lines += "Node.js     : $ndV"
-    $lines += "npm         : $npV"
-    $lines += "Git         : $gtV"
+    $lines += "Python      : $(Get-ToolVersion 'python')"
+    $lines += "Node.js     : $(Get-ToolVersion 'node')"
+    $lines += "npm         : $(Get-ToolVersion 'npm')"
+    $lines += "Git         : $(Get-ToolVersion 'git')"
     $lines += "Log file    : $LogFile"
     $lines += $sep
     $lines += ''
