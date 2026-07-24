@@ -1,0 +1,5 @@
+# Shell scripts must keep LF endings even when checked out on Windows.
+# scripts/publish.ps1 copies the *working tree* into the public repo, so a CRLF
+# checkout ships an install-linux.sh that Linux refuses to run ("bad interpreter:
+# /usr/bin/env bash^M"). This shipped broken through v1.0.14.
+*.sh text eol=lf
