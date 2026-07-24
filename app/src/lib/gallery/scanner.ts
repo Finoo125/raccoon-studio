@@ -9,7 +9,13 @@ const OUTPUT_DIR = process.env.COMFYUI_OUTPUT_DIR ?? ''
 export function getSidecarDir(): string {
   return process.env.RACCOON_SIDECAR_DIR ?? path.join(process.cwd(), '.gallery-sidecars')
 }
-const CACHE_FILE = path.join(process.cwd(), '.gallery-cache.json')
+/**
+ * Env-overridable like the sidecar dir above: the cache is keyed on cwd, so a
+ * second server started against this checkout with a different
+ * COMFYUI_OUTPUT_DIR would otherwise be served the first one's scan.
+ */
+const CACHE_FILE =
+  process.env.RACCOON_GALLERY_CACHE ?? path.join(process.cwd(), '.gallery-cache.json')
 // How long a persisted scan is considered fresh before an automatic rescan.
 const CACHE_TTL_MS = 10 * 60 * 1000
 

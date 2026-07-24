@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Upload, Loader2, X, ScanFace, Boxes, RefreshCw } from 'lucide-react'
+import { Upload, Loader2, X, ScanFace, Boxes, RefreshCw, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
 import { listFaceModels } from '@/lib/generation/face-models'
@@ -135,6 +135,15 @@ export default function FaceSwapInput({
 
       {enabled && (
         <>
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            Face swap is meant for keeping <strong>your own original characters</strong> consistent across
+            generations. Do not use it on real people — no likenesses of real persons, no impersonation,
+            and never without consent.
+          </span>
+        </div>
+
         {/* Source switch — uploaded photo vs. saved face model */}
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/20 p-1">
           {([

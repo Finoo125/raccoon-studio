@@ -55,3 +55,10 @@ scripts/keys/
 app/.entitlements.json
 __pycache__/
 worker/node_modules/
+app/.next-manual/
+
+# ── User manual: parked, not tracked yet ─────────────────────────────────────
+# Design + capture/build approach: docs/superpowers/specs/2026-07-24-user-manual-design.md
+# Rebuild: docs/manual/serve-sandbox.sh <dir>, then capture.mjs, then build.mjs
+/Raccoon Studio Manual.pdf
+/docs/manual/
