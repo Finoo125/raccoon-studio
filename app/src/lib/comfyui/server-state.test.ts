@@ -57,6 +57,25 @@ describe('readAlivePid', () => {
   })
 })
 
+describe('waitForExit', () => {
+  it('keeps polling past the old fixed 500ms grace instead of giving up', async () => {
+    // A stop is only as reliable as the wait after it: killing a tree can take
+    // well over half a second on a busy box, and the previous fixed sleep
+    // reported those late-but-successful stops as failures (stranding the PID
+    // file). Node exits on its own once the timer fires — no taskkill timing
+    // in the loop, so this asserts the polling, not the platform.
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 1200)'], { stdio: 'ignore' })
+    expect(await state.waitForExit(child.pid!, 10_000)).toBe(true)
+    expect(state.isPidAlive(child.pid!)).toBe(false)
+  }, 15_000)
+
+  it('gives up at the timeout rather than hanging on a process that never dies', async () => {
+    const child = spawnSleeper()
+    expect(await state.waitForExit(child.pid!, 400)).toBe(false)
+    process.kill(isWin ? child.pid! : -child.pid!, 'SIGKILL')
+  }, 15_000)
+})
+
 describe('stopTrackedProcess', () => {
   it.skipIf(isWin)('kills the whole process group, not just the wrapper shell', async () => {
     // Mirror the start route: a detached shell wrapper whose child is the real

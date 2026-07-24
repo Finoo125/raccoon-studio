@@ -178,6 +178,24 @@ export function readAlivePid(): number | null {
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /**
+ * Poll until `pid` is gone; returns false if it outlived `timeoutMs`.
+ *
+ * Termination is asynchronous on every platform — the kill call returns once
+ * the request is queued, not once the tree has been reaped. A fixed sleep is
+ * therefore always either too short (a busy box reports a successful stop as a
+ * failure, and strands the PID file) or needlessly slow. Checking before the
+ * first sleep keeps the common case immediate.
+ */
+export async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (!isPidAlive(pid)) return true
+    if (Date.now() >= deadline) return false
+    await sleep(250)
+  }
+}
+
+/**
  * Stop the tracked ComfyUI process. The child is spawned detached, so its PID
  * is also its process-group ID — signal the whole group, otherwise only the
  * start-script wrapper shell dies while the Python process keeps running.
@@ -195,8 +213,7 @@ export async function stopTrackedProcess(): Promise<{ stopped: boolean; pid: num
     try {
       spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
     } catch { /* already gone */ }
-    await sleep(500)
-    const stopped = !isPidAlive(pid)
+    const stopped = await waitForExit(pid, 10_000)
     if (stopped) clearPid()
     return { stopped, pid }
   }
@@ -206,17 +223,12 @@ export async function stopTrackedProcess(): Promise<{ stopped: boolean; pid: num
   } catch {
     try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ }
   }
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    if (!isPidAlive(pid)) {
-      clearPid()
-      return { stopped: true, pid }
-    }
-    await sleep(250)
+  if (await waitForExit(pid, 10_000)) {
+    clearPid()
+    return { stopped: true, pid }
   }
   try { process.kill(-pid, 'SIGKILL') } catch { /* already gone */ }
-  await sleep(500)
-  const stopped = !isPidAlive(pid)
+  const stopped = await waitForExit(pid, 5_000)
   if (stopped) clearPid()
   return { stopped, pid }
 }
