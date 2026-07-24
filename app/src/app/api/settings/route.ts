@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSettings, setSettings, type AppSettings } from '@/lib/settings/settings'
 import { getLogsDir } from '@/lib/system/paths'
+import { getComfyUIDir } from '@/lib/comfyui/server-state'
+import { syncExtraModelPaths } from '@/lib/comfyui/extra-model-paths'
 
 export async function GET() {
   return NextResponse.json({
@@ -48,6 +50,20 @@ export async function PUT(req: NextRequest) {
   if ('ffmpegPath' in body) {
     if (typeof body.ffmpegPath !== 'string') return NextResponse.json({ error: 'ffmpegPath must be a string' }, { status: 400 })
     patch.ffmpegPath = body.ffmpegPath.trim()
+  }
+  if ('sharedModelsDir' in body) {
+    if (typeof body.sharedModelsDir !== 'string') return NextResponse.json({ error: 'sharedModelsDir must be a string' }, { status: 400 })
+    const dir = body.sharedModelsDir.trim()
+    const comfyDir = getComfyUIDir()
+    if (dir && !comfyDir) return NextResponse.json({ error: 'ComfyUI directory unknown — set COMFYUI_DIR in .env.local' }, { status: 400 })
+    // Write the config first: a bad path must fail the save, not persist a
+    // setting that ComfyUI never picks up.
+    try {
+      if (comfyDir) syncExtraModelPaths(comfyDir, dir)
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : 'Could not write extra_model_paths.yaml' }, { status: 400 })
+    }
+    patch.sharedModelsDir = dir
   }
 
   return NextResponse.json({ settings: setSettings(patch) })

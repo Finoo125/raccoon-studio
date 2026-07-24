@@ -82,6 +82,19 @@ export default function SettingsForm() {
             Used by Movie Maker export and media probing. ffprobe is expected next to it.
           </span>
         </Field>
+        <Field label="Shared models folder (optional)">
+          <Input
+            value={settings.sharedModelsDir}
+            onChange={(e) => set('sharedModelsDir', e.target.value)}
+            placeholder="e.g. D:\ComfyUI\models — leave empty to use only this install's models"
+            className="font-mono text-sm"
+          />
+          <span className="block text-xs text-muted-foreground">
+            Point this at another ComfyUI install (or its <code>models</code> folder) to reuse the
+            models already downloaded there instead of downloading them again. Restart ComfyUI to
+            apply. New downloads still land in this install&apos;s models folder.
+          </span>
+        </Field>
         <Button onClick={save} disabled={saving} className="h-10">
           {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : 'Save'}
         </Button>

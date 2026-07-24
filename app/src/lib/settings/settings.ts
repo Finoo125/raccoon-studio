@@ -9,6 +9,11 @@ export interface AppSettings {
   comfyuiBaseUrl: string
   /** Full path to the ffmpeg binary; empty = use `ffmpeg` from PATH. */
   ffmpegPath: string
+  /**
+   * Another ComfyUI install (or its `models/` folder) whose models this one
+   * should also see, so they don't have to be downloaded twice. Empty = off.
+   */
+  sharedModelsDir: string
 }
 
 const num = (v: string | undefined, d: number): number => {
@@ -25,6 +30,7 @@ export function getSettings(): AppSettings {
     ollamaNumCtx: file.ollamaNumCtx ?? num(process.env.OLLAMA_NUM_CTX, 8192),
     comfyuiBaseUrl: file.comfyuiBaseUrl ?? process.env.COMFYUI_BASE_URL ?? 'http://127.0.0.1:8188',
     ffmpegPath: file.ffmpegPath ?? process.env.FFMPEG_PATH ?? '',
+    sharedModelsDir: file.sharedModelsDir ?? '',
   }
 }
 

@@ -4,7 +4,9 @@ export type FeatureKind = 'core' | 'addon'
  * Visual nav grouping (order = display order):
  * - 'create' → core creation surfaces (generate image/video, gallery).
  * - 'studio' → the paid Patreon add-ons (+ the Add-ons store link).
- * - 'manage' → utility/management surfaces (tools, models, logs).
+ * - 'manage' → utility/management surfaces (tools, models, logs, settings).
+ *   Rendered as a single "Manage" dropdown: these are visited rarely, and as
+ *   flat tabs they pushed the top bar past its width once add-ons unlocked.
  */
 export type FeatureGroup = 'create' | 'studio' | 'manage'
 
@@ -39,6 +41,7 @@ export const FEATURES: FeatureDef[] = [
   { id: 'tools',           label: 'Tools',          href: '/tools',           icon: 'Wrench',            kind: 'core',  group: 'manage' },
   { id: 'models',          label: 'Models',         href: '/models',          icon: 'Package',           kind: 'core',  group: 'manage' },
   { id: 'logs',            label: 'Logs',           href: '/logs',            icon: 'ScrollText',        kind: 'core',  group: 'manage' },
+  { id: 'settings',        label: 'Settings',       href: '/settings',        icon: 'Settings',          kind: 'core',  group: 'manage' },
 ]
 
 /** Display order of the visual nav groups. */
