@@ -629,7 +629,7 @@ Write-Step 'Ensuring uv (Python package manager) is installed'
 $uvExe = Get-ExePath 'uv'
 if ($uvExe) { Write-Ok "uv found at $uvExe" }
 else {
-    Install-WingetPkg 'Astral.UV' 'uv'
+    Install-WingetPkg 'astral-sh.uv' 'uv'
     $uvExe = Get-ExePath 'uv'
     if (-not $uvExe) { Write-Fail 'uv not found after installation.' }
 }
