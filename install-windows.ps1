@@ -185,15 +185,14 @@ function Show-AmdExperimentalWarning([string]$AdapterName) {
     Add-Log "[AMD] experimental warning shown (adapter=$AdapterName)"
 }
 
-# Windows 11 + a supported RDNA generation. Hard-fails rather than installing a
-# stack that provably cannot work. Python 3.12 is gated separately at Step 5,
-# because that runs after Python has had a chance to be installed.
+# Windows 11 (Test-Windows11, in lib.ps1) + a supported RDNA generation. Hard-fails
+# rather than installing a stack that provably cannot work. Python 3.12 is gated
+# separately at Step 5, because that runs after Python could be installed.
 function Assert-AmdPrerequisites([string]$AdapterName) {
-    # ROCm on Windows is Windows 11 only. Build 22000 is the 10-to-11 boundary.
     $build = 0
     try { $build = [int](Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).BuildNumber } catch {}
     Add-Log "[AMD] windows build=$build"
-    if ($build -gt 0 -and $build -lt 22000) {
+    if (-not (Test-Windows11)) {
         Write-Fail ("AMD/ROCm needs Windows 11 (this looks like Windows 10, build $build). " +
                     "Re-run without -Gpu amd to install the CPU build instead.")
     }
@@ -837,29 +836,56 @@ $nvSmi = Get-ExePath 'nvidia-smi'
 # Which acceleration stack the rest of the install targets. Read by
 # Install-OnnxRuntime (and, once AMD lands, by the PyTorch step).
 $AmdAdapter = Get-AmdAdapterName
-# 'auto' resolves to NVIDIA or CPU only — never AMD. See the -Gpu param for why.
 $GpuVendor = switch ($Gpu) {
     'nvidia' { 'nvidia' }
     'amd'    { 'amd' }
     'cpu'    { 'cpu' }
     default  { $(if ($nvSmi) { 'nvidia' } else { 'cpu' }) }
 }
-Add-Log "[GPU] requested=$Gpu resolved=$GpuVendor nvidia-smi=$([bool]$nvSmi) amd='$AmdAdapter'"
+# NVIDIA is selected automatically; AMD is offered, never forced. On a ROCm-capable
+# Radeon with no NVIDIA present, 'auto' asks rather than silently installing the CPU
+# stack — which for an image/video generator means "your card does nothing". Both
+# hard gates that are already knowable here (arch, Windows 11) must hold, so saying
+# yes can never lead into Assert-AmdPrerequisites aborting the whole install.
+$AmdAutoOffer = ($Gpu -eq 'auto' -and $GpuVendor -eq 'cpu' -and $AmdAdapter -and
+                 (Test-AmdRocmSupported $AmdAdapter) -and (Test-Windows11))
+if ($AmdAutoOffer) { $GpuVendor = 'amd' }
+Add-Log "[GPU] requested=$Gpu resolved=$GpuVendor nvidia-smi=$([bool]$nvSmi) amd='$AmdAdapter' offer=$AmdAutoOffer"
 
 if ($GpuVendor -eq 'amd') {
     Show-AmdExperimentalWarning $AmdAdapter
     Assert-AmdPrerequisites     $AmdAdapter
-    # Interactive console confirms; headless/GUI runs log and proceed. Mirrors the
+    # Interactive console confirms; headless/GUI runs cannot ask. Mirrors the
     # ControlNet prompt below so the GUI shell can never hang on a hidden question.
     if (-not $DryRun) {
+        # $null means we could not ask at all (redirected stdin, no console).
+        $yn = $null
         try {
             if (-not [Console]::IsInputRedirected) {
                 $yn = Read-Host '  Install the experimental AMD/ROCm build? [y/N]'
-                if ($yn -notmatch '^[Yy]') { Write-Info 'Aborting.'; exit 0 }
+            }
+        } catch {}
+        if ($null -eq $yn) {
+            # Nobody consented to an experimental stack, so an auto-offer stays on
+            # CPU. An explicit -Gpu amd still proceeds: that is how `update` keeps
+            # an existing ROCm install from being overwritten with CUDA wheels.
+            if ($AmdAutoOffer) {
+                $GpuVendor = 'cpu'
+                Write-Info 'No interactive console — installing the CPU build. Re-run with -Gpu amd for ROCm.'
             } else {
                 Write-Info 'No interactive console — proceeding with the experimental AMD build.'
             }
-        } catch { Write-Info 'No interactive console — proceeding with the experimental AMD build.' }
+        } elseif ($yn -notmatch '^[Yy]') {
+            # Declining an offer keeps the install going on CPU; declining an
+            # explicit -Gpu amd aborts, because CPU is not what that user asked for.
+            if ($AmdAutoOffer) {
+                $GpuVendor = 'cpu'
+                Write-Warn 'Installing the CPU build instead — generation will be very slow.'
+                Write-Info 'Re-run install-windows.bat -Gpu amd to install the ROCm build.'
+            } else {
+                Write-Info 'Aborting.'; exit 0
+            }
+        }
     }
 } elseif ($nvSmi) {
     $drv = (& nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>$null | Select-Object -First 1)
@@ -883,16 +909,20 @@ if ($GpuVendor -eq 'amd') {
             Write-Warn "NVIDIA GPU found ($($nvidiaGpu.Name)) but nvidia-smi missing."
             Write-Info "Install the latest driver from nvidia.com, reboot, then re-run."
         } elseif ($AmdAdapter -and (Test-AmdRocmSupported $AmdAdapter)) {
-            # Detected, but not acted on: AMD stays opt-in until a tester confirms it.
-            # This branch is what makes flipping 'auto' later a one-line change.
+            # 'auto' offers ROCm above, so this is either an explicit -Gpu cpu or a
+            # card AMD supports on a Windows version AMD does not.
             Write-Warn "AMD graphics card detected: $AmdAdapter"
             Write-Host ''
-            Write-Host '    Experimental AMD (ROCm) support is available. To use it, re-run:' -ForegroundColor Cyan
-            Write-Host '        install-windows.bat -Gpu amd' -ForegroundColor Cyan
-            Write-Host '    It is unverified on real hardware — see the warning it prints.' -ForegroundColor DarkGray
+            if (Test-Windows11) {
+                Write-Host '    Experimental AMD (ROCm) support is available. To use it, re-run:' -ForegroundColor Cyan
+                Write-Host '        install-windows.bat -Gpu amd' -ForegroundColor Cyan
+                Write-Host '    It is unverified on real hardware — see the warning it prints.' -ForegroundColor DarkGray
+            } else {
+                Write-Host "    AMD's ROCm needs Windows 11, so this card cannot be used here." -ForegroundColor Yellow
+            }
             Write-Host '    Continuing now installs the CPU build (works, but very slow).' -ForegroundColor DarkGray
             Write-Host ''
-            Add-Log "[GPU] AMD card detected but not selected (opt-in via -Gpu amd)"
+            Add-Log "[GPU] AMD card detected but not selected (win11=$(Test-Windows11))"
         } elseif ($AmdAdapter) {
             Write-Warn "AMD graphics card detected ($AmdAdapter) but it has no Windows ROCm support."
             Write-Info 'RDNA3/RDNA4 only (RX 7000/9000). Generation will be CPU-only (very slow).'

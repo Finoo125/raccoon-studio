@@ -22,6 +22,15 @@ function Test-AmdRocmSupported([string]$Name) {
            ($Name -match '(?i)\bAI\s+PRO\s+R9\d{3}')
 }
 
+# AMD ships Windows ROCm for Windows 11 only. Build 22000 is the 10-to-11
+# boundary; an unreadable build counts as OK, so a CIM failure can never be the
+# reason an install is refused.
+function Test-Windows11 {
+    $build = 0
+    try { $build = [int](Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).BuildNumber } catch {}
+    return ($build -eq 0 -or $build -ge 22000)
+}
+
 # The acceleration stack the existing venv was built with, read from the torch
 # dist-info directory name (torch-2.9.1+rocm7.2.1.dist-info -> amd). Returns
 # $null when nothing is installed yet.

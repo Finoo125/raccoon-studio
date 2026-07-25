@@ -621,7 +621,7 @@ main() {
   step "Checking graphics card and driver"
   # Which acceleration stack the rest of the install targets. Read by
   # install_onnxruntime and the PyTorch step. Deliberately global, not local —
-  # later steps run outside this function. 'auto' never resolves to amd.
+  # later steps run outside this function.
   AMD_ADAPTER="$(amd_adapter_name)"
   case "$GPU_REQUEST" in
     nvidia) GPU_VENDOR=nvidia ;;
@@ -629,7 +629,18 @@ main() {
     cpu)    GPU_VENDOR=cpu ;;
     *)      if command -v nvidia-smi &>/dev/null; then GPU_VENDOR=nvidia; else GPU_VENDOR=cpu; fi ;;
   esac
-  log_raw "[GPU] requested=$GPU_REQUEST resolved=$GPU_VENDOR amd='$AMD_ADAPTER'"
+  # NVIDIA is selected automatically; AMD is offered, never forced. On a
+  # ROCm-capable Radeon with no NVIDIA present, `auto` asks rather than silently
+  # installing the CPU stack — which for an image/video generator means "your card
+  # does nothing". Only offered when amd_rocm_supported already says yes, so the
+  # answer can never lead into assert_amd_prerequisites aborting the whole install.
+  AMD_AUTO_OFFER=0
+  if [ "$GPU_REQUEST" = auto ] && [ "$GPU_VENDOR" = cpu ] &&
+     [ -n "$AMD_ADAPTER" ] && amd_rocm_supported "$AMD_ADAPTER"; then
+    AMD_AUTO_OFFER=1
+    GPU_VENDOR=amd
+  fi
+  log_raw "[GPU] requested=$GPU_REQUEST resolved=$GPU_VENDOR amd='$AMD_ADAPTER' offer=$AMD_AUTO_OFFER"
 
   if [ "$GPU_VENDOR" = amd ]; then
     show_amd_experimental_warning "$AMD_ADAPTER"
@@ -638,7 +649,21 @@ main() {
       if [ -t 0 ]; then
         printf "\n  ${Y}Install the experimental AMD/ROCm build? [y/N]${N} "
         read -r yn
-        [[ "${yn,,}" == "y" ]] || { info "Aborting."; exit 0; }
+        if [[ "${yn,,}" != "y" ]]; then
+          # Declining an offer keeps the install going on CPU; declining an explicit
+          # --gpu=amd aborts, because CPU is not what that user asked for.
+          if [ "$AMD_AUTO_OFFER" = 1 ]; then
+            GPU_VENDOR=cpu
+            warn "Installing the CPU build instead — generation will be very slow."
+          else
+            info "Aborting."; exit 0
+          fi
+        fi
+      elif [ "$AMD_AUTO_OFFER" = 1 ]; then
+        # No tty (zenity GUI, piped, headless): nobody consented to an experimental
+        # stack, so stay on CPU and name the flag that opts in.
+        GPU_VENDOR=cpu
+        info "No interactive terminal — installing the CPU build. Re-run with --gpu=amd for ROCm."
       else
         info "No interactive terminal — proceeding with the experimental AMD build."
       fi
@@ -659,8 +684,8 @@ main() {
   else
     warn "nvidia-smi not found."
     if [ -n "$AMD_ADAPTER" ] && amd_rocm_supported "$AMD_ADAPTER"; then
-      # Detected, but not acted on: AMD stays opt-in until a tester confirms it.
-      # This branch is what makes flipping 'auto' later a one-line change.
+      # Reachable only when something else was asked for explicitly (--gpu=cpu, or
+      # --gpu=nvidia on a box with no driver): `auto` offers ROCm above instead.
       warn "AMD graphics card detected: $AMD_ADAPTER"
       printf "\n    ${C}Experimental AMD (ROCm) support is available. To use it, re-run:${N}\n"
       printf "        ${C}./install-linux.sh --gpu=amd${N}\n"

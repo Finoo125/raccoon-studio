@@ -73,10 +73,14 @@ amd_adapter_name() {
     case "$n" in *[Aa][Mm][Dd]*|*[Rr]adeon*) names+=("$n") ;; esac
   done
   if command -v lspci &>/dev/null; then
+    # Take the 4th quoted field (slot, class, vendor, DEVICE), not the last one:
+    # lspci -mm appends quoted subsystem vendor/device, so anchoring on the end
+    # yields the board partner's "Device 5100" instead of "Radeon RX 9070 XT" -
+    # which then fails amd_rocm_supported and refuses a perfectly supported card.
     while IFS= read -r n; do
       [ -n "$n" ] && names+=("$n")
     done < <(lspci -mm 2>/dev/null | grep -i 'vga\|3d\|display' | grep -i 'amd\|radeon\|ati' |
-             sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/; s/^[[:space:]]*//')
+             sed -E 's/^[^"]*"[^"]*"[[:space:]]*"[^"]*"[[:space:]]*"([^"]*)".*/\1/')
   fi
   [ "${#names[@]}" -eq 0 ] && { printf ''; return 0; }
   for n in "${names[@]}"; do
