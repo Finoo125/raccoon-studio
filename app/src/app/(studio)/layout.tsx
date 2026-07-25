@@ -17,6 +17,7 @@ import { navGroups, type FeatureDef } from '@/lib/features/registry'
 import { useAddonStore } from '@/lib/addons/store'
 import { Fragment, useEffect, useState } from 'react'
 import QueuePanel from '@/components/queue/QueuePanel'
+import FirstRunModels from '@/components/FirstRunModels'
 
 const ICONS: Record<string, LucideIcon> = {
   Wand2, Clapperboard, Images, SlidersHorizontal, Film, Package, ScrollText, Puzzle, PencilRuler, Wrench, Settings,
@@ -145,6 +146,7 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
 
       <QueueProvider />
       <QueuePanel open={queueOpen} onOpenChange={setQueueOpen} />
+      <FirstRunModels />
       <Toaster richColors position="bottom-right" />
     </div>
   )
@@ -182,7 +184,7 @@ function NavLink({
   )
 }
 
-/** The 'manage' cluster (Tools · Models · Logs · Settings) as one dropdown. */
+/** The 'manage' cluster (Tools · Logs · Settings) as one dropdown. */
 function ManageMenu({ items, pathname }: { items: FeatureDef[]; pathname: string }) {
   const [open, setOpen] = useState(false)
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)

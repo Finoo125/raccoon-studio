@@ -20,19 +20,19 @@ describe('feature registry', () => {
 
   it('core features are everything else', () => {
     expect(coreFeatures().map((f) => f.id)).toEqual([
-      'generate', 'generate-videos', 'gallery', 'tools', 'models', 'logs', 'settings',
+      'generate', 'generate-videos', 'gallery', 'models', 'tools', 'logs', 'settings',
     ])
   })
 
   it('visibleNav with nothing unlocked = core only, original order', () => {
     expect(visibleNav([]).map((f) => f.id)).toEqual([
-      'generate', 'generate-videos', 'gallery', 'tools', 'models', 'logs', 'settings',
+      'generate', 'generate-videos', 'gallery', 'models', 'tools', 'logs', 'settings',
     ])
   })
 
   it('visibleNav includes an unlocked add-on in registry order', () => {
     expect(visibleNav(['photo-editor']).map((f) => f.id)).toEqual([
-      'generate', 'generate-videos', 'gallery', 'photo-editor', 'tools', 'models', 'logs', 'settings',
+      'generate', 'generate-videos', 'gallery', 'models', 'photo-editor', 'tools', 'logs', 'settings',
     ])
   })
 
@@ -47,9 +47,9 @@ describe('feature registry', () => {
     const groups = navGroups([])
     expect(groups.map((g) => g.group)).toEqual(['create', 'studio', 'manage'])
     expect(groups.find((g) => g.group === 'create')!.items.map((f) => f.id))
-      .toEqual(['generate', 'generate-videos', 'gallery'])
+      .toEqual(['generate', 'generate-videos', 'gallery', 'models'])
     expect(groups.find((g) => g.group === 'manage')!.items.map((f) => f.id))
-      .toEqual(['tools', 'models', 'logs', 'settings'])
+      .toEqual(['tools', 'logs', 'settings'])
   })
 
   it('navGroups always emits the studio group (Add-ons link lives there), even with no add-on unlocked', () => {

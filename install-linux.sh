@@ -927,6 +927,53 @@ main() {
         https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/GPEN-BFR-1024.onnx \
       || { warn "GPEN-BFR-1024 download failed — grab it from the Models page (face swap needs it)"; rm -f "$FR_DIR/GPEN-BFR-1024.onnx"; }
   fi
+  # The rest of the face-swap chain (~1.7 GB). ReActor's install.py only fetches
+  # inswapper; everything else it needs is pulled silently mid-generation on the
+  # first swap — or, for the hyperswap models the app's swap-model picker offers,
+  # not at all: picking one without the file present just fails the prompt. That
+  # is the single most-overlooked gap after an install, so grab it all up front.
+  # Paths match what ReActor resolves at runtime (scripts/reactor_swapper.py) and
+  # what the Models page downloads. Each file is skipped if present, non-fatal.
+  # rows: "<dir-under-models>|<filename>|<url>"
+  local swap_rows=(
+    "hyperswap|hyperswap_1a_256.onnx|https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/hyperswap_1a_256.onnx"
+    "hyperswap|hyperswap_1b_256.onnx|https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/hyperswap_1b_256.onnx"
+    "hyperswap|hyperswap_1c_256.onnx|https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/hyperswap_1c_256.onnx"
+    "insightface|inswapper_128.onnx|https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/inswapper_128.onnx"
+    "facedetection|detection_Resnet50_Final.pth|https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth"
+    "facedetection|parsing_parsenet.pth|https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/parsing_parsenet.pth"
+  )
+  local swap_row
+  for swap_row in "${swap_rows[@]}"; do
+    local sdir="${swap_row%%|*}"; local srest="${swap_row#*|}"
+    local sname="${srest%%|*}"; local surl="${srest#*|}"
+    local sdest="$COMFYUI_DIR/models/$sdir/$sname"
+    if [ ! -f "$sdest" ]; then
+      run mkdir -p "$COMFYUI_DIR/models/$sdir"
+      spin_run "Downloading face-swap model: $sname" \
+        curl -fL --retry 3 -o "$sdest" "$surl" \
+        || { warn "$sname download failed — install it from the Models page before using face swap"; rm -f "$sdest"; }
+    fi
+  done
+  # buffalo_l — the face detect/recognise pack every swap runs through, shipped
+  # as a zip. Both ReActor and our vendored RaccoonSwapNodes read it from
+  # models/insightface/models/buffalo_l; det_10g.onnx is the file they check for.
+  # Unzipped with the venv python — `unzip` is not installed everywhere.
+  local BUFFALO_DIR="$COMFYUI_DIR/models/insightface/models/buffalo_l"
+  if [ ! -f "$BUFFALO_DIR/det_10g.onnx" ]; then
+    run mkdir -p "$BUFFALO_DIR"
+    if spin_run "Downloading buffalo_l face-analysis pack (290 MB)" \
+         curl -fL --retry 3 -o "$BUFFALO_DIR/buffalo_l.zip" \
+           https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/buffalo_l.zip
+    then
+      spin_run "Extracting buffalo_l face-analysis pack" \
+        "$VENV_DIR/bin/python" -m zipfile -e "$BUFFALO_DIR/buffalo_l.zip" "$BUFFALO_DIR" \
+        || warn "buffalo_l extract failed (ReActor re-fetches it on the first face swap)"
+    else
+      warn "buffalo_l download failed (ReActor re-fetches it on the first face swap)"
+    fi
+    rm -f "$BUFFALO_DIR/buffalo_l.zip"
+  fi
   # Hi-res upscale models (ESRGAN). The image workflows reference these by name in
   # UpscaleModelLoader, so without them the (default-on) upscale stage fails prompt
   # validation: 4x-UltraSharp (Ernie / Z-Image / SDXL) and 4x-AnimeSharp (Anima /

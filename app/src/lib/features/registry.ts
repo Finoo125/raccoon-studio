@@ -2,9 +2,11 @@ export type FeatureKind = 'core' | 'addon'
 
 /**
  * Visual nav grouping (order = display order):
- * - 'create' → core creation surfaces (generate image/video, gallery).
+ * - 'create' → core creation surfaces (generate image/video, gallery, models).
+ *   Models sits here, not in the dropdown: nothing generates without a model,
+ *   so a new install must be able to find it without opening a menu.
  * - 'studio' → the paid Patreon add-ons (+ the Add-ons store link).
- * - 'manage' → utility/management surfaces (tools, models, logs, settings).
+ * - 'manage' → utility/management surfaces (tools, logs, settings).
  *   Rendered as a single "Manage" dropdown: these are visited rarely, and as
  *   flat tabs they pushed the top bar past its width once add-ons unlocked.
  */
@@ -35,11 +37,11 @@ export const FEATURES: FeatureDef[] = [
   { id: 'generate',        label: 'Generate Image', href: '/generate',        icon: 'Wand2',             kind: 'core',  group: 'create' },
   { id: 'generate-videos', label: 'Generate Video', href: '/generate-videos', icon: 'Clapperboard',      kind: 'core',  group: 'create' },
   { id: 'gallery',         label: 'Gallery',        href: '/gallery',         icon: 'Images',            kind: 'core',  group: 'create' },
+  { id: 'models',          label: 'Models',         href: '/models',          icon: 'Package',           kind: 'core',  group: 'create' },
   { id: 'photo-editor',    label: 'Photo Editing',  href: '/photo-editing',   icon: 'SlidersHorizontal', kind: 'addon', group: 'studio' },
   { id: 'prompt-builder',  label: 'Prompt Builder', href: '/prompt-builder',  icon: 'PencilRuler',       kind: 'addon', group: 'studio' },
   { id: 'movie-maker',     label: 'Movie Maker',    href: '/movie',           icon: 'Film',              kind: 'addon', group: 'studio', requires: { models: [] } },
   { id: 'tools',           label: 'Tools',          href: '/tools',           icon: 'Wrench',            kind: 'core',  group: 'manage' },
-  { id: 'models',          label: 'Models',         href: '/models',          icon: 'Package',           kind: 'core',  group: 'manage' },
   { id: 'logs',            label: 'Logs',           href: '/logs',            icon: 'ScrollText',        kind: 'core',  group: 'manage' },
   { id: 'settings',        label: 'Settings',       href: '/settings',        icon: 'Settings',          kind: 'core',  group: 'manage' },
 ]
