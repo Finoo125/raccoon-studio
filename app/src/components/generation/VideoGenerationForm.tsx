@@ -402,7 +402,7 @@ export default function VideoGenerationForm() {
         <p className="text-xs text-muted-foreground">
           {params.vramMode === 'low'
             ? 'Renders at ~1 MP so 16 GB cards don’t spill into shared GPU memory.'
-            : 'Full ~2 MP render for 24 GB+ cards (RTX 4090 / 5090).'}
+            : 'Full ~2 MP render for 24 GB+ cards.'}
         </p>
       </div>
 

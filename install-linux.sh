@@ -37,11 +37,25 @@ RS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${RACCOON_ROOT:=$RS_DIR}"
 source "$RS_DIR/installer/lib.sh"
 WITH_CONTROLNET=0; SKIP_CONTROLNET=0
+# Which acceleration stack to install for:
+#   auto   - NVIDIA when nvidia-smi is present, else CPU. Deliberately does NOT
+#            pick AMD: ROCm support is experimental and unverified on real
+#            hardware, so it stays opt-in until a tester confirms it. An AMD card
+#            is still DETECTED and the user is told how to opt in.
+#   amd    - experimental ROCm/HIP path (RDNA3/RDNA4 only)
+#   nvidia - force CUDA even if nvidia-smi is missing
+#   cpu    - no acceleration
+GPU_REQUEST=auto
 for a in "$@"; do case "$a" in
   --dry-run)         DRY_RUN=1 ;;
   --with-controlnet) WITH_CONTROLNET=1 ;;
   --skip-controlnet) SKIP_CONTROLNET=1 ;;
+  --gpu=*)           GPU_REQUEST="${a#*=}" ;;
 esac; done
+case "$GPU_REQUEST" in
+  auto|nvidia|amd|cpu) ;;
+  *) printf 'Unknown --gpu=%s (expected auto|nvidia|amd|cpu)\n' "$GPU_REQUEST" >&2; exit 2 ;;
+esac
 RS_TOTAL=13; RS_STEP=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -321,6 +335,14 @@ find_python() {
   return 1
 }
 
+# Next.js 16 needs Node 20.9+ (app/node_modules/next → engines.node ">=20.9.0").
+# Checking only the major version lets Node 18/20.0 pass, `npm install` then gets
+# far enough to look fine and the app dies at startup — so compare the minor too.
+node_supported() {
+  command -v node &>/dev/null || return 1
+  node -e 'const [a,b] = process.versions.node.split(".").map(Number); process.exit(a > 20 || (a === 20 && b >= 9) ? 0 : 1)' 2>/dev/null
+}
+
 # ── Custom-node pack helpers ────────────────────────────────────────────────────
 # Bash uses dynamic scoping, so these see main()'s $UV when called from it.
 # All steps are non-fatal: one bad pack warns and continues rather than aborting.
@@ -353,6 +375,135 @@ copy_vendor_pack() {
     spin_run "Installing $name dependencies" \
       "$UV" pip install --python "$VENV_DIR/bin/python" -r "$dir/requirements.txt" \
       || warn "$name dependency install failed"
+  fi
+}
+
+# ── AMD / ROCm guidance ────────────────────────────────────────────────────────
+# Stated up front, before anything is installed. Names what is actually degraded
+# rather than a vague "may not work" — a tester needs to know what to ignore.
+show_amd_experimental_warning() { # adapter-name
+  printf "\n  ${Y}┌──────────────────────────────────────────────────────────────┐${N}\n"
+  printf   "  ${Y}│  EXPERIMENTAL - AMD / ROCm support                           │${N}\n"
+  printf   "  ${Y}└──────────────────────────────────────────────────────────────┘${N}\n"
+  printf   "     ${DIM}Card: %s${N}\n\n" "${1:-unknown}"
+  printf   "     ${Y}This path has NOT been verified on real AMD hardware yet.${N}\n"
+  printf   "     ${DIM}Known limitations:${N}\n"
+  printf   "     ${DIM}  - Face swap runs on the CPU (slower); the ROCm EP is untested${N}\n"
+  printf   "     ${DIM}  - ControlNet preprocessors run on the CPU (slower)${N}\n"
+  printf   "     ${DIM}  - The VRAM meter in the top bar stays blank${N}\n"
+  printf   "     ${DIM}Image and video generation are expected to work at full speed.${N}\n\n"
+  printf   "     ${C}If something breaks, send us logs/amd-diagnostics.txt.${N}\n\n"
+  log_raw "[AMD] experimental warning shown (adapter=${1:-unknown})"
+}
+
+# A supported RDNA generation. Hard-fails rather than installing a stack that
+# provably cannot work. Unlike Windows there is no Python 3.12 gate: the
+# pytorch.org ROCm index ships cp310-cp315 wheels.
+assert_amd_prerequisites() { # adapter-name
+  if [ -z "$1" ]; then
+    fail "--gpu=amd was requested but no AMD/Radeon graphics card was found. Re-run without --gpu=amd."
+  fi
+  if ! amd_rocm_supported "$1"; then
+    printf "\n    ${R}%s is not supported by ROCm for PyTorch.${N}\n" "$1"
+    printf   "    ${Y}AMD ships ROCm PyTorch support for RDNA3 and RDNA4:${N}\n"
+    printf   "    ${DIM}  - Radeon RX 9000 series (9070 XT, 9070, 9060 XT, ...)${N}\n"
+    printf   "    ${DIM}  - Radeon RX 7000 series (7900 XTX/XT/GRE, 7800 XT, 7700 XT, ...)${N}\n"
+    printf   "    ${DIM}  - Radeon PRO W7000 / AI PRO R9700${N}\n"
+    printf   "    ${DIM}RX 6000 and older (RDNA2, RDNA1, Vega) and the Ryzen integrated${N}\n"
+    printf   "    ${DIM}graphics are not officially supported. RDNA2 can sometimes be${N}\n"
+    printf   "    ${DIM}coaxed along with HSA_OVERRIDE_GFX_VERSION=10.3.0, but that is${N}\n"
+    printf   "    ${DIM}unofficial and we will not ship it as a supported path.${N}\n\n"
+    printf   "    ${C}Re-run without --gpu=amd to install the CPU build (slow but working).${N}\n\n"
+    fail "$1 has no official ROCm PyTorch support."
+  fi
+  ok "$1 is a supported RDNA3/RDNA4 card"
+}
+
+# ── AMD diagnostics ────────────────────────────────────────────────────────────
+# One purpose-built file a tester can paste, instead of asking them to grep a
+# 2000-line install log. Written on the AMD path only.
+write_amd_diagnostics() {
+  [ "$GPU_VENDOR" = amd ] || return 0
+  [ "$DRY_RUN" = 1 ] && return 0
+  local f="$LOG_DIR/amd-diagnostics.txt" py="$VENV_DIR/bin/python" probe="" reserve=""
+  mkdir -p "$LOG_DIR"
+  # An early failure leaves no venv; the non-torch fields are still worth having.
+  if [ -x "$py" ]; then
+    probe=$("$py" -c '
+import json
+r = {}
+try:
+    import torch, sys
+    r["python"] = "%d.%d.%d" % sys.version_info[:3]
+    r["torch"] = torch.__version__
+    r["hip"] = str(torch.version.hip or "")
+    r["available"] = bool(torch.cuda.is_available())
+    if r["available"]:
+        p = torch.cuda.get_device_properties(0)
+        r["device"] = torch.cuda.get_device_name(0)
+        r["arch"] = str(getattr(p, "gcnArchName", "") or "")
+        r["vram"] = round(p.total_memory / (1024 ** 3), 1)
+except Exception as e:
+    r["err"] = str(e)
+try:
+    import onnxruntime
+    r["ort"] = onnxruntime.__version__
+    r["ort_providers"] = onnxruntime.get_available_providers()
+except Exception as e:
+    r["ort_err"] = str(e)
+print(json.dumps(r))' 2>/dev/null || true)
+    reserve=$("$py" "$SCRIPT_DIR/installer/reserve-vram.py" 2>/dev/null || true)
+  fi
+  {
+    printf '=== Raccoon Studio - AMD diagnostics ===\n'
+    printf 'generated         : %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf 'adapter           : %s\n' "${AMD_ADAPTER:-unknown}"
+    printf 'kernel            : %s\n' "$(uname -r 2>/dev/null || echo '?')"
+    printf 'distro            : %s\n' "$( (. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || echo '?')"
+    printf 'amdgpu module     : %s\n' "$(lsmod 2>/dev/null | grep -c '^amdgpu' || echo 0)"
+    printf 'reserve-vram      : %s\n' "${reserve:+$reserve GB}${reserve:-(none - ComfyUI default)}"
+    printf 'torch/onnx probe  : %s\n' "${probe:-(venv not built yet)}"
+    printf '\n=== AMD step results (from the install log) ===\n'
+    grep -E '\[AMD\]|\[ONNX\]|\[GPU\]' "$LOG_FILE" 2>/dev/null || printf '(none found)\n'
+  } >"$f" 2>/dev/null && ok "AMD diagnostics written to logs/amd-diagnostics.txt"
+  log_raw "[AMD] diagnostics written"
+}
+
+# ── onnxruntime execution provider ─────────────────────────────────────────────
+# The node packs disagree about which onnxruntime to pull: comfyui_controlnet_aux
+# wants onnxruntime-gpu, comfyui-easy-use wants plain onnxruntime, and ReActor's
+# install.py picks its own. All three share ONE package directory, so whichever
+# lands last wins and orphans the other's provider DLLs — leaving a machine that
+# looks fine but runs face swap and the ControlNet preprocessors on the CPU.
+# Reconcile to exactly one build, AFTER every pack has had its say.
+install_onnxruntime() {
+  local pkg
+  case "${GPU_VENDOR:-cpu}" in
+    nvidia) pkg="onnxruntime-gpu" ;;
+    amd)    pkg="onnxruntime-rocm" ;;   # Linux keeps the ROCm EP; Windows uses DirectML
+    *)      pkg="onnxruntime" ;;
+  esac
+  # uv exits 0 for packages that aren't installed, so listing all three is safe.
+  spin_run "Reconciling onnxruntime" \
+    "$UV" pip uninstall --python "$VENV_DIR/bin/python" \
+      onnxruntime onnxruntime-gpu onnxruntime-rocm || true
+  spin_run "Installing $pkg for face swap / ControlNet preprocessors" \
+    "$UV" pip install --python "$VENV_DIR/bin/python" "$pkg" \
+    || warn "$pkg install failed — face swap will run on the CPU (slow)"
+  [ "$DRY_RUN" = 1 ] && return 0
+  # Report what actually resolved. A GPU box that prints CPU here means the
+  # provider libs didn't load — the single most useful line in a support bundle.
+  local eps
+  eps=$("$VENV_DIR/bin/python" -c \
+    "import onnxruntime; print(','.join(onnxruntime.get_available_providers()))" 2>/dev/null || true)
+  if [ -n "$eps" ]; then
+    log_raw "[ONNX] $pkg providers: $eps"
+    case "$eps" in
+      *CUDA*|*ROCM*|*MIGraphX*) ok "GPU inference ready ($pkg)" ;;
+      *) warn "onnxruntime has no GPU provider — face swap will run on the CPU" ;;
+    esac
+  else
+    warn "Could not verify onnxruntime providers"
   fi
 }
 
@@ -466,9 +617,33 @@ main() {
   info "Distro: ${DISTRO_ID} ${DISTRO_VERSION} (family: ${DISTRO_FAMILY})"
   info "Install dir: ${SCRIPT_DIR}"
 
-  # ── Step 1: NVIDIA check ────────────────────────────────────────────────────
-  step "Checking NVIDIA driver"
-  if command -v nvidia-smi &>/dev/null; then
+  # ── Step 1: GPU check ───────────────────────────────────────────────────────
+  step "Checking graphics card and driver"
+  # Which acceleration stack the rest of the install targets. Read by
+  # install_onnxruntime and the PyTorch step. Deliberately global, not local —
+  # later steps run outside this function. 'auto' never resolves to amd.
+  AMD_ADAPTER="$(amd_adapter_name)"
+  case "$GPU_REQUEST" in
+    nvidia) GPU_VENDOR=nvidia ;;
+    amd)    GPU_VENDOR=amd ;;
+    cpu)    GPU_VENDOR=cpu ;;
+    *)      if command -v nvidia-smi &>/dev/null; then GPU_VENDOR=nvidia; else GPU_VENDOR=cpu; fi ;;
+  esac
+  log_raw "[GPU] requested=$GPU_REQUEST resolved=$GPU_VENDOR amd='$AMD_ADAPTER'"
+
+  if [ "$GPU_VENDOR" = amd ]; then
+    show_amd_experimental_warning "$AMD_ADAPTER"
+    assert_amd_prerequisites      "$AMD_ADAPTER"
+    if [ "$DRY_RUN" != 1 ]; then
+      if [ -t 0 ]; then
+        printf "\n  ${Y}Install the experimental AMD/ROCm build? [y/N]${N} "
+        read -r yn
+        [[ "${yn,,}" == "y" ]] || { info "Aborting."; exit 0; }
+      else
+        info "No interactive terminal — proceeding with the experimental AMD build."
+      fi
+    fi
+  elif command -v nvidia-smi &>/dev/null; then
     local drv gpu
     drv=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
     gpu=$(nvidia-smi --query-gpu=name          --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
@@ -483,7 +658,21 @@ main() {
     fi
   else
     warn "nvidia-smi not found."
-    warn "If you have an NVIDIA GPU, install the driver and re-run."
+    if [ -n "$AMD_ADAPTER" ] && amd_rocm_supported "$AMD_ADAPTER"; then
+      # Detected, but not acted on: AMD stays opt-in until a tester confirms it.
+      # This branch is what makes flipping 'auto' later a one-line change.
+      warn "AMD graphics card detected: $AMD_ADAPTER"
+      printf "\n    ${C}Experimental AMD (ROCm) support is available. To use it, re-run:${N}\n"
+      printf "        ${C}./install-linux.sh --gpu=amd${N}\n"
+      printf "    ${DIM}It is unverified on real hardware — see the warning it prints.${N}\n"
+      printf "    ${DIM}Continuing now installs the CPU build (works, but very slow).${N}\n\n"
+      log_raw "[GPU] AMD card detected but not selected (opt-in via --gpu=amd)"
+    elif [ -n "$AMD_ADAPTER" ]; then
+      warn "AMD graphics card detected ($AMD_ADAPTER) but it is not ROCm-supported."
+      info "RDNA3/RDNA4 only (RX 7000/9000). Generation will be CPU-only (very slow)."
+    else
+      warn "If you have an NVIDIA GPU, install the driver and re-run."
+    fi
     warn "Generation will fall back to CPU (very slow) without CUDA."
     # Only prompt with an interactive terminal; the zenity GUI / headless runs
     # have no tty on stdin and must continue CPU-only rather than read EOF and
@@ -543,20 +732,13 @@ main() {
   ok "System packages ready"
 
   # ── Step 4: Node.js 22 ──────────────────────────────────────────────────────
-  step "Ensuring Node.js 22+ is installed"
-  local node_ok=false
-  if command -v node &>/dev/null; then
-    local node_major
-    node_major=$(node -e "process.stdout.write(process.version.split('.')[0].slice(1))" 2>/dev/null || echo 0)
-    if [ "$node_major" -ge 18 ]; then
-      ok "Node.js $(node --version) found"
-      node_ok=true
-    else
-      warn "Node.js $(node --version) is too old — upgrading"
+  step "Ensuring Node.js 20.9+ is installed"
+  if node_supported; then
+    ok "Node.js $(node --version) found"
+  else
+    if command -v node &>/dev/null; then
+      warn "Node.js $(node --version) is too old for Next.js 16 (needs 20.9+) — upgrading"
     fi
-  fi
-
-  if [ "$node_ok" = false ]; then
     case "$DISTRO_FAMILY" in
       debian)
         spin_run "Installing Node.js 22 via NodeSource" \
@@ -564,8 +746,10 @@ main() {
         ;;
       arch) spin_run "Installing nodejs via pacman" $SUDO pacman -Sy --noconfirm --needed nodejs npm ;;
       fedora) spin_run "Installing nodejs via dnf" $SUDO dnf install -y nodejs npm ;;
-      *) fail "Cannot auto-install Node.js. Install Node.js 18+ manually and re-run." ;;
+      *) fail "Cannot auto-install Node.js. Install Node.js 20.9+ (22 LTS recommended) manually and re-run." ;;
     esac
+    # Distro packages lag: re-verify instead of trusting the install.
+    node_supported || fail "Node.js $(node --version 2>/dev/null || echo 'none') is still what's on PATH after installing. Install Node.js 22 LTS manually (nodejs.org or nvm) and re-run."
     ok "Node.js $(node --version) installed"
   fi
 
@@ -607,16 +791,36 @@ main() {
     ok "Virtual environment already exists"
   fi
 
-  info "Installing PyTorch with CUDA 12.x — downloading ~2.5 GB, this will take a while..."
+  # ROCm needs --index-url, not --extra-index-url: with an extra index pip/uv can
+  # still prefer the default PyPI torch (CPU/CUDA build) since the version strings
+  # differ, silently leaving an AMD box without HIP. Pointing the index at ROCm
+  # makes the ROCm wheel the only candidate. The index carries cp310-cp315, so
+  # unlike the Windows path there is no Python 3.12 requirement here.
+  if [ "$GPU_VENDOR" = amd ]; then
+    TORCH_ARGS=(--index-url https://download.pytorch.org/whl/rocm7.2)
+    info "Installing PyTorch for AMD/ROCm 7.2 — downloading ~3 GB, this will take a while..."
+  else
+    # CPU-only boxes get the same wheels: the CUDA build runs fine on the CPU, so
+    # this keeps one code path and matches the pre-AMD behaviour exactly.
+    TORCH_ARGS=(--extra-index-url https://download.pytorch.org/whl/cu128)
+    if [ "$GPU_VENDOR" = nvidia ]; then
+      info "Installing PyTorch with CUDA 12.x — downloading ~2.5 GB, this will take a while..."
+    else
+      info "Installing PyTorch — downloading ~2.5 GB, this will take a while..."
+    fi
+  fi
   info "Progress is shown below. Do not close the terminal."
   if [ "$DRY_RUN" != 1 ]; then
     printf '\n'
     "$UV" pip install --python "$VENV_DIR/bin/python" \
       torch torchvision torchaudio \
-      --extra-index-url https://download.pytorch.org/whl/cu128 \
+      "${TORCH_ARGS[@]}" \
       2>&1 | tee -a "$INSTALL_LOG" | grep --line-buffered -E 'Downloading|Installed|error|Error|warning' || {
-        printf '\n'; fail "PyTorch installation failed. See $INSTALL_LOG"
+        printf '\n'
+        [ "$GPU_VENDOR" = amd ] && log_raw '[AMD] torch rocm wheels : FAILED'
+        fail "PyTorch installation failed. See $INSTALL_LOG"
       }
+    [ "$GPU_VENDOR" = amd ] && log_raw '[AMD] torch rocm wheels : OK'
     printf '\n'
   fi
   ok "PyTorch installed"
@@ -866,12 +1070,22 @@ main() {
     || warn "video node extra deps failed (comfyui-various / LTXVideo may not load)"
   # RTX video super-resolution — needs an RTX GPU + TensorRT (nvidia-vfx). The
   # single most fragile piece; kept fully non-fatal so the install still finishes.
-  install_node_pack "comfyui_nvidia_rtx_nodes" https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI.git
+  # Needs nvidia-vfx (TensorRT), which has no AMD build at all — pip would just
+  # fail noisily. No workflow references these nodes, so skipping costs nothing.
+  if [ "$GPU_VENDOR" = amd ]; then
+    info "Skipping NVIDIA RTX video nodes (NVIDIA-only; not used by any workflow)."
+    log_raw '[AMD] skipped pack: comfyui_nvidia_rtx_nodes (NVIDIA-only)'
+  else
+    install_node_pack "comfyui_nvidia_rtx_nodes" https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI.git
+  fi
   # RaccoonVideoNodes — the studio's video prompt node pack, vendored in the repo.
   copy_vendor_pack  "RaccoonVideoNodes"
   # RaccoonSwapNodes — pixel-boost face swap, vendored in the repo.
   copy_vendor_pack  "RaccoonSwapNodes"
   ok "LTX 2.3 video nodes ready"
+
+  # Must come after every pack above — see install_onnxruntime for why order matters.
+  install_onnxruntime
 
   # ── Step 11: App Node.js deps ────────────────────────────────────────────────
   step "Installing Raccoon Studio app dependencies"
@@ -883,27 +1097,8 @@ main() {
   step "Writing start scripts and configuration"
 
   if [ "$DRY_RUN" != 1 ]; then
-  # start-comfyui.sh
-  cat > "$SCRIPT_DIR/start-comfyui.sh" <<STARTSCRIPT
-#!/usr/bin/env bash
-# Raccoon Studio — Start ComfyUI
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-VENV_PYTHON="\$SCRIPT_DIR/comfyui/ComfyUI/.venv/bin/python"
-COMFYUI_MAIN="\$SCRIPT_DIR/comfyui/ComfyUI/main.py"
-if [ ! -f "\$COMFYUI_MAIN" ]; then
-  echo "[Raccoon Studio] ComfyUI not found. Run install-linux.sh first."; exit 1
-fi
-echo "[Raccoon Studio] Starting ComfyUI on 127.0.0.1:8188..."
-# --enable-cors-header lets the studio UI (different port) reach ComfyUI;
-# without it ComfyUI 403s the browser WebSocket handshake.
-# --preview-method auto streams decoded latent previews each sampling step so the
-# studio canvas shows the image building up live (taesd if present, else latent2rgb).
-# --reserve-vram 8 keeps headroom for the LTX video upscale pass's full-res
-# attention activations (A/B 2026-07-18 on a 32 GB RTX 5090: upscale steps
-# 78 -> 68 s/it, peak shared GPU memory 24 -> 16.5 GB).
-"\$VENV_PYTHON" -s "\$COMFYUI_MAIN" --listen 127.0.0.1 --port 8188 --enable-cors-header "*" --preview-method auto --preview-size 768 --reserve-vram 8
-STARTSCRIPT
-  chmod +x "$SCRIPT_DIR/start-comfyui.sh"
+  # start-comfyui.sh — stub only; real logic is installer/start-comfyui-core.sh
+  write_start_comfyui_stub "$SCRIPT_DIR/start-comfyui.sh"
 
   # start.sh — opens terminal with both services
   cat > "$SCRIPT_DIR/start.sh" <<'STARTALL'
@@ -1000,36 +1195,56 @@ ENVFILE
   step "Creating desktop shortcut and verifying CUDA"
   install_desktop_shortcut
 
-  # CUDA verification
+  # GPU verification. torch.cuda is the right namespace for BOTH vendors:
+  # PyTorch-ROCm aliases HIP into it, so one probe covers CUDA and ROCm.
+  # torch.version.hip distinguishes them, and gcnArchName is the authoritative
+  # AMD arch check (the earlier name match is only a pre-flight gate).
   local cuda_json
   cuda_json=$("$VENV_DIR/bin/python" - <<'PYCHECK' 2>/dev/null
 import json, sys
-r = {'ok': False, 'device': '', 'err': ''}
+r = {'ok': False, 'device': '', 'err': '', 'hip': '', 'arch': ''}
 try:
     import torch
+    r['hip'] = str(torch.version.hip or '')
     r['ok'] = bool(torch.cuda.is_available())
-    if r['ok']: r['device'] = torch.cuda.get_device_name(0)
+    if r['ok']:
+        r['device'] = torch.cuda.get_device_name(0)
+        r['arch'] = str(getattr(torch.cuda.get_device_properties(0), 'gcnArchName', '') or '')
 except Exception as e:
     r['err'] = str(e)
 print(json.dumps(r))
 PYCHECK
   ) || true
 
-  local cuda_ok cuda_dev cuda_err
+  local cuda_ok cuda_dev cuda_err cuda_hip cuda_arch stack
   cuda_ok=$(printf '%s' "$cuda_json"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('available',d.get('ok','False')))" 2>/dev/null || echo "False")
   cuda_dev=$(printf '%s' "$cuda_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('device',''))" 2>/dev/null || echo "")
   cuda_err=$(printf '%s' "$cuda_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('err',''))" 2>/dev/null || echo "")
+  cuda_hip=$(printf '%s' "$cuda_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('hip',''))" 2>/dev/null || echo "")
+  cuda_arch=$(printf '%s' "$cuda_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('arch',''))" 2>/dev/null || echo "")
+  if [ -n "$cuda_hip" ]; then stack="ROCm $cuda_hip"; else stack="CUDA"; fi
 
   if [ "$cuda_ok" = "True" ]; then
-    ok "CUDA acceleration ready: ${cuda_dev}"
+    ok "${stack} acceleration ready: ${cuda_dev}"
+    [ -n "$cuda_arch" ] && info "GPU architecture: ${cuda_arch}"
+    log_raw "[GPU] Available: stack=$stack device=$cuda_dev arch=$cuda_arch"
+  elif [ "$GPU_VENDOR" = amd ]; then
+    warn "GPU acceleration is not active yet: ${cuda_err:-unknown}"
+    info "First, RESTART your computer and run './start.sh' — this fixes it in most cases."
+    info "If it persists, check that the amdgpu kernel module is loaded and your"
+    info "kernel/ROCm versions match: https://rocm.docs.amd.com/projects/radeon-ryzen/"
+    log_raw "[GPU] Unavailable: ${cuda_err:-unknown}"
   elif command -v nvidia-smi &>/dev/null; then
     warn "GPU acceleration is not active yet: ${cuda_err:-unknown}"
     info "First, RESTART your computer and run './start.sh' — this fixes it in most cases."
     info "If it still does not work after a restart, your driver is too old:"
     show_driver_update_help "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)"
   else
-    warn "No CUDA GPU — generation will use CPU (slow)"
+    warn "No GPU acceleration — generation will use CPU (slow)"
   fi
+
+  # AMD-only: one pasteable file so a tester's report is actionable.
+  write_amd_diagnostics
 
   # ── Done ─────────────────────────────────────────────────────────────────────
   printf '\n'

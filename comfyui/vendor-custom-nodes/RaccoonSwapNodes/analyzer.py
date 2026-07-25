@@ -13,7 +13,13 @@ import cv2
 import numpy as np
 import onnxruntime
 
-_PROVIDERS = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+try:
+    from .providers import pick_providers
+except ImportError:  # tests run this file outside the package
+    from providers import pick_providers
+
+# Resolved once at import — an onnxruntime build's provider list is fixed.
+_PROVIDERS = pick_providers()
 
 # Canonical arcface 112x112 5-point template (insightface's alignment target
 # for recognition; equals FaceFusion's normalized arcface_112_v2 x 112).

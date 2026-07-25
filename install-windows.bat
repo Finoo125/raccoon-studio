@@ -1,12 +1,21 @@
 @echo off
 title Raccoon Studio Installer
 
-:: Re-launch as Administrator if not elevated
+:: Re-launch as Administrator if not elevated.
+:: The re-launch MUST forward %* or every switch is silently lost: elevating
+:: without -ArgumentList is how "install-windows.bat -Gpu amd" ended up
+:: installing the CUDA build instead. -ArgumentList rejects an empty string, so
+:: the no-args case (a plain double-click) needs its own call.
+set "RS_ARGS=%*"
 net session >nul 2>&1
 if errorlevel 1 (
     echo.
     echo   Requesting administrator privileges...
-    powershell.exe -Command "Start-Process -FilePath '%~f0' -Verb RunAs" 2>nul
+    if defined RS_ARGS (
+        powershell.exe -Command "Start-Process -FilePath '%~f0' -ArgumentList '%RS_ARGS%' -Verb RunAs" 2>nul
+    ) else (
+        powershell.exe -Command "Start-Process -FilePath '%~f0' -Verb RunAs" 2>nul
+    )
     if errorlevel 1 (
         echo.
         echo   Could not elevate. Right-click this file and choose "Run as administrator".

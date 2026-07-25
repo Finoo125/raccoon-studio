@@ -6,14 +6,17 @@ import onnxruntime
 
 try:
     from . import swap_math
+    from .providers import pick_providers
 except ImportError:  # tests run this file outside the package
     import swap_math
+    from providers import pick_providers
 
 # ponytail: module-global caches; per-process, ComfyUI is single-process.
 _SESSIONS = {}
 _EMAPS = {}
 
-_PROVIDERS = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+# Resolved once at import — an onnxruntime build's provider list is fixed.
+_PROVIDERS = pick_providers()
 
 
 def model_config(filename):

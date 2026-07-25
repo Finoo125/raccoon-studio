@@ -11,7 +11,17 @@ param(
     [switch] $SkipCudaCheck,
     [switch] $NoDesktopShortcut,
     [switch] $WithControlNet,
-    [switch] $SkipControlNet
+    [switch] $SkipControlNet,
+    # Which acceleration stack to install for.
+    #   auto   - NVIDIA when nvidia-smi is present, else CPU. Deliberately does
+    #            NOT pick AMD: ROCm support is experimental and unverified on real
+    #            hardware, so it stays opt-in until a tester confirms it. An AMD
+    #            card is still DETECTED here and the user is told how to opt in.
+    #   amd    - experimental ROCm/HIP path (Windows 11, Python 3.12, RDNA3/4 only)
+    #   nvidia - force CUDA even if nvidia-smi is missing
+    #   cpu    - no acceleration
+    [ValidateSet('auto','nvidia','amd','cpu')]
+    [string] $Gpu = 'auto'
 )
 
 # NOTE: 'Continue', not 'Stop'. Under Windows PowerShell 5.1, $ErrorActionPreference='Stop'
@@ -73,9 +83,15 @@ function Write-Step([string]$Title) {
     # Emit the parseable protocol line for the GUI (also writes the [STEP] log line).
     Emit-Progress $n $TotalSteps $Title
 }
-function Write-Ok([string]$Msg)   { Write-Host "    ✓  $Msg" -ForegroundColor Green;  Add-Log "[OK]   $Msg" }
-function Write-Info([string]$Msg) { Write-Host "    →  $Msg" -ForegroundColor Gray;   Add-Log "[INFO] $Msg" }
-function Write-Warn([string]$Msg) { Write-Host "    !  $Msg" -ForegroundColor Yellow; Add-Log "[WARN] $Msg" }
+# Invoke-WithSpinner leaves the cursor mid-line ("  > doing thing ... ") so the
+# elapsed time can land on the same line. Anything that prints while a block is
+# running must break that line first, or its message gets glued onto the label.
+$script:MidLine = $false
+function Close-MidLine { if ($script:MidLine) { Write-Host ''; $script:MidLine = $false } }
+
+function Write-Ok([string]$Msg)   { Close-MidLine; Write-Host "    ✓  $Msg" -ForegroundColor Green;  Add-Log "[OK]   $Msg" }
+function Write-Info([string]$Msg) { Close-MidLine; Write-Host "    →  $Msg" -ForegroundColor Gray;   Add-Log "[INFO] $Msg" }
+function Write-Warn([string]$Msg) { Close-MidLine; Write-Host "    !  $Msg" -ForegroundColor Yellow; Add-Log "[WARN] $Msg" }
 function Write-Fail([string]$Msg) {
     Write-Host "`n    ✗  ERROR: $Msg`n" -ForegroundColor Red
     Add-Log "[FAIL] $Msg"
@@ -132,6 +148,77 @@ function Show-DriverUpdateHelp([string]$Drv) {
     Add-Log "[DRIVER] shown driver-update help (driver=$Drv)"
 }
 
+# ── AMD / ROCm guidance ────────────────────────────────────────────────────────
+function Show-AmdDriverUpdateHelp {
+    Write-Host ''
+    Write-Host '    The AMD/ROCm path needs a recent Adrenalin driver (26.2.2 or newer).' -ForegroundColor Yellow
+    Write-Host '    Here is exactly how to get it:' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '      1. Open this page in your web browser:' -ForegroundColor Gray
+    Write-Host '           https://www.amd.com/en/support/download/drivers.html' -ForegroundColor Cyan
+    Write-Host '      2. Pick your graphics card and "Windows 11", then click Submit' -ForegroundColor Gray
+    Write-Host '      3. Download "AMD Software: Adrenalin Edition" and run the file' -ForegroundColor Gray
+    Write-Host '      4. Click through the default options, then RESTART your PC' -ForegroundColor Gray
+    Write-Host '      5. Double-click "Start Raccoon Studio" again' -ForegroundColor Gray
+    Write-Host ''
+    Add-Log '[AMD] shown Adrenalin driver help'
+}
+
+# Stated up front, before anything is installed. Names what is actually degraded
+# rather than a vague "may not work" - a tester needs to know what to ignore.
+function Show-AmdExperimentalWarning([string]$AdapterName) {
+    Write-Host ''
+    Write-Host '  ┌──────────────────────────────────────────────────────────────┐' -ForegroundColor Yellow
+    Write-Host '  │  EXPERIMENTAL - AMD / ROCm support                           │' -ForegroundColor Yellow
+    Write-Host '  └──────────────────────────────────────────────────────────────┘' -ForegroundColor Yellow
+    Write-Host "     Card: $AdapterName" -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '     This path has NOT been verified on real AMD hardware yet.' -ForegroundColor Yellow
+    Write-Host '     Known limitations:' -ForegroundColor Gray
+    Write-Host '       - Face swap runs on the CPU (slower); the DirectML path is untested' -ForegroundColor Gray
+    Write-Host '       - ControlNet preprocessors run on the CPU (slower)' -ForegroundColor Gray
+    Write-Host '       - The VRAM meter in the top bar stays blank' -ForegroundColor Gray
+    Write-Host '     Image and video generation are expected to work at full speed.' -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '     If something breaks, send us logs\amd-diagnostics.txt.' -ForegroundColor Cyan
+    Write-Host ''
+    Add-Log "[AMD] experimental warning shown (adapter=$AdapterName)"
+}
+
+# Windows 11 + a supported RDNA generation. Hard-fails rather than installing a
+# stack that provably cannot work. Python 3.12 is gated separately at Step 5,
+# because that runs after Python has had a chance to be installed.
+function Assert-AmdPrerequisites([string]$AdapterName) {
+    # ROCm on Windows is Windows 11 only. Build 22000 is the 10-to-11 boundary.
+    $build = 0
+    try { $build = [int](Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).BuildNumber } catch {}
+    Add-Log "[AMD] windows build=$build"
+    if ($build -gt 0 -and $build -lt 22000) {
+        Write-Fail ("AMD/ROCm needs Windows 11 (this looks like Windows 10, build $build). " +
+                    "Re-run without -Gpu amd to install the CPU build instead.")
+    }
+    if (-not $AdapterName) {
+        Write-Fail ('-Gpu amd was requested but no AMD/Radeon graphics card was found. ' +
+                    'Re-run without -Gpu amd.')
+    }
+    if (-not (Test-AmdRocmSupported $AdapterName)) {
+        Write-Host ''
+        Write-Host "    $AdapterName is not supported by AMD's ROCm on Windows." -ForegroundColor Red
+        Write-Host '    AMD ships Windows ROCm for RDNA3 and RDNA4 only:' -ForegroundColor Yellow
+        Write-Host '      - Radeon RX 9000 series (9070 XT, 9070, 9060 XT, ...)' -ForegroundColor Gray
+        Write-Host '      - Radeon RX 7000 series (7900 XTX/XT/GRE, 7800 XT, 7700 XT, ...)' -ForegroundColor Gray
+        Write-Host '      - Radeon PRO W7000 / AI PRO R9700' -ForegroundColor Gray
+        Write-Host '    RX 6000 and older (RDNA2, RDNA1, Vega) and the Ryzen integrated' -ForegroundColor Gray
+        Write-Host '    graphics have no Windows ROCm support - this is an AMD limitation,' -ForegroundColor Gray
+        Write-Host '    not something Raccoon Studio can work around.' -ForegroundColor Gray
+        Write-Host ''
+        Write-Host '    Re-run without -Gpu amd to install the CPU build (slow but working).' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Fail "$AdapterName has no AMD ROCm support on Windows."
+    }
+    Write-Ok "$AdapterName is a supported RDNA3/RDNA4 card"
+}
+
 # ── Support bundle ─────────────────────────────────────────────────────────────
 # One file a non-technical user can send us when something breaks: the install
 # logs plus a fresh GPU/driver dump, zipped onto the Desktop with a stable name.
@@ -144,6 +231,10 @@ function New-SupportBundle {
                 & nvidia-smi 2>&1 | Set-Content -Path (Join-Path $LogDir 'nvidia-smi.txt') -Encoding UTF8
             }
         } catch {}
+        # A failed AMD install is exactly when these diagnostics matter most, so
+        # refresh them before zipping. Best-effort: the venv may not exist yet.
+        # (PowerShell resolves this call at runtime, so definition order is fine.)
+        try { Write-AmdDiagnostics $AmdAdapter } catch {}
         $desktop = [Environment]::GetFolderPath('Desktop')
         if (-not $desktop -or -not (Test-Path $desktop)) { $desktop = $RootDir }
         $zip = Join-Path $desktop 'Raccoon-Studio-Support.zip'
@@ -155,36 +246,110 @@ function New-SupportBundle {
     }
 }
 
-# ── Spinner ────────────────────────────────────────────────────────────────────
-$SpinnerJob = $null
-function Start-Spinner([string]$Msg) {
-    Stop-Spinner
-    $script:SpinnerJob = Start-Job -ScriptBlock {
-        param($m)
-        $f = @('⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏')
-        $i = 0
-        while ($true) {
-            Write-Host ("`r    {0}  {1}   " -f $f[$i], $m) -NoNewline -ForegroundColor Cyan
-            $i = ($i + 1) % 10
-            Start-Sleep -Milliseconds 80
-        }
-    } -ArgumentList $Msg
+# ── Progress reporting ─────────────────────────────────────────────────────────
+# This used to animate a braille spinner from a Start-Job background job. That
+# NEVER displayed anything: a job's Write-Host goes to the job's own host stream,
+# not the console, and nothing ever called Receive-Job. So every wrapped
+# operation - all 30-odd git clones, uv pip installs and multi-hundred-MB model
+# downloads - ran completely silently, and step 11 (~2 GB of downloads) looked
+# like a hang for minutes. Report synchronously instead: no animation, but the
+# user sees each operation start and how long it took.
+function Format-Duration([TimeSpan]$Span) {
+    if ($Span.TotalMinutes -ge 1) { return ('{0}m {1:00}s' -f [int]$Span.TotalMinutes, $Span.Seconds) }
+    return ('{0:n0}s' -f $Span.TotalSeconds)
 }
-function Stop-Spinner {
-    if ($script:SpinnerJob) {
-        Stop-Job  $script:SpinnerJob -ErrorAction SilentlyContinue
-        Remove-Job $script:SpinnerJob -ErrorAction SilentlyContinue
-        $script:SpinnerJob = $null
-        Write-Host ("`r{0}`r" -f (' ' * 72)) -NoNewline
-    }
-}
+
+# Kept because the top-level trap calls it; the job it used to kill is gone.
+function Stop-Spinner { }
+
 function Invoke-WithSpinner([string]$Msg, [scriptblock]$Block) {
-    # Dry-run safety: spinner blocks wrap every real side effect (git clone, uv/pip,
+    # Dry-run safety: these blocks wrap every real side effect (git clone, uv/pip,
     # model downloads, npm install, venv creation). Skip them entirely under -DryRun.
     if ($DryRun) { Add-Log "[DryRun] $Msg"; Write-Info "[DryRun] $Msg"; return }
-    Start-Spinner $Msg
+    Add-Log "[BEGIN] $Msg"
+    # No newline: the elapsed time lands on this same line when the block ends. A
+    # block that prints its own warning pushes that down a line, which is untidy
+    # but only happens on failure - where the extra detail is worth more.
+    Write-Host ("    >  {0} ... " -f $Msg) -NoNewline -ForegroundColor Cyan
+    $script:MidLine = $true
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try { & $Block }
-    finally { Stop-Spinner }
+    finally {
+        $sw.Stop()
+        $d = Format-Duration $sw.Elapsed
+        if ($script:MidLine) {
+            # Nothing interrupted us - finish the label line.
+            Write-Host ("done ($d)") -ForegroundColor DarkGray
+            $script:MidLine = $false
+        } else {
+            # A warning broke the line; restate so the timing still has an owner.
+            Write-Host ("       ... done ($d)") -ForegroundColor DarkGray
+        }
+        Add-Log ('[END]   {0} ({1:n1}s)' -f $Msg, $sw.Elapsed.TotalSeconds)
+    }
+}
+
+# ── Download with visible progress ─────────────────────────────────────────────
+# Why not Invoke-WebRequest -OutFile: under Windows PowerShell 5.1 it buffers the
+# whole response in memory before writing, and its Write-Progress bar can slow a
+# large download by an order of magnitude. Streaming it ourselves is faster, uses
+# bounded memory, and lets us print real MB/percent so a 359 MB model does not
+# look like a stall.
+#
+# Downloads to a .part file and moves it into place only on success, so an
+# interrupted install can't leave a truncated model that every later run then
+# treats as already-present.
+function Save-WebFile([string]$Uri, [string]$OutFile, [string]$Label) {
+    $part = "$OutFile.part"
+    if (Test-Path $part) { Remove-Item $part -Force -ErrorAction SilentlyContinue }
+    Add-Log "[GET] $Uri"
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $req = [System.Net.HttpWebRequest]::Create($Uri)
+    $req.UserAgent = 'RaccoonStudioInstaller'
+    $req.Timeout = 60000
+    $req.ReadWriteTimeout = 120000
+    $resp = $null; $in = $null; $out = $null
+    try {
+        $resp  = $req.GetResponse()
+        $total = $resp.ContentLength     # -1 when the server won't say
+        $in    = $resp.GetResponseStream()
+        $out   = [System.IO.File]::Create($part)
+        $buf   = New-Object byte[] 1048576
+        $done  = 0L
+        $lastDraw = -1
+        while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+            $out.Write($buf, 0, $n)
+            $done += $n
+            # Redraw at most ~4x/second so the console isn't the bottleneck.
+            if ($sw.ElapsedMilliseconds - $lastDraw -gt 250) {
+                $lastDraw = $sw.ElapsedMilliseconds
+                $mb = $done / 1MB
+                if ($total -gt 0) {
+                    Write-Host ("`r    >  {0}  {1,3:n0}%  {2,6:n0} / {3:n0} MB   " -f `
+                        $Label, ($done * 100 / $total), $mb, ($total / 1MB)) -NoNewline -ForegroundColor Cyan
+                } else {
+                    Write-Host ("`r    >  {0}  {1,6:n0} MB   " -f $Label, $mb) -NoNewline -ForegroundColor Cyan
+                }
+            }
+        }
+        $out.Close(); $out = $null
+        $in.Close();  $in = $null
+        $resp.Close(); $resp = $null
+        Move-Item -LiteralPath $part -Destination $OutFile -Force -ErrorAction Stop
+        $sw.Stop()
+        Write-Host ("`r{0}`r" -f (' ' * 78)) -NoNewline
+        Write-Ok ('{0}  ({1:n0} MB in {2})' -f $Label, ($done / 1MB), (Format-Duration $sw.Elapsed))
+    } catch {
+        $sw.Stop()
+        Write-Host ("`r{0}`r" -f (' ' * 78)) -NoNewline
+        Add-Log "[GET-FAIL] $Uri :: $_"
+        throw
+    } finally {
+        if ($out)  { $out.Close() }
+        if ($in)   { $in.Close() }
+        if ($resp) { $resp.Close() }
+        if (Test-Path $part) { Remove-Item $part -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 # ── PATH refresh ───────────────────────────────────────────────────────────────
@@ -209,6 +374,15 @@ function Get-ToolVersion([string]$Name, [string[]]$VersionArgs = @('--version'))
     if (-not $exe) { return 'not found' }
     $v = (& $exe @VersionArgs 2>$null | Select-Object -First 1)
     return $(if ($v) { "$v".Trim() } else { 'unknown' })
+}
+
+# Next.js 16 needs Node 20.9+ (app/node_modules/next → engines.node ">=20.9.0").
+# Checking only the major version lets Node 18/20.0 pass, `npm install` then gets
+# far enough to look fine and the app dies at startup — so compare the minor too.
+# Anything unparseable ('not found', 'unknown') counts as too old.
+function Test-NodeSupported([string]$Raw) {
+    if ("$Raw" -notmatch '(\d+)\.(\d+)') { return $false }
+    return ([version]"$($matches[1]).$($matches[2])" -ge [version]'20.9')
 }
 
 function Get-PyVersion([string]$Exe) {
@@ -301,6 +475,41 @@ function Copy-VendorPack([string]$Name) {
     }
 }
 
+# ── onnxruntime execution provider ─────────────────────────────────────────────
+# The node packs disagree about which onnxruntime to pull: comfyui_controlnet_aux
+# wants onnxruntime-gpu, comfyui-easy-use wants plain onnxruntime, and ReActor's
+# install.py picks its own. All three share ONE package directory, so whichever
+# lands last wins and orphans the other's provider DLLs — leaving a machine that
+# looks fine but runs face swap and the ControlNet preprocessors on the CPU.
+# Reconcile to exactly one build, AFTER every pack has had its say.
+function Install-OnnxRuntime([string]$Vendor) {
+    $pkg = switch ($Vendor) {
+        'nvidia' { 'onnxruntime-gpu' }
+        # DirectML, not ROCm: the ONNX ROCm EP is deprecated after ROCm 7.0 and
+        # was never shipped for Windows. DirectML is the AMD path here.
+        'amd'    { 'onnxruntime-directml' }
+        default  { 'onnxruntime' }
+    }
+    Invoke-WithSpinner "Installing $pkg for face swap / ControlNet preprocessors" {
+        # uv exits 0 for packages that aren't installed, so listing all three is safe.
+        & $uvExe pip uninstall --python $VenvPython onnxruntime onnxruntime-gpu onnxruntime-directml 2>&1 |
+            Add-Content -Path $LogFile -Encoding UTF8
+        & $uvExe pip install --python $VenvPython $pkg 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        if ($LASTEXITCODE -ne 0) { Write-Warn "$pkg install failed — face swap will run on the CPU (slow)." }
+    }
+    if ($DryRun) { return }
+    # Report what actually resolved. A GPU box that prints CPU here means the
+    # provider DLLs didn't load — the single most useful line in a support bundle.
+    $eps = & $VenvPython -c "import onnxruntime; print(','.join(onnxruntime.get_available_providers()))" 2>$null
+    if ($eps) {
+        Add-Log "[ONNX] $pkg providers: $eps"
+        if ($eps -match 'CUDA|Dml|ROCM|MIGraphX') { Write-Ok "GPU inference ready ($pkg)" }
+        else { Write-Warn "onnxruntime has no GPU provider — face swap will run on the CPU." }
+    } else {
+        Write-Warn 'Could not verify onnxruntime providers.'
+    }
+}
+
 # Visual Studio C++ Build Tools — some video node packs (notably the NVIDIA RTX
 # super-res) compile native extensions and need a C++ toolchain. Non-fatal.
 function Install-BuildTools {
@@ -353,9 +562,12 @@ function Write-SysInfo {
     } catch { $lines += "RAM         : unknown" }
     # GPU
     try {
-        $gpu = Get-CimInstance Win32_VideoController -EA Stop | Where-Object Name -match 'NVIDIA' | Select-Object -First 1
-        if ($gpu) {
-            $lines += "GPU         : $($gpu.Name)"
+        # NOT $gpu: PowerShell variable names are case-insensitive, so $gpu is the
+        # same variable as the $Gpu parameter and assigning to it trips that
+        # parameter's ValidateSet with a fatal error.
+        $gpuCard = Get-CimInstance Win32_VideoController -EA Stop | Where-Object Name -match 'NVIDIA' | Select-Object -First 1
+        if ($gpuCard) {
+            $lines += "GPU         : $($gpuCard.Name)"
             $lines += "Driver      : $(Get-ToolVersion 'nvidia-smi' @('--query-gpu=driver_version','--format=csv,noheader'))"
         } else {
             $lines += "GPU         : (no NVIDIA GPU detected)"
@@ -450,38 +662,135 @@ function Test-CudaAcceleration {
     if (-not (Test-Path $VenvPython -EA SilentlyContinue)) {
         Write-Warn "Cannot find venv Python for CUDA check."; return
     }
+    # torch.cuda is the right namespace for BOTH vendors: PyTorch-ROCm aliases HIP
+    # into it, so this one probe covers CUDA and ROCm. torch.version.hip is what
+    # tells the two apart, and gcnArchName is the authoritative AMD arch check
+    # (the installer's earlier name-matching gate is only a pre-flight).
     $json = & $VenvPython -c @'
 import json, sys
-r = {'ok': False, 'device': '', 'err': ''}
+r = {'ok': False, 'device': '', 'err': '', 'hip': '', 'arch': '', 'vram': 0}
 try:
     import torch
+    r['hip'] = str(torch.version.hip or '')
     r['ok'] = bool(torch.cuda.is_available())
-    if r['ok']: r['device'] = torch.cuda.get_device_name(0)
+    if r['ok']:
+        r['device'] = torch.cuda.get_device_name(0)
+        p = torch.cuda.get_device_properties(0)
+        r['arch'] = str(getattr(p, 'gcnArchName', '') or '')
+        r['vram'] = round(p.total_memory / (1024 ** 3), 1)
 except Exception as e:
     r['err'] = str(e)
 print(json.dumps(r))
 '@ 2>$null
-    if (-not $json) { Write-Warn "CUDA check returned no output."; return }
+    if (-not $json) { Write-Warn "GPU acceleration check returned no output."; return }
     try {
         $d = $json | ConvertFrom-Json
+        $stack = $(if ($d.hip) { "ROCm $($d.hip)" } else { 'CUDA' })
         if ($d.ok) {
-            Write-Ok "CUDA acceleration ready: $($d.device)"
-            Add-Log "[CUDA] Available: $($d.device)"
+            Write-Ok "$stack acceleration ready: $($d.device)"
+            if ($d.arch) { Write-Info "GPU architecture: $($d.arch)  ·  $($d.vram) GB VRAM" }
+            Add-Log "[GPU] Available: stack=$stack device=$($d.device) arch=$($d.arch) vram=$($d.vram)"
         } else {
             Write-Warn "GPU acceleration is not active yet: $($d.err)"
-            if (Get-ExePath 'nvidia-smi') {
+            if ($GpuVendor -eq 'amd') {
+                Write-Info 'First, RESTART your computer and run start.bat — this fixes it in most cases.'
+                Show-AmdDriverUpdateHelp
+            } elseif (Get-ExePath 'nvidia-smi') {
                 Write-Info 'First, RESTART your computer and run start.bat — this fixes it in most cases.'
                 Write-Info 'If it still does not work after a restart, your driver is too old:'
                 $drvNow = (& nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>$null | Select-Object -First 1)
                 Show-DriverUpdateHelp $drvNow
             } else {
-                Write-Info 'No NVIDIA GPU detected — generation will use the CPU (very slow).'
+                Write-Info 'No supported GPU detected — generation will use the CPU (very slow).'
             }
-            Add-Log "[CUDA] Unavailable: $($d.err)"
+            Add-Log "[GPU] Unavailable: $($d.err)"
         }
     } catch {
-        Write-Warn "Could not parse CUDA check result."
+        Write-Warn "Could not parse the GPU acceleration check result."
     }
+}
+
+# ── AMD diagnostics ────────────────────────────────────────────────────────────
+# One purpose-built file a tester can paste, instead of asking them to grep a
+# 2000-line install log. Written on the AMD path only; picked up by the support
+# bundle. Every field here is something we would otherwise have to ask for.
+function Write-AmdDiagnostics([string]$AdapterName) {
+    if ($GpuVendor -ne 'amd' -or $DryRun) { return }
+    $f = Join-Path $LogDir 'amd-diagnostics.txt'
+    # An early failure (bad driver, wrong Python, no network) leaves no venv. The
+    # non-torch fields below are still worth having, so probe only when it exists
+    # rather than letting a missing python abort the whole file.
+    $probe = $null
+    if (Test-Path $VenvPython -ErrorAction SilentlyContinue) {
+    $probe = & $VenvPython -c @'
+import json
+r = {}
+try:
+    import torch, sys
+    r['python'] = '%d.%d.%d' % sys.version_info[:3]
+    r['torch'] = torch.__version__
+    r['hip'] = str(torch.version.hip or '')
+    r['available'] = bool(torch.cuda.is_available())
+    if r['available']:
+        p = torch.cuda.get_device_properties(0)
+        r['device'] = torch.cuda.get_device_name(0)
+        r['arch'] = str(getattr(p, 'gcnArchName', '') or '')
+        r['vram'] = round(p.total_memory / (1024 ** 3), 1)
+except Exception as e:
+    r['err'] = str(e)
+try:
+    import onnxruntime
+    r['ort'] = onnxruntime.__version__
+    r['ort_providers'] = onnxruntime.get_available_providers()
+except Exception as e:
+    r['ort_err'] = str(e)
+print(json.dumps(r))
+'@ 2>$null
+    }
+    $d = $null
+    if ($probe) { try { $d = $probe | ConvertFrom-Json } catch {} }
+    $build = ''
+    try { $build = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).BuildNumber } catch {}
+    $drv = ''
+    try {
+        $a = Get-CimInstance Win32_VideoController -ErrorAction Stop |
+             Where-Object { $_.Name -match '(?i)AMD|Radeon' } | Select-Object -First 1
+        if ($a) { $drv = $a.DriverVersion }
+    } catch {}
+    $reserve = ''
+    if (Test-Path $VenvPython -ErrorAction SilentlyContinue) {
+        $reserve = & $VenvPython (Join-Path $RootDir 'installer\reserve-vram.py') 2>$null
+    }
+    $lines = @(
+        '=== Raccoon Studio - AMD diagnostics ==='
+        "generated         : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        "adapter           : $AdapterName"
+        "adapter driver    : $drv"
+        "Windows build     : $build            [required: 22000+ / Win11]"
+        "Python            : $(if ($d) { $d.python } else { '?' })            [required: 3.12]"
+        "torch             : $(if ($d) { $d.torch } else { '?' })"
+        "torch.version.hip : $(if ($d -and $d.hip) { $d.hip } else { '(none - not a ROCm build!)' })"
+        "cuda_available    : $(if ($d) { $d.available } else { '?' })"
+        "device            : $(if ($d) { $d.device } else { '' })"
+        "gfx arch          : $(if ($d) { $d.arch } else { '' })            [supported: gfx1100/1101/1200/1201]"
+        "VRAM total        : $(if ($d) { $d.vram } else { '?' }) GB"
+        "reserve-vram      : $(if ($reserve) { "$reserve GB" } else { "(none - ComfyUI default)" })"
+        "onnxruntime       : $(if ($d -and $d.ort) { $d.ort } else { '?' })"
+        "  providers       : $(if ($d -and $d.ort_providers) { $d.ort_providers -join ', ' } else { '?' })"
+        ''
+        '=== AMD step results (from the install log) ==='
+    )
+    if ($d -and $d.err)     { $lines += "torch probe error : $($d.err)" }
+    if ($d -and $d.ort_err) { $lines += "onnx probe error  : $($d.ort_err)" }
+    try {
+        $lines += (Select-String -Path $LogFile -Pattern '\[AMD\]|\[ONNX\]|\[GPU\]' -ErrorAction Stop |
+                   ForEach-Object { $_.Line.Trim() })
+    } catch { $lines += '(no [AMD]/[ONNX]/[GPU] lines found in the install log)' }
+    try {
+        Set-Content -Path $f -Value $lines -Encoding UTF8 -ErrorAction Stop
+        Write-Ok "AMD diagnostics written to logs\amd-diagnostics.txt"
+        Add-Log '[AMD] diagnostics written'
+    } catch { Write-Warn "Could not write AMD diagnostics: $_" }
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -522,15 +831,45 @@ elseif (-not $SkipControlNet) {
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
 Write-SysInfo
 
-# ── Step 1: NVIDIA ────────────────────────────────────────────────────────────
-Write-Step 'Checking NVIDIA driver'
+# ── Step 1: GPU ───────────────────────────────────────────────────────────────
+Write-Step 'Checking graphics card and driver'
 $nvSmi = Get-ExePath 'nvidia-smi'
-if ($nvSmi) {
+# Which acceleration stack the rest of the install targets. Read by
+# Install-OnnxRuntime (and, once AMD lands, by the PyTorch step).
+$AmdAdapter = Get-AmdAdapterName
+# 'auto' resolves to NVIDIA or CPU only — never AMD. See the -Gpu param for why.
+$GpuVendor = switch ($Gpu) {
+    'nvidia' { 'nvidia' }
+    'amd'    { 'amd' }
+    'cpu'    { 'cpu' }
+    default  { $(if ($nvSmi) { 'nvidia' } else { 'cpu' }) }
+}
+Add-Log "[GPU] requested=$Gpu resolved=$GpuVendor nvidia-smi=$([bool]$nvSmi) amd='$AmdAdapter'"
+
+if ($GpuVendor -eq 'amd') {
+    Show-AmdExperimentalWarning $AmdAdapter
+    Assert-AmdPrerequisites     $AmdAdapter
+    # Interactive console confirms; headless/GUI runs log and proceed. Mirrors the
+    # ControlNet prompt below so the GUI shell can never hang on a hidden question.
+    if (-not $DryRun) {
+        try {
+            if (-not [Console]::IsInputRedirected) {
+                $yn = Read-Host '  Install the experimental AMD/ROCm build? [y/N]'
+                if ($yn -notmatch '^[Yy]') { Write-Info 'Aborting.'; exit 0 }
+            } else {
+                Write-Info 'No interactive console — proceeding with the experimental AMD build.'
+            }
+        } catch { Write-Info 'No interactive console — proceeding with the experimental AMD build.' }
+    }
+} elseif ($nvSmi) {
     $drv = (& nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>$null | Select-Object -First 1)
     if (-not $drv) { $drv = 'unknown' }
-    $gpu = (& nvidia-smi --query-gpu=name          --format=csv,noheader 2>$null | Select-Object -First 1)
-    if (-not $gpu) { $gpu = 'unknown' }
-    Write-Ok "Driver $drv  ·  $gpu"
+    # NOT $gpu: PowerShell variable names are case-insensitive, so $gpu is the same
+    # variable as the $Gpu parameter and assigning to it trips that parameter's
+    # ValidateSet with a fatal error ("... is not a valid value for the Gpu variable").
+    $gpuName = (& nvidia-smi --query-gpu=name          --format=csv,noheader 2>$null | Select-Object -First 1)
+    if (-not $gpuName) { $gpuName = 'unknown' }
+    Write-Ok "Driver $drv  ·  $gpuName"
     # ponytail: conservative CUDA-12.0 floor (528). The post-install torch check
     # is the real authority; this is only an early heads-up for clearly-old drivers.
     if ($drv -match '^(\d+)\.' -and [int]$Matches[1] -lt 528) {
@@ -543,6 +882,20 @@ if ($nvSmi) {
         if ($nvidiaGpu) {
             Write-Warn "NVIDIA GPU found ($($nvidiaGpu.Name)) but nvidia-smi missing."
             Write-Info "Install the latest driver from nvidia.com, reboot, then re-run."
+        } elseif ($AmdAdapter -and (Test-AmdRocmSupported $AmdAdapter)) {
+            # Detected, but not acted on: AMD stays opt-in until a tester confirms it.
+            # This branch is what makes flipping 'auto' later a one-line change.
+            Write-Warn "AMD graphics card detected: $AmdAdapter"
+            Write-Host ''
+            Write-Host '    Experimental AMD (ROCm) support is available. To use it, re-run:' -ForegroundColor Cyan
+            Write-Host '        install-windows.bat -Gpu amd' -ForegroundColor Cyan
+            Write-Host '    It is unverified on real hardware — see the warning it prints.' -ForegroundColor DarkGray
+            Write-Host '    Continuing now installs the CPU build (works, but very slow).' -ForegroundColor DarkGray
+            Write-Host ''
+            Add-Log "[GPU] AMD card detected but not selected (opt-in via -Gpu amd)"
+        } elseif ($AmdAdapter) {
+            Write-Warn "AMD graphics card detected ($AmdAdapter) but it has no Windows ROCm support."
+            Write-Info 'RDNA3/RDNA4 only (RX 7000/9000). Generation will be CPU-only (very slow).'
         } else {
             Write-Warn "No NVIDIA GPU detected. Generation will be CPU-only (very slow)."
         }
@@ -598,6 +951,14 @@ else {
     Install-WingetPkg 'Python.Python.3.12' 'Python 3.12'
     $pythonExe = Find-Python312
     if (-not $pythonExe) {
+        # The AMD wheels are cp312-only, so "close enough" is not an option there:
+        # a 3.11/3.13 interpreter cannot install ROCm torch at all. CUDA wheels
+        # exist for the whole 3.10-3.13 range, so NVIDIA/CPU keep the fallback.
+        if ($GpuVendor -eq 'amd') {
+            Write-Fail ("Python 3.12 is required for the AMD/ROCm path (AMD publishes cp312 wheels only), " +
+                        "and it could not be installed automatically. Install Python 3.12 from " +
+                        "https://www.python.org/downloads/release/python-31210/ and re-run.")
+        }
         $pythonExe = Find-PythonAny
         if (-not $pythonExe) { Write-Fail 'Python not found after installation.' }
         Write-Warn "Using $pythonExe ($(Get-PyVersion $pythonExe)) — 3.12 preferred"
@@ -605,24 +966,33 @@ else {
         Write-Ok "Python 3.12 installed at $pythonExe"
     }
 }
+# Same gate for the already-had-Python case: AMD must be exactly 3.12.
+if ($GpuVendor -eq 'amd') {
+    $pyVer = Get-PyVersion $pythonExe
+    if ($pyVer -ne '3.12') {
+        Write-Fail ("The AMD/ROCm path needs Python 3.12 (found $pyVer). AMD publishes cp312 wheels " +
+                    "only. Install Python 3.12 and re-run, or drop -Gpu amd to install the CPU build.")
+    }
+}
 
 # ── Step 6: Node.js ───────────────────────────────────────────────────────────
-Write-Step 'Ensuring Node.js 18+ is installed'
+Write-Step 'Ensuring Node.js 20.9+ is installed'
 $nodeExe = Get-ExePath 'node'
-if ($nodeExe) {
-    $nodeRaw = (& node --version 2>$null)
-    $ver = if ($nodeRaw) { $nodeRaw.TrimStart('v') } else { '0' }
-    $maj = [int]($ver -split '\.')[0]
-    if ($maj -ge 18) { Write-Ok "Node.js v$ver" }
-    else {
-        Write-Warn "Node.js v$ver too old — upgrading to LTS"
-        Install-WingetPkg 'OpenJS.NodeJS.LTS' 'Node.js LTS'
-    }
-} else {
+$nodeVer = Get-ToolVersion 'node'
+if (-not (Test-NodeSupported $nodeVer)) {
+    if ($nodeExe) { Write-Warn "Node.js $nodeVer is too old for Next.js 16 (needs 20.9+) — upgrading to LTS" }
     Install-WingetPkg 'OpenJS.NodeJS.LTS' 'Node.js LTS'
     $nodeExe = Get-ExePath 'node'
     if (-not $nodeExe) { Write-Fail 'Node.js not found after installation.' }
+    # An old nvm shim or a stale PATH entry can still win after the LTS install —
+    # re-verify, or the failure resurfaces much later as a cryptic npm/next error.
+    $nodeVer = Get-ToolVersion 'node'
+    if (-not $DryRun -and -not (Test-NodeSupported $nodeVer)) {
+        Write-Fail ("Node.js $nodeVer is still what's on PATH after installing LTS. Close this window, " +
+                    "uninstall the old Node.js (or fix your PATH / nvm shim), and re-run the installer.")
+    }
 }
+Write-Ok "Node.js $nodeVer"
 
 # ── Step 7: uv ────────────────────────────────────────────────────────────────
 Write-Step 'Ensuring uv (Python package manager) is installed'
@@ -725,14 +1095,60 @@ Invoke-WithSpinner 'Creating Python virtual environment' {
 }
 Write-Ok 'Virtual environment ready'
 
-Invoke-WithSpinner 'Installing PyTorch with CUDA 12.x (this takes a few minutes)' {
-    Add-Log "[CMD] uv pip install torch (CUDA)"
-    & $uvExe pip install --python $VenvPython `
-        torch torchvision torchaudio `
-        --extra-index-url https://download.pytorch.org/whl/cu128 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
-    if ($LASTEXITCODE -ne 0) { Write-Fail 'PyTorch installation failed.' }
+if ($GpuVendor -eq 'amd') {
+    # AMD's Windows ROCm build ships as explicit wheel URLs on repo.radeon.com, not
+    # a pip index — so --extra-index-url does not apply and each file is named. AMD
+    # recommends these over pytorch.org's ROCm wheels, which track nightlies and
+    # are not tested by AMD. cp312 only, which Step 5 already enforced.
+    $RocmRel  = 'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1'
+    $sdkWheels = @(
+        "$RocmRel/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl"
+        "$RocmRel/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl"
+        "$RocmRel/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl"
+        "$RocmRel/rocm-7.2.1.tar.gz"
+    )
+    $torchWheels = @(
+        "$RocmRel/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl"
+        "$RocmRel/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl"
+        "$RocmRel/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl"
+    )
+    Invoke-WithSpinner 'Installing ROCm SDK for AMD (large download, several minutes)' {
+        Add-Log '[AMD] uv pip install rocm sdk wheels'
+        & $uvExe pip install --python $VenvPython --no-cache-dir @sdkWheels 2>&1 |
+            Add-Content -Path $LogFile -Encoding UTF8
+        if ($LASTEXITCODE -ne 0) {
+            Add-Log '[AMD] rocm sdk wheels : FAILED'
+            Write-Fail ('The AMD ROCm SDK could not be installed. Check your internet connection and ' +
+                        'that repo.radeon.com is reachable, then re-run. See ' + $LogFile)
+        }
+        Add-Log '[AMD] rocm sdk wheels : OK'
+    }
+    Write-Ok 'ROCm SDK installed'
+    Invoke-WithSpinner 'Installing PyTorch for AMD/ROCm (this takes a few minutes)' {
+        Add-Log '[AMD] uv pip install torch (ROCm 7.2.1)'
+        & $uvExe pip install --python $VenvPython --no-cache-dir @torchWheels 2>&1 |
+            Add-Content -Path $LogFile -Encoding UTF8
+        if ($LASTEXITCODE -ne 0) {
+            Add-Log '[AMD] torch rocm wheels : FAILED'
+            Write-Fail 'PyTorch (ROCm) installation failed.'
+        }
+        Add-Log '[AMD] torch rocm wheels : OK'
+    }
+    Write-Ok 'PyTorch (ROCm) installed'
+} else {
+    # CPU-only boxes get the same wheels: the CUDA build runs fine on the CPU, so
+    # this keeps one code path and matches the pre-AMD behaviour exactly.
+    $torchLabel = $(if ($GpuVendor -eq 'nvidia') { 'Installing PyTorch with CUDA 12.x (this takes a few minutes)' }
+                    else { 'Installing PyTorch (this takes a few minutes)' })
+    Invoke-WithSpinner $torchLabel {
+        Add-Log "[CMD] uv pip install torch (CUDA)"
+        & $uvExe pip install --python $VenvPython `
+            torch torchvision torchaudio `
+            --extra-index-url https://download.pytorch.org/whl/cu128 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        if ($LASTEXITCODE -ne 0) { Write-Fail 'PyTorch installation failed.' }
+    }
+    Write-Ok 'PyTorch installed'
 }
-Write-Ok 'PyTorch installed'
 
 Invoke-WithSpinner 'Installing ComfyUI requirements' {
     $req = Join-Path $ComfyDir 'requirements.txt'
@@ -744,6 +1160,11 @@ Write-Ok 'ComfyUI requirements installed'
 
 # ── Step 11: Custom nodes (Manager + rgthree + ReActor + Impact Pack) ─────────
 Write-Step 'Installing custom nodes (Manager + rgthree + ReActor + Impact)'
+# This is the longest step by far: ~15 clones/installs plus roughly 2 GB of model
+# downloads (two are 359 MB each). Users reported it looking hung, so say up front
+# how long it takes and that per-item progress follows.
+Write-Info 'This is the longest step: about 2 GB of downloads, typically 5-20 minutes.'
+Write-Info 'Each item below prints when it starts and how long it took - it is not stuck.'
 $MgrDir = Join-Path $ComfyDir 'custom_nodes\ComfyUI-Manager'
 $cnDir  = Join-Path $ComfyDir 'custom_nodes'
 if (-not (Test-Path $cnDir)) { New-Item -ItemType Directory -Path $cnDir | Out-Null }
@@ -797,7 +1218,9 @@ Invoke-WithSpinner 'Cloning / updating ReActor face-swap node' {
 # ReActor 0.7.0+ needs no Insightface. Non-fatal so the install still completes.
 $reactorInstall = Join-Path $ReactorDir 'install.py'
 if (Test-Path $reactorInstall) {
-    Invoke-WithSpinner 'Installing ReActor deps + face-swap model' {
+    # ReActor's own install.py downloads inswapper_128.onnx (~530 MB) and prints
+    # only to the log, so name the size here - this is the longest silent gap left.
+    Invoke-WithSpinner 'Installing ReActor deps + face-swap model (~530 MB, no progress shown)' {
         Push-Location $ReactorDir
         try {
             & $VenvPython install.py 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
@@ -811,13 +1234,10 @@ $frDir      = Join-Path $ComfyDir 'models\facerestore_models'
 $codeformer = Join-Path $frDir 'codeformer-v0.1.0.pth'
 if (-not (Test-Path $codeformer)) {
     if (-not (Test-Path $frDir)) { New-Item -ItemType Directory -Path $frDir | Out-Null }
-    Invoke-WithSpinner 'Downloading CodeFormer face-restore model' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/codeformer-v0.1.0.pth' -OutFile $codeformer
-        } catch {
-            Write-Warn 'CodeFormer download failed (ReActor fetches it on first use).'
-            if (Test-Path $codeformer) { Remove-Item $codeformer -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/codeformer-v0.1.0.pth' $codeformer 'CodeFormer face-restore model' }
+    catch {
+        Write-Warn 'CodeFormer download failed (ReActor fetches it on first use).'
+        if (Test-Path $codeformer) { Remove-Item $codeformer -Force }
     }
 }
 # GPEN-BFR-1024 drives the realistic face-boost/restore in the swap chain
@@ -827,13 +1247,10 @@ if (-not (Test-Path $codeformer)) {
 $gpen = Join-Path $frDir 'GPEN-BFR-1024.onnx'
 if (-not (Test-Path $gpen)) {
     if (-not (Test-Path $frDir)) { New-Item -ItemType Directory -Path $frDir | Out-Null }
-    Invoke-WithSpinner 'Downloading GPEN-BFR-1024 face-restore model' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/GPEN-BFR-1024.onnx' -OutFile $gpen
-        } catch {
-            Write-Warn 'GPEN-BFR-1024 download failed — grab it from the Models page (face swap needs it).'
-            if (Test-Path $gpen) { Remove-Item $gpen -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/GPEN-BFR-1024.onnx' $gpen 'GPEN-BFR-1024 face-restore model' }
+    catch {
+        Write-Warn 'GPEN-BFR-1024 download failed — grab it from the Models page (face swap needs it).'
+        if (Test-Path $gpen) { Remove-Item $gpen -Force }
     }
 }
 # Hi-res upscale models (ESRGAN). The image workflows reference these by name in
@@ -844,24 +1261,18 @@ $upscaleDir = Join-Path $ComfyDir 'models\upscale_models'
 if (-not (Test-Path $upscaleDir)) { New-Item -ItemType Directory -Path $upscaleDir | Out-Null }
 $ultraSharp = Join-Path $upscaleDir '4x-UltraSharp.pth'
 if (-not (Test-Path $ultraSharp)) {
-    Invoke-WithSpinner 'Downloading 4x-UltraSharp upscale model' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth' -OutFile $ultraSharp
-        } catch {
-            Write-Warn '4x-UltraSharp download failed (grab it via the Models tab, or turn Upscale off).'
-            if (Test-Path $ultraSharp) { Remove-Item $ultraSharp -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth' $ultraSharp '4x-UltraSharp upscale model' }
+    catch {
+        Write-Warn '4x-UltraSharp download failed (grab it via the Models tab, or turn Upscale off).'
+        if (Test-Path $ultraSharp) { Remove-Item $ultraSharp -Force }
     }
 }
 $animeSharp = Join-Path $upscaleDir '4x-AnimeSharp.pth'
 if (-not (Test-Path $animeSharp)) {
-    Invoke-WithSpinner 'Downloading 4x-AnimeSharp upscale model' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/Kim2091/AnimeSharp/resolve/main/4x-AnimeSharp.pth' -OutFile $animeSharp
-        } catch {
-            Write-Warn '4x-AnimeSharp download failed (grab it via the Models tab, or turn Upscale off).'
-            if (Test-Path $animeSharp) { Remove-Item $animeSharp -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/Kim2091/AnimeSharp/resolve/main/4x-AnimeSharp.pth' $animeSharp '4x-AnimeSharp upscale model' }
+    catch {
+        Write-Warn '4x-AnimeSharp download failed (grab it via the Models tab, or turn Upscale off).'
+        if (Test-Path $animeSharp) { Remove-Item $animeSharp -Force }
     }
 }
 # ComfyUI Impact Pack + Subpack — provide FaceDetailer, UltralyticsDetectorProvider,
@@ -875,26 +1286,20 @@ $bboxDir = Join-Path $ComfyDir 'models\ultralytics\bbox'
 $faceYolo = Join-Path $bboxDir 'face_yolov8m.pt'
 if (-not (Test-Path $faceYolo)) {
     if (-not (Test-Path $bboxDir)) { New-Item -ItemType Directory -Path $bboxDir | Out-Null }
-    Invoke-WithSpinner 'Downloading face_yolov8m detector (detailer)' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8m.pt' -OutFile $faceYolo
-        } catch {
-            Write-Warn 'face_yolov8m download failed (grab it via the Models tab, or turn Detailer off).'
-            if (Test-Path $faceYolo) { Remove-Item $faceYolo -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8m.pt' $faceYolo 'face_yolov8m detector (detailer)' }
+    catch {
+        Write-Warn 'face_yolov8m download failed (grab it via the Models tab, or turn Detailer off).'
+        if (Test-Path $faceYolo) { Remove-Item $faceYolo -Force }
     }
 }
 $samDir = Join-Path $ComfyDir 'models\sams'
 $samModel = Join-Path $samDir 'sam_vit_b_01ec64.pth'
 if (-not (Test-Path $samModel)) {
     if (-not (Test-Path $samDir)) { New-Item -ItemType Directory -Path $samDir | Out-Null }
-    Invoke-WithSpinner 'Downloading SAM ViT-B segmenter (detailer)' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth' -OutFile $samModel
-        } catch {
-            Write-Warn 'SAM model download failed (grab it via the Models tab, or turn Detailer off).'
-            if (Test-Path $samModel) { Remove-Item $samModel -Force }
-        }
+    try { Save-WebFile 'https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth' $samModel 'SAM ViT-B segmenter (detailer)' }
+    catch {
+        Write-Warn 'SAM model download failed (grab it via the Models tab, or turn Detailer off).'
+        if (Test-Path $samModel) { Remove-Item $samModel -Force }
     }
 }
 # ComfyUI-Crystools — powers the studio top bar's live CPU/RAM/VRAM meters
@@ -932,13 +1337,10 @@ foreach ($m in $auxModels) {
     $dest    = Join-Path $destDir $m.Name
     if (Test-Path $dest) { continue }
     if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-    Invoke-WithSpinner ('Downloading ControlNet preprocessor weight: ' + $m.Name) {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri $m.Url -OutFile $dest
-        } catch {
-            Write-Warn ($m.Name + ' download failed — it will be fetched on first ControlNet use instead.')
-            if (Test-Path $dest) { Remove-Item $dest -Force }
-        }
+    try { Save-WebFile $m.Url $dest ('ControlNet preprocessor weight: ' + $m.Name) }
+    catch {
+        Write-Warn ($m.Name + ' download failed — it will be fetched on first ControlNet use instead.')
+        if (Test-Path $dest) { Remove-Item $dest -Force }
     }
 }
 # ControlNet Union SDXL ProMax — single model covers all 7 control types.
@@ -947,13 +1349,10 @@ $cnModelDir  = Join-Path $ComfyDir 'models\controlnet'
 $cnUnion     = Join-Path $cnModelDir 'controlnet-union-sdxl-promax.safetensors'
 if (-not (Test-Path $cnUnion)) {
     if (-not (Test-Path $cnModelDir)) { New-Item -ItemType Directory -Path $cnModelDir | Out-Null }
-    Invoke-WithSpinner 'Downloading ControlNet Union SDXL ProMax' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/xinsir/controlnet-union-sdxl-1.0/resolve/main/diffusion_pytorch_model_promax.safetensors' -OutFile $cnUnion
-        } catch {
-            Write-Warn 'ControlNet Union download failed (grab it via the Models tab).'
-            if (Test-Path $cnUnion) { Remove-Item $cnUnion -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/xinsir/controlnet-union-sdxl-1.0/resolve/main/diffusion_pytorch_model_promax.safetensors' $cnUnion 'ControlNet Union SDXL ProMax' }
+    catch {
+        Write-Warn 'ControlNet Union download failed (grab it via the Models tab).'
+        if (Test-Path $cnUnion) { Remove-Item $cnUnion -Force }
     }
 }
 # IP-Adapter Plus SDXL ViT-H — used by IPAdapterUnifiedLoader preset
@@ -962,13 +1361,10 @@ $ipaDir  = Join-Path $ComfyDir 'models\ipadapter'
 $ipaPlus = Join-Path $ipaDir 'ip-adapter-plus_sdxl_vit-h.safetensors'
 if (-not (Test-Path $ipaPlus)) {
     if (-not (Test-Path $ipaDir)) { New-Item -ItemType Directory -Path $ipaDir | Out-Null }
-    Invoke-WithSpinner 'Downloading IP-Adapter Plus SDXL ViT-H' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors' -OutFile $ipaPlus
-        } catch {
-            Write-Warn 'IP-Adapter Plus download failed (grab it via the Models tab).'
-            if (Test-Path $ipaPlus) { Remove-Item $ipaPlus -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors' $ipaPlus 'IP-Adapter Plus SDXL ViT-H' }
+    catch {
+        Write-Warn 'IP-Adapter Plus download failed (grab it via the Models tab).'
+        if (Test-Path $ipaPlus) { Remove-Item $ipaPlus -Force }
     }
 }
 # CLIP ViT-H vision encoder — required by IPAdapterUnifiedLoader alongside the
@@ -978,13 +1374,10 @@ $cvDir  = Join-Path $ComfyDir 'models\clip_vision'
 $cvVitH = Join-Path $cvDir 'CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors'
 if (-not (Test-Path $cvVitH)) {
     if (-not (Test-Path $cvDir)) { New-Item -ItemType Directory -Path $cvDir | Out-Null }
-    Invoke-WithSpinner 'Downloading CLIP ViT-H-14 vision encoder (IP-Adapter)' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors' -OutFile $cvVitH
-        } catch {
-            Write-Warn 'CLIP ViT-H download failed (grab it via the Models tab).'
-            if (Test-Path $cvVitH) { Remove-Item $cvVitH -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors' $cvVitH 'CLIP ViT-H-14 vision encoder (IP-Adapter)' }
+    catch {
+        Write-Warn 'CLIP ViT-H download failed (grab it via the Models tab).'
+        if (Test-Path $cvVitH) { Remove-Item $cvVitH -Force }
     }
 }
 # Z-Image Turbo Fun Union ControlNet — model patch for the z-image control path
@@ -994,13 +1387,10 @@ $mpDir = Join-Path $ComfyDir 'models\model_patches'
 $zFun  = Join-Path $mpDir 'Z-Image-Turbo-Fun-Controlnet-Union-2.1-2601-8steps.safetensors'
 if (-not (Test-Path $zFun)) {
     if (-not (Test-Path $mpDir)) { New-Item -ItemType Directory -Path $mpDir | Out-Null }
-    Invoke-WithSpinner 'Downloading Z-Image Fun Union ControlNet' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/Z-Image-Turbo-Fun-Controlnet-Union-2.1-2601-8steps.safetensors' -OutFile $zFun
-        } catch {
-            Write-Warn 'Z-Image Fun ControlNet download failed (grab it via the Models tab).'
-            if (Test-Path $zFun) { Remove-Item $zFun -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/Z-Image-Turbo-Fun-Controlnet-Union-2.1-2601-8steps.safetensors' $zFun 'Z-Image Fun Union ControlNet' }
+    catch {
+        Write-Warn 'Z-Image Fun ControlNet download failed (grab it via the Models tab).'
+        if (Test-Path $zFun) { Remove-Item $zFun -Force }
     }
 }
 } else {
@@ -1014,13 +1404,10 @@ $vaeDir = Join-Path $ComfyDir 'models\vae'
 $sdxlVae = Join-Path $vaeDir 'sdxl_vae.safetensors'
 if (-not (Test-Path $sdxlVae)) {
     if (-not (Test-Path $vaeDir)) { New-Item -ItemType Directory -Path $vaeDir | Out-Null }
-    Invoke-WithSpinner 'Downloading SDXL fp16-fix VAE' {
-        try {
-            Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl.vae.safetensors' -OutFile $sdxlVae
-        } catch {
-            Write-Warn 'SDXL VAE download failed (grab it via the Models tab).'
-            if (Test-Path $sdxlVae) { Remove-Item $sdxlVae -Force }
-        }
+    try { Save-WebFile 'https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl.vae.safetensors' $sdxlVae 'SDXL fp16-fix VAE' }
+    catch {
+        Write-Warn 'SDXL VAE download failed (grab it via the Models tab).'
+        if (Test-Path $sdxlVae) { Remove-Item $sdxlVae -Force }
     }
 }
 Write-Ok 'ControlNet / IP-Adapter nodes and models ready'
@@ -1049,12 +1436,22 @@ Invoke-WithSpinner 'Installing video node extra deps' {
 }
 # RTX video super-resolution — needs an RTX GPU + TensorRT (nvidia-vfx). The
 # single most fragile piece; kept fully non-fatal so the install still finishes.
-Install-NodePack 'comfyui_nvidia_rtx_nodes' 'https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI.git'
+# Needs nvidia-vfx (TensorRT), which has no AMD build at all — pip would just fail
+# noisily. No workflow references these nodes, so skipping costs nothing.
+if ($GpuVendor -eq 'amd') {
+    Write-Info 'Skipping NVIDIA RTX video nodes (NVIDIA-only; not used by any workflow).'
+    Add-Log '[AMD] skipped pack: comfyui_nvidia_rtx_nodes (NVIDIA-only)'
+} else {
+    Install-NodePack 'comfyui_nvidia_rtx_nodes' 'https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI.git'
+}
 # RaccoonVideoNodes — the studio's video prompt node pack, vendored in the repo.
 Copy-VendorPack 'RaccoonVideoNodes'
 # RaccoonSwapNodes — pixel-boost face swap, vendored in the repo.
 Copy-VendorPack 'RaccoonSwapNodes'
 Write-Ok 'LTX 2.3 video nodes ready'
+
+# Must come after every pack above — see Install-OnnxRuntime for why order matters.
+Install-OnnxRuntime $GpuVendor
 
 # ── Step 13: App Node.js deps ─────────────────────────────────────────────────
 Write-Step 'Installing Raccoon Studio app dependencies'
@@ -1074,26 +1471,7 @@ Write-Step 'Creating start scripts, configuration, and desktop shortcut'
 # start-comfyui.ps1
 $startComfyPS1 = Join-Path $RootDir 'start-comfyui.ps1'
 if (-not $DryRun) {
-Set-Content $startComfyPS1 -Encoding UTF8 -Value @"
-# Raccoon Studio — Start ComfyUI
-`$Root       = Split-Path -Parent `$MyInvocation.MyCommand.Path
-`$Python     = Join-Path `$Root 'comfyui\ComfyUI\.venv\Scripts\python.exe'
-`$MainScript = Join-Path `$Root 'comfyui\ComfyUI\main.py'
-if (-not (Test-Path `$MainScript)) {
-    Write-Host '[Raccoon Studio] ComfyUI not found. Run install-windows.bat first.' -ForegroundColor Red
-    exit 1
-}
-Write-Host '[Raccoon Studio] Starting ComfyUI on 127.0.0.1:8188...' -ForegroundColor Cyan
-Set-Location (Split-Path `$MainScript)
-# --enable-cors-header lets the studio UI (different port) reach ComfyUI;
-# without it ComfyUI 403s the browser WebSocket handshake.
-# --preview-method auto streams decoded latent previews each sampling step so the
-# studio canvas shows the image building up live (taesd if present, else latent2rgb).
-# --reserve-vram 8 keeps headroom for the LTX video upscale pass's full-res
-# attention activations (A/B 2026-07-18 on a 32 GB RTX 5090: upscale steps
-# 78 -> 68 s/it, peak shared GPU memory 24 -> 16.5 GB).
-& `$Python -s `$MainScript --listen 127.0.0.1 --port 8188 --enable-cors-header "*" --preview-method auto --preview-size 768 --reserve-vram 8
-"@
+Write-StartComfyStub $startComfyPS1
 }
 Write-Ok 'start-comfyui.ps1 created'
 
@@ -1211,8 +1589,10 @@ if (-not $NoDesktopShortcut) {
 # Register in the Windows "Installed apps" / Programs list (per-user, no admin).
 Register-InstalledApp $rootIcoPath
 
-# CUDA verification
+# GPU acceleration verification (covers CUDA and ROCm)
 Test-CudaAcceleration
+# AMD-only: one pasteable file so a tester's report is actionable.
+Write-AmdDiagnostics $AmdAdapter
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 Write-Host ''

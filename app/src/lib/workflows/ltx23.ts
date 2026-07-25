@@ -50,7 +50,7 @@ export const ltx23Workflow: VideoWorkflowDefinition = {
   id: 'ltx23',
   name: 'LTX 2.3 Video',
   description:
-    'A/V text- and image-to-video with latent upscale, RIFE interpolation and RTX super-resolution',
+    'A/V text- and image-to-video with latent upscale and RIFE interpolation',
   orientations: ORIENTATIONS.map(({ label, value }) => ({ label, value })),
   defaultParams: {
     mode: 't2v',

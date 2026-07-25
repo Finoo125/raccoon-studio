@@ -194,10 +194,10 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
 
         <Button x:Name="BtnUpdate" Style="{StaticResource Card}" Height="80" Margin="0,6,6,0" Background="#191b21" BorderBrush="#2b333f">
           <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#x27F3;" FontSize="23" Foreground="#aab6c4" VerticalAlignment="Center" Margin="0,0,13,0"/>
+            <TextBlock x:Name="UpdateIcon" Text="&#x27F3;" FontSize="23" Foreground="#aab6c4" VerticalAlignment="Center" Margin="0,0,13,0"/>
             <StackPanel VerticalAlignment="Center">
-              <TextBlock Text="Update" FontSize="16" FontWeight="SemiBold" Foreground="#eaf0f2"/>
-              <TextBlock Text="Get the latest" FontSize="11" Foreground="#9aa6b4"/>
+              <TextBlock x:Name="UpdateTitle" Text="Update" FontSize="16" FontWeight="SemiBold" Foreground="#eaf0f2"/>
+              <TextBlock x:Name="UpdateSub" Text="Checking..." FontSize="11" Foreground="#9aa6b4"/>
             </StackPanel>
           </StackPanel>
         </Button>
@@ -247,12 +247,56 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
 '@
 $win = [Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader $xaml))
 $ctl = @{}
-'Status','StatusDot','BtnInstall','InstallTitle','InstallSub','ChkModels','BtnStart','BtnUpdate','BtnStop','Bar','Step','Log','TitleBar','BtnMin','BtnClose' |
+'Status','StatusDot','BtnInstall','InstallTitle','InstallSub','ChkModels','BtnStart','BtnUpdate',
+'UpdateIcon','UpdateTitle','UpdateSub','BtnStop','Bar','Step','Log','TitleBar','BtnMin','BtnClose' |
   ForEach-Object { $ctl[$_] = $win.FindName($_) }
+
+function Brush([string]$hex) { (New-Object Windows.Media.BrushConverter).ConvertFromString($hex) }
 
 function Set-Status([string]$label, [string]$hex) {
   $ctl.Status.Text = $label
-  $ctl.StatusDot.Fill = (New-Object Windows.Media.BrushConverter).ConvertFromString($hex)
+  $ctl.StatusDot.Fill = Brush $hex
+}
+
+# Repaint the Update card from `engine.ps1 check-update`. Dimmed when the pull
+# would be a no-op, so "is there anything to update?" is answerable at a glance
+# instead of by clicking.
+function Set-UpdateLook([string]$state) {
+  switch ($state) {
+    'up-to-date'       { $bg='#111318'; $bd='#1c2029'; $ic='#485261'; $ti='#6f7a88'; $su='#59636f'; $t='Up to date' }
+    'update-available' { $bg='#10242a'; $bd='#1f4d57'; $ic='#3fc9dd'; $ti='#eaf0f2'; $su='#7fd8e6'; $t='New version available' }
+    'checking'         { $bg='#191b21'; $bd='#2b333f'; $ic='#aab6c4'; $ti='#eaf0f2'; $su='#9aa6b4'; $t='Checking...' }
+    default            { $bg='#191b21'; $bd='#2b333f'; $ic='#aab6c4'; $ti='#eaf0f2'; $su='#9aa6b4'; $t='Get the latest' }
+  }
+  $ctl.BtnUpdate.Background = Brush $bg; $ctl.BtnUpdate.BorderBrush = Brush $bd
+  $ctl.UpdateIcon.Foreground = Brush $ic; $ctl.UpdateTitle.Foreground = Brush $ti
+  $ctl.UpdateSub.Foreground = Brush $su; $ctl.UpdateSub.Text = $t
+}
+
+# The check is a network round-trip, so it runs detached and reports back through
+# a dispatcher tick - the window must paint immediately, and only the UI thread
+# may touch controls. Script scope: these outlive the function the timer fires from.
+function Start-UpdateCheck {
+  if ($script:ChkTimer) { $script:ChkTimer.Stop() }
+  Set-UpdateLook 'checking'
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName='powershell.exe'; $psi.Arguments="-NoProfile -ExecutionPolicy Bypass -File `"$Engine`" check-update"
+  $psi.RedirectStandardOutput=$true; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true
+  $script:ChkProc  = [Diagnostics.Process]::Start($psi)
+  $script:ChkTicks = 0
+  $script:ChkTimer = New-Object Windows.Threading.DispatcherTimer
+  $script:ChkTimer.Interval = [TimeSpan]::FromMilliseconds(400)
+  $script:ChkTimer.Add_Tick({
+    $script:ChkTicks++
+    if (-not $script:ChkProc.HasExited) {
+      if ($script:ChkTicks -lt 25) { return }          # ~10 s ceiling, then give up
+      $script:ChkTimer.Stop(); try { $script:ChkProc.Kill() } catch {}
+      Set-UpdateLook 'unknown'; return
+    }
+    $script:ChkTimer.Stop()
+    Set-UpdateLook ($script:ChkProc.StandardOutput.ReadToEnd().Trim())
+  })
+  $script:ChkTimer.Start()
 }
 
 function Refresh-State {
@@ -269,6 +313,7 @@ function Refresh-State {
   $ctl.BtnStart.IsEnabled  = ($s -eq 'stopped')
   $ctl.BtnUpdate.IsEnabled = ($s -ne 'not-installed')
   $ctl.BtnStop.IsEnabled   = ($s -eq 'running')
+  Start-UpdateCheck
 }
 
 function Run-Verb([string]$verb) {
@@ -276,7 +321,7 @@ function Run-Verb([string]$verb) {
   $ctl.BtnInstall.IsEnabled = $false; $ctl.BtnStart.IsEnabled = $false
   $ctl.BtnUpdate.IsEnabled  = $false; $ctl.BtnStop.IsEnabled  = $false
   $ctl.Log.Clear(); $ctl.Bar.Value = 0
-  $ctl.Step.Foreground = (New-Object Windows.Media.BrushConverter).ConvertFromString('#aab6c4')
+  $ctl.Step.Foreground = Brush '#aab6c4'
   $ctl.Step.Text = 'Working...'
   Set-Status 'Working...' '#ffa64d'
   $psi = New-Object Diagnostics.ProcessStartInfo
@@ -289,7 +334,7 @@ function Run-Verb([string]$verb) {
     switch ($parts[0]) {
       'PROGRESS' { $ctl.Bar.Value=[int]$parts[3]; $ctl.Step.Text=$parts[4] }
       'WARN'     { $ctl.Log.AppendText("! $($parts[1])`n") }
-      'FAIL'     { $ctl.Step.Text="Error during $($parts[1]): $($parts[2])"; $ctl.Step.Foreground = (New-Object Windows.Media.BrushConverter).ConvertFromString('#ff6b85') }
+      'FAIL'     { $ctl.Step.Text="Error during $($parts[1]): $($parts[2])"; $ctl.Step.Foreground = Brush '#ff6b85' }
       'DONE'     { $ctl.Bar.Value=100; $ctl.Step.Text='Done.' }
     }
     $ctl.Log.AppendText("$line`n"); $win.Dispatcher.Invoke([Action]{}, 'Background')
