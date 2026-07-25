@@ -2,6 +2,7 @@ import type { WorkflowDefinition, GenerationParams } from '@/types/workflow'
 import type { ComfyUIPrompt } from '@/types/comfyui'
 import baseWorkflow from '../../../workflows/image_ernie_image_turbo.json'
 import { appendFaceDetailer } from './face-detailer'
+import { selectedLoras, prependLoraChain } from './lora-chain'
 import { appendFaceSwap } from './face-swap'
 import { appendFilmGrain } from './film-grain'
 import { appendHiresFix } from './hires-fix'
@@ -13,6 +14,7 @@ export const ernieTurboWorkflow: WorkflowDefinition = {
   description: 'Fast photorealistic generation with optional 1.5× upscale and face swap',
   supportsNegativePrompt: false,
   supportsLoRA: true,
+  loraFamily: 'ernie',
   supportsPromptEnhancer: true,
   supportsInputImage: true,
   supportsUpscale: true,
@@ -54,13 +56,25 @@ export const ernieTurboWorkflow: WorkflowDefinition = {
     // would leave the enhancer permanently on.
     wf['88:96'].inputs.value = params.promptEnhancer === true
 
-    // LoRA stack (slots 01-04) — always write slots 01/02 explicitly (selected
+    // LoRA stack (slots 01-04) — always write every slot explicitly (selected
     // name or the "None" sentinel) so a stale name baked into the template JSON
-    // can't leak through an empty slot into the submitted prompt.
-    wf['88:104'].inputs.lora_01 = params.lora1 || 'None'
-    wf['88:104'].inputs.strength_01 = String(params.lora1Strength ?? 0.9)
-    wf['88:104'].inputs.lora_02 = params.lora2 || 'None'
-    wf['88:104'].inputs.strength_02 = String(params.lora2Strength ?? 0.9)
+    // can't leak through an empty slot into the submitted prompt. Selections are
+    // compacted, so a gap in the form's slots leaves no gap here.
+    const loras = selectedLoras(params)
+    for (let i = 0; i < 4; i++) {
+      const slot = `0${i + 1}`
+      wf['88:104'].inputs[`lora_${slot}`] = loras[i]?.name ?? 'None'
+      wf['88:104'].inputs[`strength_${slot}`] = String(loras[i]?.strength ?? 0.9)
+    }
+    // The rgthree stack stops at four, so a fifth LoRA is chained upstream of it.
+    const loraSrc = prependLoraChain(
+      wf,
+      loras.slice(4),
+      { model: wf['88:104'].inputs.model as [string, number], clip: wf['88:104'].inputs.clip as [string, number] },
+      'lora:x',
+    )
+    wf['88:104'].inputs.model = loraSrc.model
+    wf['88:104'].inputs.clip = loraSrc.clip
 
     // Aria/Patreon model: a full UNET diffusion-model fine-tune replaces the
     // base UNET (UNETLoader); base CLIP/VAE loaders are untouched.

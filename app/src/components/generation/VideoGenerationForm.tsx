@@ -449,24 +449,28 @@ export default function VideoGenerationForm() {
               <div className="space-y-1.5">
                 <LoraSelector
                   label="LoRA 1"
+                  family="ltx"
                   value={params.lora1 ?? ''}
                   strength={params.lora1Strength ?? 1}
                   onChange={(lora, strength) => setParams((p) => ({ ...p, lora1: lora, lora1Strength: strength }))}
                 />
                 <LoraSelector
                   label="LoRA 2"
+                  family="ltx"
                   value={params.lora2 ?? ''}
                   strength={params.lora2Strength ?? 1}
                   onChange={(lora, strength) => setParams((p) => ({ ...p, lora2: lora, lora2Strength: strength }))}
                 />
                 <LoraSelector
                   label="LoRA 3"
+                  family="ltx"
                   value={params.lora3 ?? ''}
                   strength={params.lora3Strength ?? 1}
                   onChange={(lora, strength) => setParams((p) => ({ ...p, lora3: lora, lora3Strength: strength }))}
                 />
                 <LoraSelector
                   label="LoRA 4"
+                  family="ltx"
                   value={params.lora4 ?? ''}
                   strength={params.lora4Strength ?? 1}
                   onChange={(lora, strength) => setParams((p) => ({ ...p, lora4: lora, lora4Strength: strength }))}

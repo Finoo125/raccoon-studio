@@ -1,4 +1,5 @@
 import type { ComfyUIPrompt } from './comfyui'
+import type { LoraFamily } from '@/lib/models/lora-family'
 
 export interface AspectRatio {
   label: string
@@ -18,10 +19,18 @@ export interface GenerationParams {
   jobCount?: number
   steps?: number
   cfg?: number
+  /** LoRA slots 1–5. The form offers two by default and unlocks the rest behind
+   *  a confirmation — see MAX_LORAS / FREE_LORA_SLOTS in lib/workflows/lora-chain. */
   lora1?: string
   lora1Strength?: number
   lora2?: string
   lora2Strength?: number
+  lora3?: string
+  lora3Strength?: number
+  lora4?: string
+  lora4Strength?: number
+  lora5?: string
+  lora5Strength?: number
   /** Selected Patreon/Aria model (applied to the workflow's model/LoRA node). */
   ariaModel?: string
   ariaModelStrength?: number
@@ -105,6 +114,14 @@ export interface WorkflowDefinition {
   description: string
   supportsNegativePrompt: boolean
   supportsLoRA: boolean
+  /**
+   * Base-model architecture this workflow's LoRAs must match. The picker reads
+   * each installed LoRA's safetensors header and hides the ones belonging to a
+   * different family (an SDXL LoRA cannot load on Z-Image). SDXL/Pony/Illustrious
+   * share one value — they are all literally SDXL, so their LoRAs interchange.
+   * Omit to show every LoRA unfiltered.
+   */
+  loraFamily?: LoraFamily
   supportsPromptEnhancer: boolean
   supportsInputImage: boolean
   /** Whether the workflow has an optional final upscale stage. */

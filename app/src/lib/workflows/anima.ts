@@ -2,6 +2,7 @@ import type { WorkflowDefinition, GenerationParams } from '@/types/workflow'
 import type { ComfyUIPrompt } from '@/types/comfyui'
 import baseWorkflow from '../../../workflows/image_anima_preview.json'
 import { appendFaceDetailer } from './face-detailer'
+import { selectedLoras, prependLoraChain } from './lora-chain'
 import { appendHiresFix } from './hires-fix'
 import { appendImg2Img } from './img2img'
 import { ANIMA_DEFAULT_POSITIVE, ANIMA_DEFAULT_NEGATIVE } from './anime-prompts'
@@ -38,6 +39,7 @@ function animaFamily(v: AnimaVariant): WorkflowDefinition {
     description: v.description,
     supportsNegativePrompt: v.negativePrompt,
     supportsLoRA: true,
+    loraFamily: 'anima',
     supportsPromptEnhancer: false,
     supportsInputImage: false,
     supportsUpscale: true,
@@ -89,8 +91,8 @@ function animaFamily(v: AnimaVariant): WorkflowDefinition {
       wf['60:19'].inputs.sampler_name = v.sampler
 
       // Aria/Patreon model: a full UNET diffusion-model fine-tune replaces the
-      // base UNET (UNETLoader); base CLIP/VAE loaders are untouched. A manual
-      // LoRA (lora1) applies independently on the LoraLoaderModelOnly node below.
+      // base UNET (UNETLoader); base CLIP/VAE loaders are untouched. Manual
+      // LoRAs apply independently on the loader chain below.
       if (params.ariaModel) {
         wf['60:44'].inputs.unet_name = params.ariaModel
       }
@@ -100,17 +102,28 @@ function animaFamily(v: AnimaVariant): WorkflowDefinition {
       // in outpaint mode, else the plain decode (['60:8', 0]).
       const decoded = appendImg2Img(wf, params, { ksamplerId: '60:19', vae: ['60:15', 0], decoded: ['60:8', 0] })
 
-      // Manual LoRA (single slot). Node 60:61 is a LoraLoaderModelOnly, which —
-      // unlike the rgthree stack — has no "None" sentinel and demands a real file,
-      // and its template default points at a LoRA that may not be installed. So:
-      // with a LoRA picked, set it; with none, bypass the node entirely (rewire the
+      // Manual LoRAs. Node 60:61 is a LoraLoaderModelOnly, which — unlike the
+      // rgthree stack — has no "None" sentinel and demands a real file, and its
+      // template default points at a LoRA that may not be installed. So: with a
+      // LoRA picked, set it; with none, bypass the node entirely (rewire the
       // model consumers straight to the UNETLoader and delete it) rather than ship
       // the stale default and fail ComfyUI validation. modelRef is the model source
       // for every downstream pass (sampler, hires-fix, detailer).
+      const loras = selectedLoras(params)
       let modelRef: [string, number] = ['60:61', 0]
-      if (params.lora1) {
-        wf['60:61'].inputs.lora_name = params.lora1
-        wf['60:61'].inputs.strength_model = String(params.lora1Strength ?? 1)
+      if (loras.length > 0) {
+        wf['60:61'].inputs.lora_name = loras[0].name
+        wf['60:61'].inputs.strength_model = String(loras[0].strength ?? 1)
+        // 60:61 holds exactly one LoRA, so slots 2+ chain upstream of it —
+        // model-only, since Anima's text encoder is a Qwen LLM these LoRAs don't
+        // patch. Before this, every slot past the first was silently dropped.
+        const loraSrc = prependLoraChain(
+          wf,
+          loras.slice(1),
+          { model: wf['60:61'].inputs.model as [string, number] },
+          'lora:x',
+        )
+        wf['60:61'].inputs.model = loraSrc.model
       } else {
         modelRef = ['60:44', 0]
         wf['60:19'].inputs.model = modelRef

@@ -1,17 +1,26 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { visibleLoras, type LoraFamily } from '@/lib/models/lora-family'
 
 interface Props {
   label: string
   value: string
   strength: number
   onChange: (lora: string, strength: number) => void
+  /**
+   * Base-model family of the workflow this picker belongs to. When set, LoRAs
+   * known to belong to a *different* family are hidden — an SDXL LoRA can't load
+   * on Z-Image, so offering it only buys a failed job. LoRAs whose architecture
+   * we can't identify are always listed, so nothing silently disappears.
+   */
+  family?: LoraFamily
 }
 
-export default function LoraSelector({ label, value, strength, onChange }: Props) {
+export default function LoraSelector({ label, value, strength, onChange, family }: Props) {
   const [loras, setLoras] = useState<string[]>([])
+  const [families, setFamilies] = useState<Record<string, LoraFamily | null>>({})
 
   useEffect(() => {
     fetch('/api/comfyui/object_info/LoraLoader')
@@ -33,6 +42,20 @@ export default function LoraSelector({ label, value, strength, onChange }: Props
       })
   }, [])
 
+  // Architecture read from each LoRA's own safetensors header. Failure leaves the
+  // map empty, which shows every LoRA — the pre-filtering behaviour.
+  useEffect(() => {
+    fetch('/api/models/lora-arch')
+      .then((r) => r.json())
+      .then((d) => { if (d?.families) setFamilies(d.families) })
+      .catch(() => {})
+  }, [])
+
+  const visible = useMemo(
+    () => visibleLoras(loras, families, family, value),
+    [loras, families, family, value],
+  )
+
   const active = Boolean(value)
 
   return (
@@ -52,7 +75,7 @@ export default function LoraSelector({ label, value, strength, onChange }: Props
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="none">None</SelectItem>
-            {loras.map((l) => (
+            {visible.map((l) => (
               <SelectItem key={l} value={l}>{l.replace('.safetensors', '')}</SelectItem>
             ))}
           </SelectContent>

@@ -8,6 +8,7 @@ import { appendHiresFix } from './hires-fix'
 import { appendImg2Img } from './img2img'
 import { appendIpAdapter } from './ipadapter'
 import { appendControlNet } from './controlnet'
+import { selectedLoras } from './lora-chain'
 import { ANIME_DEFAULT_POSITIVE, ANIME_DEFAULT_NEGATIVE, PONY_DEFAULT_POSITIVE, PONY_DEFAULT_NEGATIVE } from './anime-prompts'
 
 /**
@@ -86,6 +87,8 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
     description: config.description,
     supportsNegativePrompt: true,
     supportsLoRA: true,
+    // Pony and Illustrious are SDXL, so all three share a LoRA pool.
+    loraFamily: 'sdxl',
     supportsPromptEnhancer: false,
     supportsInputImage: config.faceSwap,
     supportsUpscale: true,
@@ -146,10 +149,7 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
 
       // muscgi/muscgro LoRAs: insert a LoraLoader chain (nodes 100, 101, …) only
       // for set slots, then re-point the model + both CLIP encoders to the tail.
-      const loras = [
-        { name: params.lora1, strength: params.lora1Strength },
-        { name: params.lora2, strength: params.lora2Strength },
-      ].filter((l): l is { name: string; strength: number | undefined } => Boolean(l.name))
+      const loras = selectedLoras(params)
 
       let modelSrc: [string, number] = ['4', 0]
       let clipSrc: [string, number] = ['4', 1]

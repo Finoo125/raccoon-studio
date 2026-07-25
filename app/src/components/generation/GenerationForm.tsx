@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace } from 'lucide-react'
+import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -13,6 +13,8 @@ import { workflows } from '@/lib/workflows'
 import { FUN_MODEL } from '@/lib/workflows/zimage-controlnet'
 import { SDXL_FIX_VAE } from '@/lib/workflows/sdxl'
 import { isAriaModel } from '@/lib/models/patreon'
+import { LORA_SLOTS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { useQueueStore } from '@/lib/comfyui/queue'
 import { submitPrompt } from '@/lib/comfyui/submit'
 import { useStudioStore } from '@/lib/generation/studio-store'
@@ -31,6 +33,10 @@ import type { GenerationParams } from '@/types/workflow'
 
 // Persists the workflow choice and all form params across reloads (localStorage).
 const FORM_STORAGE_KEY = 'raccoon-studio:generate-form'
+// Remembers that the user accepted the >2-LoRA quality warning, so the dialog is
+// a one-time gate rather than a nag on every reload. The slot count itself is
+// not persisted — sessions start at two, same as the selections.
+const LORA_ACK_KEY = 'raccoon-studio:lora-stack-ack'
 
 export default function GenerationForm() {
   const { clientId, addJob } = useQueueStore()
@@ -67,6 +73,10 @@ export default function GenerationForm() {
   // ponytail: in-memory only (resets on reload); persist per-model if users ask.
   const [promptStash, setPromptStash] = useState<Record<string, { prompt: string; negativePrompt: string }>>({})
   const [isGenerating, setIsGenerating] = useState(false)
+  // Visible LoRA rows. Starts at the two free slots; the rest unlock behind a
+  // one-time quality warning (LORA_ACK_KEY).
+  const [loraSlots, setLoraSlots] = useState(FREE_LORA_SLOTS)
+  const [loraWarnOpen, setLoraWarnOpen] = useState(false)
   // Wildcard lists for `__name__` expansion, loaded once; drives the inline
   // preview and the per-job expansion at submit time.
   const [wildcardLists, setWildcardLists] = useState<WildcardLists>({})
@@ -288,7 +298,7 @@ export default function GenerationForm() {
           // form never carries a stale LoRA, even from a blob written by an
           // older build.
           if (saved.params) {
-            setParams((p) => ({ ...p, ...saved.params, lora1: '', lora2: '', lora1Strength: 1, lora2Strength: 1 }))
+            setParams((p) => ({ ...p, ...saved.params, ...EMPTY_LORA_PARAMS }))
           }
           /* eslint-enable react-hooks/set-state-in-effect */
         }
@@ -313,7 +323,7 @@ export default function GenerationForm() {
     try {
       localStorage.setItem(
         FORM_STORAGE_KEY,
-        JSON.stringify({ workflowId, params: { ...params, inputImage: undefined, baseImage: undefined, maskImage: undefined, controlNet: undefined, ipAdapter: undefined, lora1: '', lora2: '', lora1Strength: 1, lora2Strength: 1 } }),
+        JSON.stringify({ workflowId, params: { ...params, inputImage: undefined, baseImage: undefined, maskImage: undefined, controlNet: undefined, ipAdapter: undefined, ...EMPTY_LORA_PARAMS } }),
       )
     } catch {
       /* quota or unavailable — non-fatal */
@@ -322,6 +332,20 @@ export default function GenerationForm() {
 
   const set = (key: keyof GenerationParams, value: unknown) =>
     setParams((p) => ({ ...p, [key]: value }))
+
+  // Slots past the free two are gated once per browser: stacked LoRAs compete for
+  // the same weights, so the user acknowledges the quality cost before unlocking.
+  const addLoraSlot = () => setLoraSlots((n) => Math.min(MAX_LORAS, n + 1))
+  const requestLoraSlot = () => {
+    let acked = false
+    try { acked = localStorage.getItem(LORA_ACK_KEY) === '1' } catch { /* unavailable */ }
+    if (loraSlots >= FREE_LORA_SLOTS && !acked) setLoraWarnOpen(true)
+    else addLoraSlot()
+  }
+  const confirmLoraSlots = () => {
+    try { localStorage.setItem(LORA_ACK_KEY, '1') } catch { /* quota or unavailable */ }
+    addLoraSlot()
+  }
 
   const handleGenerate = useCallback(async () => {
     if (!params.prompt.trim()) {
@@ -494,7 +518,7 @@ export default function GenerationForm() {
                 // rather than carrying a now-invalid selection into the new model.
                 setParams((p) => ({
                   ...p,
-                  lora1: '', lora2: '', lora1Strength: 1, lora2Strength: 1,
+                  ...EMPTY_LORA_PARAMS,
                   ...w.defaultParams,
                   prompt: stashed?.prompt ?? w.defaultParams.prompt ?? '',
                   negativePrompt: stashed?.negativePrompt ?? w.defaultParams.negativePrompt ?? '',
@@ -795,19 +819,39 @@ export default function GenerationForm() {
         <div className="space-y-2">
           <SectionLabel>LoRAs</SectionLabel>
           <div className="space-y-2">
-            <LoraSelector
-              label="LoRA 1"
-              value={params.lora1 ?? ''}
-              strength={params.lora1Strength ?? 1}
-              onChange={(lora, strength) => setParams((p) => ({ ...p, lora1: lora, lora1Strength: strength }))}
-            />
-            <LoraSelector
-              label="LoRA 2"
-              value={params.lora2 ?? ''}
-              strength={params.lora2Strength ?? 1}
-              onChange={(lora, strength) => setParams((p) => ({ ...p, lora2: lora, lora2Strength: strength }))}
-            />
+            {LORA_SLOTS.slice(0, loraSlots).map((slot, i) => (
+              <LoraSelector
+                key={slot.name}
+                label={`LoRA ${i + 1}`}
+                family={workflow.loraFamily}
+                value={(params[slot.name] as string | undefined) ?? ''}
+                strength={(params[slot.strength] as number | undefined) ?? 1}
+                onChange={(lora, strength) =>
+                  setParams((p) => ({ ...p, [slot.name]: lora, [slot.strength]: strength }))
+                }
+              />
+            ))}
           </div>
+
+          {loraSlots < MAX_LORAS && (
+            <Button
+              variant="outline"
+              onClick={requestLoraSlot}
+              className="h-8 w-full gap-1.5 border-dashed text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add LoRA
+            </Button>
+          )}
+
+          <ConfirmDialog
+            open={loraWarnOpen}
+            onOpenChange={setLoraWarnOpen}
+            title="Stack more than 2 LoRAs?"
+            description={`Every LoRA patches the same weights, so past two they start competing — expect weaker prompt adherence, muddier detail and drifting color. Lowering each one's strength usually helps. You can stack up to ${MAX_LORAS}.`}
+            confirmLabel="Add anyway"
+            onConfirm={confirmLoraSlots}
+          />
         </div>
       )}
 

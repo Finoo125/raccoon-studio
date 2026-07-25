@@ -2,6 +2,7 @@ import type { WorkflowDefinition, GenerationParams } from '@/types/workflow'
 import type { ComfyUIPrompt } from '@/types/comfyui'
 import baseWorkflow from '../../../workflows/image_z_image_turbo.json'
 import { appendFaceDetailer } from './face-detailer'
+import { selectedLoras, prependLoraChain } from './lora-chain'
 import { appendFaceSwap } from './face-swap'
 import { appendFilmGrain } from './film-grain'
 import { appendHiresFix } from './hires-fix'
@@ -14,6 +15,7 @@ export const zImageTurboWorkflow: WorkflowDefinition = {
   description: 'Fast turbo-style generation with optional 1.5× upscale and face swap',
   supportsNegativePrompt: false,
   supportsLoRA: true,
+  loraFamily: 'zimage',
   supportsPromptEnhancer: false,
   supportsInputImage: true,
   supportsUpscale: true,
@@ -50,14 +52,26 @@ export const zImageTurboWorkflow: WorkflowDefinition = {
     // Seed
     wf['57:3'].inputs.seed = String(params.seed < 0 ? Math.floor(Math.random() * 9999999999999) : params.seed)
 
-    // LoRA stack — always write both slots explicitly (selected name or the
+    // LoRA stack — always write all four slots explicitly (selected name or the
     // "None" sentinel the rgthree stack expects). Writing unconditionally, rather
     // than only when a LoRA is picked, prevents a stale name baked into the
     // template JSON from leaking through an empty slot into the submitted prompt.
-    wf['57:62'].inputs.lora_01 = params.lora1 || 'None'
-    wf['57:62'].inputs.strength_01 = String(params.lora1Strength ?? 1)
-    wf['57:62'].inputs.lora_02 = params.lora2 || 'None'
-    wf['57:62'].inputs.strength_02 = String(params.lora2Strength ?? 1)
+    // Selections are compacted, so a gap in the form's slots leaves no gap here.
+    const loras = selectedLoras(params)
+    for (let i = 0; i < 4; i++) {
+      const slot = `0${i + 1}`
+      wf['57:62'].inputs[`lora_${slot}`] = loras[i]?.name ?? 'None'
+      wf['57:62'].inputs[`strength_${slot}`] = String(loras[i]?.strength ?? 1)
+    }
+    // The rgthree stack stops at four, so a fifth LoRA is chained upstream of it.
+    const loraSrc = prependLoraChain(
+      wf,
+      loras.slice(4),
+      { model: wf['57:62'].inputs.model as [string, number], clip: wf['57:62'].inputs.clip as [string, number] },
+      'lora:x',
+    )
+    wf['57:62'].inputs.model = loraSrc.model
+    wf['57:62'].inputs.clip = loraSrc.clip
 
     // Aria/Patreon model: z-image Aria models are full UNET diffusion-model
     // fine-tunes, so a selected one replaces the base UNET (UNETLoader) rather
