@@ -8,6 +8,17 @@ LOG_DIR="$RACCOON_ROOT/logs"
 
 _log() { mkdir -p "$(dirname "$LOG_FILE")"; printf '%s %s\n' "$(date +%H:%M:%S)" "$1" >>"$LOG_FILE" 2>/dev/null || true; }
 
+# Pinned upstream revision for a dependency, or empty when unpinned (caller
+# then follows the default branch). See installer/pinned-versions.txt for why.
+pinned_rev() { # name
+  local file="$RACCOON_ROOT/installer/pinned-versions.txt" name="$1" n rev
+  [ -f "$file" ] || return 0
+  while read -r n rev _; do
+    case "$n" in ''|'#'*) continue;; esac
+    [ "$n" = "$name" ] && { printf '%s' "$rev"; return 0; }
+  done <"$file"
+}
+
 emit_progress() { # step total message
   local pct=$(( $1 * 100 / $2 ))
   printf 'PROGRESS|%s|%s|%s|%s\n' "$1" "$2" "$pct" "$3"

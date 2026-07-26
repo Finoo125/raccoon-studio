@@ -7,6 +7,20 @@ function Emit-Warn([string]$m){ Write-Output "WARN|$m"; Write-RsLog "[WARN] $m" 
 function Emit-Done([string]$v){ Write-Output "DONE|$v"; Write-RsLog "[DONE] $v" }
 function Emit-Fail([string]$v,[string]$m){ Write-Output "FAIL|$v|$m"; Write-RsLog "[FAIL] ${v}: $m" }
 
+# Pinned upstream revision for a dependency, or '' when unpinned (caller then
+# follows the default branch). See installer/pinned-versions.txt for why.
+function Get-PinnedRev([string]$Name) {
+    $file = Join-Path $env:RACCOON_ROOT 'installer/pinned-versions.txt'
+    if (-not (Test-Path $file)) { return '' }
+    foreach ($line in (Get-Content $file)) {
+        $t = $line.Trim()
+        if ($t -eq '' -or $t.StartsWith('#')) { continue }
+        $parts = $t -split '\s+', 2
+        if ($parts[0] -eq $Name) { return $parts[1].Trim() }
+    }
+    return ''
+}
+
 # --- GPU detection ----------------------------------------------------------
 # AMD cards AMD's own Windows ROCm 7.2.1 matrix covers: gfx1100/1101 (discrete
 # RDNA3) and gfx1200/1201 (RDNA4). Everything else Radeon - RX 6000/5000

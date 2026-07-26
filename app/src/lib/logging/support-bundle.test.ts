@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildSupportBundle,
+  formatServerLog,
   redactSecrets,
   requiredNodeClasses,
+  stripAnsi,
   tailLines,
   type BundleInput,
 } from './support-bundle'
@@ -24,7 +26,7 @@ const input = (over: Partial<BundleInput> = {}): BundleInput => ({
 describe('requiredNodeClasses', () => {
   it('collects class_types from the shipped workflow graphs', () => {
     const classes = requiredNodeClasses()
-    expect(classes).toContain('LTXVTiledVAEDecode') // LTX23.json
+    expect(classes).toContain('RaccoonTiledVAEDecode') // LTX23.json
     expect(classes).toContain('UNETLoader') // image workflows
     expect(classes).toContain('FaceDetailer') // helper-appended, in no template
   })
@@ -65,6 +67,31 @@ describe('tailLines', () => {
   })
 })
 
+describe('formatServerLog', () => {
+  // Verbatim shape of ComfyUI's /internal/logs/raw.
+  it('joins entries and strips the colour codes', () => {
+    const payload = {
+      entries: [
+        { t: '2026-07-26T10:42:48', m: '\x1b[32m[INFO]\x1b[0m starting\n' },
+        { t: '2026-07-26T10:42:49', m: '[WARNING] Cannot import ComfyUI-LTXVideo\n' },
+      ],
+      size: 2,
+    }
+    expect(formatServerLog(payload)).toBe('[INFO] starting\n[WARNING] Cannot import ComfyUI-LTXVideo\n')
+  })
+
+  it('is empty for an unusable payload rather than throwing', () => {
+    expect(formatServerLog(null)).toBe('')
+    expect(formatServerLog({})).toBe('')
+    expect(formatServerLog({ entries: 'nope' })).toBe('')
+  })
+
+  it('survives entries with no message', () => {
+    expect(stripAnsi('\x1b[32mx\x1b[0m')).toBe('x')
+    expect(formatServerLog({ entries: [{}, { m: 'ok' }] })).toBe('ok')
+  })
+})
+
 describe('buildSupportBundle', () => {
   it('reports a clean install as having no missing nodes', () => {
     expect(buildSupportBundle(input())).toContain('None — every node the shipped workflows use is loaded.')
@@ -73,10 +100,31 @@ describe('buildSupportBundle', () => {
   // The 2026-07-25 report: ComfyUI-LTXVideo failed to import, so every one of
   // its nodes vanished and video died with `missing_node_type`.
   it('names a node the workflows need but ComfyUI has not loaded', () => {
-    const loaded = requiredNodeClasses().filter((c) => c !== 'LTXVTiledVAEDecode')
+    const loaded = requiredNodeClasses().filter((c) => c !== 'RaccoonTiledVAEDecode')
     const out = buildSupportBundle(input({ comfyui: { ...input().comfyui, loadedNodes: loaded } }))
-    expect(out).toContain('!! LTXVTiledVAEDecode')
+    expect(out).toContain('!! RaccoonTiledVAEDecode')
     expect(out).toContain('failed to import')
+  })
+
+  // The on-disk comfyui.err was a day stale while this log held the answer.
+  it('includes the running instance log and points the missing-node section at it', () => {
+    const loaded = requiredNodeClasses().filter((c) => c !== 'RaccoonTiledVAEDecode')
+    const out = buildSupportBundle(
+      input({
+        comfyui: {
+          ...input().comfyui,
+          loadedNodes: loaded,
+          serverLog: '[WARNING] Cannot import ComfyUI-LTXVideo module for custom nodes\n0.1 seconds (IMPORT FAILED)',
+        },
+      }),
+    )
+    expect(out).toContain('ComfyUI server log (from the running instance)')
+    expect(out).toContain('IMPORT FAILED')
+    expect(out).toContain('Search the ComfyUI server log below for')
+  })
+
+  it('says so when the server log could not be fetched', () => {
+    expect(buildSupportBundle(input())).toContain('too old to expose /internal/logs/raw')
   })
 
   it('records an unreachable ComfyUI instead of failing', () => {

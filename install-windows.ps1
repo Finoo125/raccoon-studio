@@ -515,11 +515,38 @@ function Install-WingetPkg([string]$Id, [string]$Display, [scriptblock]$Fallback
 # ── Custom-node pack helpers ────────────────────────────────────────────────────
 # Mirror the Linux installer. All steps are non-fatal: one bad pack warns and the
 # install continues. Read script-scope $cnDir/$uvExe/$VenvPython at call time.
+# Move a clone onto its pinned revision (see installer/pinned-versions.txt).
+# Shallow-fetching one sha is what keeps installs small, but it needs the host
+# to allow fetching an arbitrary object — GitHub does, Codeberg (ReActor) is not
+# guaranteed to — so fall back to a full fetch rather than failing the install.
+# Detached on purpose: a branch here would just drift again on the next run.
+function Set-PinnedRev([string]$Dir, [string]$Rev, [string]$Name) {
+    & git -C $Dir fetch --depth=1 origin $Rev 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+    if ($LASTEXITCODE -ne 0) {
+        Add-Log "[PIN] shallow fetch of $Rev failed for $Name - retrying with full history"
+        & git -C $Dir fetch --unshallow origin 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        & git -C $Dir fetch origin 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+    }
+    & git -C $Dir checkout -f --detach $Rev 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "$Name could not be pinned to $Rev — leaving it on its current revision."
+        return
+    }
+    Add-Log "[PIN] $Name -> $Rev"
+}
+
 function Install-NodePack([string]$Name, [string]$Url) {
     $dir = Join-Path $cnDir $Name
+    $rev = Get-PinnedRev $Name
     if (Test-Path (Join-Path $dir '.git')) {
-        Invoke-WithSpinner "Updating $Name" {
-            & git -C $dir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        # Pinned repos converge onto the pin instead of following the branch,
+        # so re-running the installer repairs an install that drifted.
+        if ($rev) {
+            Invoke-WithSpinner "Pinning $Name" { Set-PinnedRev $dir $rev $Name }
+        } else {
+            Invoke-WithSpinner "Updating $Name" {
+                & git -C $dir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+            }
         }
     } elseif (Test-Path $dir) {
         Write-Info "$Name already present — leaving as-is"
@@ -527,6 +554,7 @@ function Install-NodePack([string]$Name, [string]$Url) {
         Invoke-WithSpinner "Cloning $Name" {
             & git clone --depth=1 $Url $dir 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
             if ($LASTEXITCODE -ne 0) { Write-Warn "$Name clone failed — its nodes will be unavailable." }
+            elseif ($rev) { Set-PinnedRev $dir $rev $Name }
         }
     }
     $req = Join-Path $dir 'requirements.txt'
@@ -1165,10 +1193,18 @@ $comfyParent = Join-Path $RootDir 'comfyui'
 if (-not (Test-Path $comfyParent)) { New-Item -ItemType Directory -Path $comfyParent | Out-Null }
 
 $ComfyRepo = 'https://github.com/comfyanonymous/ComfyUI.git'
+# ComfyUI is pinned too, and it is the pin that matters most: every node pack is
+# written against a particular core, so an unpinned core silently breaks packs
+# (see installer/pinned-versions.txt).
+$ComfyRev = Get-PinnedRev 'ComfyUI'
 Invoke-WithSpinner 'Cloning / updating ComfyUI' {
     if (Test-Path (Join-Path $ComfyDir 'main.py')) {
-        Add-Log "[CMD] git -C $ComfyDir pull --ff-only"
-        & git -C $ComfyDir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        if ($ComfyRev) {
+            Set-PinnedRev $ComfyDir $ComfyRev 'ComfyUI'
+        } else {
+            Add-Log "[CMD] git -C $ComfyDir pull --ff-only"
+            & git -C $ComfyDir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        }
     } elseif ((Test-Path $ComfyDir) -and (Get-ChildItem -Force $ComfyDir -ErrorAction SilentlyContinue)) {
         # Dir exists but has no main.py — a stale/partial checkout, or only the
         # gitignored models/ + custom_nodes/ dirs survived a prior run. `git clone`
@@ -1182,7 +1218,8 @@ Invoke-WithSpinner 'Cloning / updating ComfyUI' {
         } else {
             & git -C $ComfyDir remote add origin $ComfyRepo 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
         }
-        & git -C $ComfyDir fetch --depth=1 origin master 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        $ref = if ($ComfyRev) { $ComfyRev } else { 'master' }
+        & git -C $ComfyDir fetch --depth=1 origin $ref 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
         if ($LASTEXITCODE -ne 0) { Write-Fail 'git fetch ComfyUI failed.' }
         & git -C $ComfyDir checkout -f -B master FETCH_HEAD 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
         if ($LASTEXITCODE -ne 0) { Write-Fail 'git checkout ComfyUI failed.' }
@@ -1192,6 +1229,7 @@ Invoke-WithSpinner 'Cloning / updating ComfyUI' {
         Add-Log "[CMD] git clone ComfyUI"
         & git clone --depth=1 $ComfyRepo $ComfyDir 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
         if ($LASTEXITCODE -ne 0) { Write-Fail 'git clone ComfyUI failed.' }
+        if ($ComfyRev) { Set-PinnedRev $ComfyDir $ComfyRev 'ComfyUI' }
     }
 }
 Write-Ok 'ComfyUI ready'
@@ -1279,12 +1317,15 @@ $MgrDir = Join-Path $ComfyDir 'custom_nodes\ComfyUI-Manager'
 $cnDir  = Join-Path $ComfyDir 'custom_nodes'
 if (-not (Test-Path $cnDir)) { New-Item -ItemType Directory -Path $cnDir | Out-Null }
 
+$MgrRev = Get-PinnedRev 'ComfyUI-Manager'
 Invoke-WithSpinner 'Cloning / updating ComfyUI Manager' {
     if (Test-Path (Join-Path $MgrDir '.git')) {
-        & git -C $MgrDir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        if ($MgrRev) { Set-PinnedRev $MgrDir $MgrRev 'ComfyUI-Manager' }
+        else { & git -C $MgrDir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8 }
     } else {
         & git clone --depth=1 https://github.com/ltdrdata/ComfyUI-Manager.git $MgrDir 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
         if ($LASTEXITCODE -ne 0) { Write-Fail 'git clone ComfyUI-Manager failed.' }
+        if ($MgrRev) { Set-PinnedRev $MgrDir $MgrRev 'ComfyUI-Manager' }
     }
 }
 Write-Ok 'ComfyUI Manager ready'
@@ -1299,12 +1340,15 @@ if (Test-Path $mgrReq) {
 # rgthree-comfy — provides the "Lora Loader Stack (rgthree)" node the default
 # Z Image Turbo workflow uses to load the model/CLIP and stack LoRAs.
 $RgthreeDir = Join-Path $cnDir 'rgthree-comfy'
+$RgthreeRev = Get-PinnedRev 'rgthree-comfy'
 Invoke-WithSpinner 'Cloning / updating rgthree-comfy' {
     if (Test-Path (Join-Path $RgthreeDir '.git')) {
-        & git -C $RgthreeDir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        if ($RgthreeRev) { Set-PinnedRev $RgthreeDir $RgthreeRev 'rgthree-comfy' }
+        else { & git -C $RgthreeDir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8 }
     } else {
         & git clone --depth=1 https://github.com/rgthree/rgthree-comfy.git $RgthreeDir 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
         if ($LASTEXITCODE -ne 0) { Write-Warn 'rgthree-comfy clone failed — the default workflow will not load.' }
+        elseif ($RgthreeRev) { Set-PinnedRev $RgthreeDir $RgthreeRev 'rgthree-comfy' }
     }
 }
 $rgReq = Join-Path $RgthreeDir 'requirements.txt'
@@ -1316,12 +1360,15 @@ if (Test-Path $rgReq) {
 
 # ReActor face-swap node — powers the Z Image Turbo face-swap workflow.
 $ReactorDir = Join-Path $cnDir 'comfyui-reactor-node'
+$ReactorRev = Get-PinnedRev 'comfyui-reactor-node'
 Invoke-WithSpinner 'Cloning / updating ReActor face-swap node' {
     if (Test-Path (Join-Path $ReactorDir '.git')) {
-        & git -C $ReactorDir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        if ($ReactorRev) { Set-PinnedRev $ReactorDir $ReactorRev 'comfyui-reactor-node' }
+        else { & git -C $ReactorDir pull --ff-only 2>&1 | Add-Content -Path $LogFile -Encoding UTF8 }
     } else {
         & git clone --depth=1 https://codeberg.org/Gourieff/comfyui-reactor-node.git $ReactorDir 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
         if ($LASTEXITCODE -ne 0) { Write-Warn 'ReActor clone failed — face swap will be unavailable.' }
+        elseif ($ReactorRev) { Set-PinnedRev $ReactorDir $ReactorRev 'comfyui-reactor-node' }
     }
 }
 # install.py installs deps (incl. onnxruntime) and downloads inswapper_128.onnx.

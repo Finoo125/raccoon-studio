@@ -346,16 +346,42 @@ node_supported() {
 # ── Custom-node pack helpers ────────────────────────────────────────────────────
 # Bash uses dynamic scoping, so these see main()'s $UV when called from it.
 # All steps are non-fatal: one bad pack warns and continues rather than aborting.
+# Move a clone onto its pinned revision (see installer/pinned-versions.txt).
+# Shallow-fetching a single sha is what keeps installs small, but it needs the
+# host to allow fetching an arbitrary object — GitHub does, Codeberg (ReActor)
+# is not guaranteed to — so fall back to a full fetch instead of failing.
+# Detached on purpose: a branch here would just drift again on the next run.
+set_pinned_rev() { # dir rev name
+  local dir="$1" rev="$2" name="$3"
+  git -C "$dir" fetch --depth=1 origin "$rev" >>"$LOG_FILE" 2>&1 \
+    || { _log "[PIN] shallow fetch of $rev failed for $name - retrying with full history"
+         git -C "$dir" fetch --unshallow origin >>"$LOG_FILE" 2>&1 || true
+         git -C "$dir" fetch origin >>"$LOG_FILE" 2>&1 || true; }
+  if git -C "$dir" checkout -f --detach "$rev" >>"$LOG_FILE" 2>&1; then
+    _log "[PIN] $name -> $rev"
+  else
+    warn "$name could not be pinned to $rev — leaving it on its current revision"
+  fi
+}
+
 install_node_pack() {
   local name="$1" url="$2"; local dir="$COMFYUI_DIR/custom_nodes/$name"
+  local rev; rev="$(pinned_rev "$name")"
   if [ -d "$dir/.git" ]; then
-    spin_run "Updating $name" git -C "$dir" pull --ff-only \
-      || warn "$name update failed (keeping existing copy)"
+    # Pinned repos converge onto the pin instead of following the branch, so
+    # re-running the installer repairs an install that drifted.
+    if [ -n "$rev" ]; then
+      spin_run "Pinning $name" set_pinned_rev "$dir" "$rev" "$name"
+    else
+      spin_run "Updating $name" git -C "$dir" pull --ff-only \
+        || warn "$name update failed (keeping existing copy)"
+    fi
   elif [ -d "$dir" ]; then
     info "$name already present — leaving as-is"
   else
     spin_run "Cloning $name" git clone --depth=1 "$url" "$dir" \
       || { warn "$name clone failed — its nodes will be unavailable"; return 0; }
+    [ -n "$rev" ] && set_pinned_rev "$dir" "$rev" "$name"
   fi
   if [ -f "$dir/requirements.txt" ]; then
     spin_run "Installing $name dependencies" \
@@ -794,12 +820,22 @@ main() {
   # ── Step 6: Clone ComfyUI ────────────────────────────────────────────────────
   step "Setting up ComfyUI"
   run mkdir -p "$SCRIPT_DIR/comfyui"
+  # ComfyUI is pinned too, and it is the pin that matters most: every node pack
+  # is written against a particular core, so an unpinned core silently breaks
+  # packs (see installer/pinned-versions.txt).
+  local comfy_rev; comfy_rev="$(pinned_rev ComfyUI)"
   if [ -f "$COMFYUI_DIR/main.py" ]; then
-    spin_run "Pulling ComfyUI updates" git -C "$COMFYUI_DIR" pull --ff-only
-    ok "ComfyUI updated"
+    if [ -n "$comfy_rev" ]; then
+      spin_run "Pinning ComfyUI" set_pinned_rev "$COMFYUI_DIR" "$comfy_rev" ComfyUI
+      ok "ComfyUI pinned"
+    else
+      spin_run "Pulling ComfyUI updates" git -C "$COMFYUI_DIR" pull --ff-only
+      ok "ComfyUI updated"
+    fi
   else
     spin_run "Cloning ComfyUI (this may take a minute)" \
       git clone --depth=1 https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
+    [ -n "$comfy_rev" ] && set_pinned_rev "$COMFYUI_DIR" "$comfy_rev" ComfyUI
     ok "ComfyUI cloned"
   fi
 
@@ -859,12 +895,18 @@ main() {
   step "Installing custom nodes (Manager + rgthree + ReActor + Impact)"
   local MGR="$COMFYUI_DIR/custom_nodes/ComfyUI-Manager"
   run mkdir -p "$COMFYUI_DIR/custom_nodes"
+  local MGR_REV; MGR_REV="$(pinned_rev ComfyUI-Manager)"
   if [ -d "$MGR/.git" ]; then
-    spin_run "Updating ComfyUI Manager" git -C "$MGR" pull --ff-only
+    if [ -n "$MGR_REV" ]; then
+      spin_run "Pinning ComfyUI Manager" set_pinned_rev "$MGR" "$MGR_REV" ComfyUI-Manager
+    else
+      spin_run "Updating ComfyUI Manager" git -C "$MGR" pull --ff-only
+    fi
     ok "ComfyUI Manager updated"
   else
     spin_run "Cloning ComfyUI Manager" \
       git clone --depth=1 https://github.com/ltdrdata/ComfyUI-Manager.git "$MGR"
+    [ -n "$MGR_REV" ] && set_pinned_rev "$MGR" "$MGR_REV" ComfyUI-Manager
     ok "ComfyUI Manager installed"
   fi
   if [ -f "$MGR/requirements.txt" ]; then
@@ -875,13 +917,19 @@ main() {
   # rgthree-comfy — provides the "Lora Loader Stack (rgthree)" node the default
   # Z Image Turbo workflow uses to load the model/CLIP and stack LoRAs.
   local RGTHREE="$COMFYUI_DIR/custom_nodes/rgthree-comfy"
+  local RGTHREE_REV; RGTHREE_REV="$(pinned_rev rgthree-comfy)"
   if [ -d "$RGTHREE/.git" ]; then
-    spin_run "Updating rgthree-comfy" git -C "$RGTHREE" pull --ff-only \
-      || warn "rgthree-comfy update failed (keeping existing copy)"
+    if [ -n "$RGTHREE_REV" ]; then
+      spin_run "Pinning rgthree-comfy" set_pinned_rev "$RGTHREE" "$RGTHREE_REV" rgthree-comfy
+    else
+      spin_run "Updating rgthree-comfy" git -C "$RGTHREE" pull --ff-only \
+        || warn "rgthree-comfy update failed (keeping existing copy)"
+    fi
   else
     spin_run "Cloning rgthree-comfy" \
       git clone --depth=1 https://github.com/rgthree/rgthree-comfy.git "$RGTHREE" \
       || warn "rgthree-comfy clone failed — the default workflow won't load"
+    [ -n "$RGTHREE_REV" ] && set_pinned_rev "$RGTHREE" "$RGTHREE_REV" rgthree-comfy
   fi
   if [ -f "$RGTHREE/requirements.txt" ]; then
     spin_run "Installing rgthree-comfy dependencies" \
@@ -891,13 +939,19 @@ main() {
 
   # ReActor face-swap node — powers the Z Image Turbo face-swap workflow.
   local REACTOR="$COMFYUI_DIR/custom_nodes/comfyui-reactor-node"
+  local REACTOR_REV; REACTOR_REV="$(pinned_rev comfyui-reactor-node)"
   if [ -d "$REACTOR/.git" ]; then
-    spin_run "Updating ReActor face-swap node" git -C "$REACTOR" pull --ff-only \
-      || warn "ReActor update failed (keeping existing copy)"
+    if [ -n "$REACTOR_REV" ]; then
+      spin_run "Pinning ReActor face-swap node" set_pinned_rev "$REACTOR" "$REACTOR_REV" comfyui-reactor-node
+    else
+      spin_run "Updating ReActor face-swap node" git -C "$REACTOR" pull --ff-only \
+        || warn "ReActor update failed (keeping existing copy)"
+    fi
   else
     spin_run "Cloning ReActor face-swap node" \
       git clone --depth=1 https://codeberg.org/Gourieff/comfyui-reactor-node.git "$REACTOR" \
       || warn "ReActor clone failed — face swap will be unavailable"
+    [ -n "$REACTOR_REV" ] && set_pinned_rev "$REACTOR" "$REACTOR_REV" comfyui-reactor-node
   fi
   # install.py installs deps (incl. onnxruntime) and downloads inswapper_128.onnx.
   # ReActor 0.7.0+ needs no Insightface. Non-fatal so the install still completes.

@@ -4,7 +4,13 @@ import path from 'path'
 import os from 'os'
 import { getLogsDir } from '@/lib/system/paths'
 import { comboOptions } from '@/lib/models/installed'
-import { buildSupportBundle, tailLines, TAIL_LINES, type BundleInput } from '@/lib/logging/support-bundle'
+import {
+  buildSupportBundle,
+  formatServerLog,
+  tailLines,
+  TAIL_LINES,
+  type BundleInput,
+} from '@/lib/logging/support-bundle'
 import pkg from '../../../../../package.json'
 
 /**
@@ -96,6 +102,11 @@ export async function GET() {
     })
     // Node *names* only — the full /object_info is megabytes of schema.
     comfyui.loadedNodes = Object.keys((await comfyJson('/object_info', ac.signal)) as object)
+    // Best-effort: older ComfyUI has no /internal/logs/raw, and the rest of the
+    // bundle is still worth having without it.
+    comfyui.serverLog = await comfyJson('/internal/logs/raw', ac.signal)
+      .then(formatServerLog)
+      .catch(() => undefined)
   } catch (e) {
     comfyui.error = e instanceof Error ? e.message : String(e)
   } finally {

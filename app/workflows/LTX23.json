@@ -1124,9 +1124,9 @@
     0
    ]
   },
-  "class_type": "LTXVTiledVAEDecode",
+  "class_type": "RaccoonTiledVAEDecode",
   "_meta": {
-   "title": "🅛🅣🅧 LTXV Tiled VAE Decode"
+   "title": "Raccoon Tiled VAE Decode"
   }
  },
  "906:1141": {

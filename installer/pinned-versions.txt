@@ -1,0 +1,56 @@
+# Pinned upstream revisions — one known-good set, shared by both installers.
+#
+# Why this file exists: every dependency here used to be cloned at whatever
+# master happened to be that day (`git clone --depth=1`, then `git pull
+# --ff-only` on re-runs). On 2026-07-25 ComfyUI removed `interleaved_freqs_cis`
+# from `comfy.ldm.lightricks.model`; ComfyUI-LTXVideo still imports it, so that
+# pack stopped importing — and because one bad import drops ALL of a pack's
+# nodes, every install from that day on failed video generation with
+# `missing_node_type`. Nothing in this repo changed. Unpinned dependencies mean
+# a stranger's merge can break shipped installs overnight.
+#
+# Format: <name> <full-40-char-sha>. Blank lines and #-comments ignored.
+# `name` matches the custom_nodes directory (or `ComfyUI` for ComfyUI itself).
+#
+# Captured 2026-07-26 from a working Windows install (images + face swap
+# verified live; video verified against the vendored RaccoonTiledVAEDecode).
+#
+# To bump one: update it here, re-run the installer, and re-test that feature.
+# Both install-windows.ps1 and install-linux.sh read this file, so they cannot
+# drift apart. A name missing from this file falls back to the default branch,
+# so adding a new pack does not require a pin on day one.
+
+ComfyUI                   806e092ed42772e4ce7abf44c97c50021cc4bd10
+
+# Core workflow nodes
+rgthree-comfy             6b76ee6f2c5a007710b5a16f97c94330d6ecc871
+comfyui-impact-pack       429d0159ad429e64d2b3916e6e7be9c22d025c3c
+comfyui-impact-subpack    50c7b71a6a224734cc9b21963c6d1926816a97f1
+comfyui-reactor-node      2add1139d491fefff2d3a60e52b6b2b6d5d09e5d
+ComfyUI-Crystools         2f18256c5b5063937106f29a8e0a7db3ae3869b7
+ComfyUI-Manager           c4ed394ec8904bd30dc1805c74cdfef7316eecc0
+
+# ControlNet / IP-Adapter
+comfyui_controlnet_aux    e8b689a513c3e6b63edc44066560ca5919c0576e
+ComfyUI_IPAdapter_plus    a0f451a5113cf9becb0847b92884cb10cbdec0ef
+
+# LTX 2.3 video
+comfyui-kjnodes           e27a505b3ba6ce42687fe00500deda103d9d6071
+comfyui-videohelpersuite  4ee72c065db22c9d96c2427954dc69e7b908444b
+comfyui-easy-use          960862223b7a896038850f56d8782df314a9a522
+ComfyMath                 c01177221c31b8e5fbc062778fc8254aeb541638
+ComfyLiterals             bdddb08ca82d90d75d97b1d437a652e0284a32ac
+RES4LYF                   022c873c6d198c67b3312a1804336533a050df18
+controlaltai-nodes        721492b66c9cede8ae23ae10615462ad80cfd061
+10S_Nodes                 257400c45394efb2fa53a0a8fe3b3e8ac7392548
+ComfyUI-mxToolkit         7f7a0e584f12078a1c589645d866ae96bad0cc35
+comfyui-various           5bd85aaf7616878471469c4ec7e11bbd0cef3bf2
+ComfyUI-VFI               6176a430f12cd16003f4664c1e3c6af8e96cc3c6
+comfyui_nvidia_rtx_nodes  892515e3eb9a4920a131a502a047e47adca9eb0d
+
+# Installed, but nothing depends on it any more: its __init__ fails to import
+# against current ComfyUI (see the header). The one node the video workflow
+# needed — the tiled VAE decode — is vendored in
+# comfyui/vendor-custom-nodes/RaccoonVideoNodes as RaccoonTiledVAEDecode.
+# Kept pinned so a future upstream fix is a deliberate bump, not a surprise.
+ComfyUI-LTXVideo          aceeae9635f6d493f2893ba3c411a1c36031788a

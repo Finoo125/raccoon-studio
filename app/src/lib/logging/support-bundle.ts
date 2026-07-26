@@ -24,6 +24,33 @@ export const TAIL_LINES: Record<string, number> = {
   'comfyui.log': 200,
   install: 300,
   app: 400,
+  server: 500,
+}
+
+/**
+ * ComfyUI colours its log; the codes are noise in a file people read in a
+ * text editor or a Discord preview.
+ */
+export function stripAnsi(text: string): string {
+  // The ESC byte is half the sequence — matching only "[32m" would leave a
+  // stray control character in a file people open in a text editor.
+  return text.replace(/\x1b\[[0-9;]*m/g, '')
+}
+
+/**
+ * ComfyUI's own in-memory log (`/internal/logs/raw`), newest instance.
+ *
+ * This is the authoritative startup log and the only one guaranteed to belong
+ * to the ComfyUI we are actually talking to: `logs/comfyui.err` is written by
+ * our start script, so it is stale or absent whenever ComfyUI was started some
+ * other way, or when the app is pointed at a second install. Chasing the
+ * 2026-07-25 video bug, the on-disk log was a day old and the answer — a
+ * `Cannot import … (IMPORT FAILED)` traceback — was only ever here.
+ */
+export function formatServerLog(payload: unknown): string {
+  const entries = (payload as { entries?: { m?: string }[] } | null)?.entries
+  if (!Array.isArray(entries)) return ''
+  return stripAnsi(entries.map((e) => e?.m ?? '').join(''))
 }
 
 /**
@@ -97,6 +124,8 @@ export interface BundleInput {
     loadedNodes: string[]
     /** Loader node → filenames it offers. */
     models: Record<string, string[]>
+    /** The running instance's own log — see `formatServerLog`. */
+    serverLog?: string
   }
   /** Log filename → full text, already read off disk. */
   logs: Record<string, string>
@@ -156,13 +185,23 @@ export function buildSupportBundle(input: BundleInput): string {
         ? '  None — every node the shipped workflows use is loaded.'
         : [
             '  These are referenced by the shipped workflows but are NOT loaded.',
-            '  A custom-node pack most likely failed to import — search comfyui.err',
-            '  below for "Traceback" or the pack name.',
+            '  A custom-node pack most likely failed to import, which takes every',
+            '  node in that pack with it. Search the ComfyUI server log below for',
+            '  "IMPORT FAILED" — the traceback names the pack and the reason.',
             '',
             ...missing.map((c) => `    !! ${c}`),
           ].join('\n'),
     )
   }
+
+  // Placed before the on-disk logs on purpose: this one provably belongs to the
+  // running instance, and the file-based ones may not.
+  out.push(heading('ComfyUI server log (from the running instance)'))
+  out.push(
+    comfyui.serverLog?.trim()
+      ? tailLines(comfyui.serverLog, TAIL_LINES.server)
+      : '  (unavailable — ComfyUI unreachable, or too old to expose /internal/logs/raw)',
+  )
 
   out.push(heading('Models ComfyUI can see'))
   if (!comfyui.reachable) {
