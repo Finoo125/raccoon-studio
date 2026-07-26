@@ -5,8 +5,10 @@
   Ensures Git is installed, makes sure the repo is present (clones it if you're
   not already inside it), runs the installer, and prints how to launch. Safe to
   re-run (idempotent). Intended to be invoked by the one-line command in the
-  README, but also works if you clone manually and run it directly.
+  README, but also works if you clone manually and run it directly. Extra
+  arguments are passed through to install-windows.ps1 (e.g. -Gpu amd).
 #>
+param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $InstallerArgs = @())
 $ErrorActionPreference = 'Stop'
 $RepoUrl = 'https://github.com/Finoo125/raccoon-studio.git'
 
@@ -20,6 +22,19 @@ function Use-MachinePath {
 Write-Host ''
 Write-Host '  == Raccoon Studio bootstrap ==' -ForegroundColor Magenta
 Write-Host ''
+
+# 0) Refuse to install into a Windows system folder.
+# An elevated Command Prompt opens in C:\Windows\System32, and everything below
+# is relative to the current folder — a user whose `cd` silently failed (an
+# unquoted path with a space is enough) would otherwise install ~50 GB there.
+# Checked before Git, so a mis-launch doesn't cost a 62 MB download first.
+$cwd = (Get-Location).Path
+if ($env:SystemRoot -and $cwd.StartsWith($env:SystemRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw ("This window is inside a Windows system folder ($cwd), which is not a place to " +
+           'install anything. Open the folder you want Raccoon Studio in, type cmd in its ' +
+           'address bar, and paste the command again. (If you prefer to type it: ' +
+           'cd /d "E:\my folder" - quotes matter when the path has spaces.)')
+}
 
 # 1) Ensure Git
 function Install-GitViaWinget {
@@ -64,7 +79,7 @@ if (Test-Path (Join-Path (Get-Location) 'install-windows.ps1')) {
 Set-Location $Root
 Write-Host ''
 Write-Host '  Running the installer...' -ForegroundColor Cyan
-& powershell -ExecutionPolicy Bypass -NoProfile -File (Join-Path $Root 'install-windows.ps1')
+& powershell -ExecutionPolicy Bypass -NoProfile -File (Join-Path $Root 'install-windows.ps1') @InstallerArgs
 
 # 4) Done — tell the user how to launch
 Write-Host ''

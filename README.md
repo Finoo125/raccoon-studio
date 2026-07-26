@@ -4,18 +4,27 @@ AI-powered creative studio built on ComfyUI.
 
 ## Quick start — Windows 11 (one command)
 
-1. Make an empty folder where you want it installed (e.g. `C:\RaccoonStudio`).
+1. Make a folder where you want it installed (e.g. `C:\RaccoonStudio`).
 2. Open that folder, type `cmd` in the address bar, and press **Enter** (opens a
-   Command Prompt already in that folder).
+   Command Prompt already in that folder — do this rather than typing `cd`, so a
+   path with spaces in it can't trip you up).
 3. Paste this **one command** and press Enter:
 
 ```bat
-powershell -ExecutionPolicy Bypass -NoProfile -Command "if(-not(Get-Command git -ea SilentlyContinue)){winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity;$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')};git clone https://github.com/Finoo125/raccoon-studio.git .;& '.\bootstrap.ps1'"
+powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1 | iex"
 ```
 
-That installs Git (if needed), clones the repo into the folder, and runs the
-installer. When it finishes, launch with **`Raccoon Studio.bat`** (or the
-Desktop shortcut).
+That installs Git (if needed), clones the repo into a `raccoon-studio` subfolder,
+and runs the installer. When it finishes, launch with **`Raccoon Studio.bat`**
+inside that subfolder (or the Desktop shortcut).
+
+> **AMD (experimental, RDNA3/RDNA4 only):** the command above installs the CPU
+> build on an AMD machine — the ROCm path is opt-in. To test it, use this
+> instead:
+>
+> ```bat
+> powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1))) -Gpu amd"
+> ```
 
 > Already have the repo cloned? Just run `powershell -ExecutionPolicy Bypass -File bootstrap.ps1`
 > from inside the folder, or double-click `install-windows.bat`.
