@@ -840,7 +840,12 @@ function Write-AmdDiagnostics([string]$AdapterName) {
     if (Test-Path $VenvPython -ErrorAction SilentlyContinue) {
     $probe = & $VenvPython -c @'
 import json
-r = {}
+# Every key must exist even when a probe fails: this script runs under
+# Set-StrictMode -Version Latest, where reading an absent property throws.
+# A sparse dict here made a SUCCESSFUL probe fatal - no exception meant no
+# 'err' key, and the reader below asks for it unconditionally.
+r = {'python': '', 'torch': '', 'hip': '', 'available': False, 'device': '',
+     'arch': '', 'vram': 0, 'err': '', 'ort': '', 'ort_providers': [], 'ort_err': ''}
 try:
     import torch, sys
     r['python'] = '%d.%d.%d' % sys.version_info[:3]
