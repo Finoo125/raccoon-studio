@@ -419,18 +419,97 @@ function Find-PythonAny {
 }
 
 # ── winget wrapper ────────────────────────────────────────────────────────────
-function Install-WingetPkg([string]$Id, [string]$Display) {
+# winget's local package index corrupts often enough in the wild to be our single
+# biggest install blocker: every call then dies in under a second with 0x8A15003F
+# ("the source data is corrupted or tampered"), before downloading a byte, and it
+# stays broken until the source is reset. So reset and retry once instead of
+# failing on the spot — and route EVERY winget call through here, or the next
+# step just hits the same wall.
+function Invoke-Winget([string[]]$WingetArgs) {
+    Add-Log "[CMD] winget $($WingetArgs -join ' ')"
+    $out = & winget @WingetArgs 2>&1
+    Add-Content -Path $LogFile -Value ($out | Out-String) -Encoding UTF8
+    $code = $LASTEXITCODE
+    Add-Log "[EXIT] $code"
+    if ($code -eq 0) { return 0 }
+    Write-Warn "winget failed (exit $code) — repairing its package source and retrying once"
+    foreach ($repair in @(@('source','reset','--force'), @('source','update'))) {
+        Add-Log "[CMD] winget $($repair -join ' ')"
+        & winget @repair 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        Add-Log "[EXIT] $LASTEXITCODE"
+    }
+    $out = & winget @WingetArgs 2>&1
+    Add-Content -Path $LogFile -Value ($out | Out-String) -Encoding UTF8
+    $code = $LASTEXITCODE
+    Add-Log "[EXIT] $code (retry after source repair)"
+    return $code
+}
+
+# Node.js without winget: the official MSI. Node keeps every release on its CDN,
+# so resolving the current LTS from the release index beats pinning a version
+# that quietly ages. -Verb RunAs because the MSI installs machine-wide (no second
+# UAC prompt when the installer is already elevated).
+function Install-NodeLtsDirect {
+    # foreach, not Where-Object: PS 5.1's Invoke-RestMethod hands the whole JSON
+    # array over as ONE object, so a pipeline filter never sees the elements and
+    # happily "matches" the newest release — which is the current line, not LTS.
+    $rel = $null
+    foreach ($r in (Invoke-RestMethod 'https://nodejs.org/dist/index.json' -UseBasicParsing)) {
+        if ($r.lts -and $r.files -contains 'win-x64-msi') { $rel = $r; break }
+    }
+    if (-not $rel) { throw 'could not read the Node.js release index' }
+    $msi = Join-Path $env:TEMP ('node-{0}-x64.msi' -f $rel.version)
+    Save-WebFile ('https://nodejs.org/dist/{0}/node-{0}-x64.msi' -f $rel.version) $msi `
+                 ('Node.js {0} installer' -f $rel.version)
+    Add-Log "[CMD] msiexec /i $msi /qn /norestart"
+    $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' `
+                       -Verb RunAs -Wait -PassThru
+    Add-Log "[EXIT] $($p.ExitCode)"
+    Remove-Item $msi -Force -ErrorAction SilentlyContinue
+    if ($p.ExitCode -ne 0) { throw "the Node.js installer failed (exit $($p.ExitCode))" }
+    Write-Ok ('Node.js {0} installed' -f $rel.version)
+}
+
+# uv without winget: Astral's official standalone installer. Run in a child
+# PowerShell — the script calls exit on error, which would kill this installer.
+function Install-UvDirect {
+    Add-Log '[CMD] astral-sh uv standalone installer'
+    & powershell -NoProfile -ExecutionPolicy Bypass -Command `
+        'irm https://astral.sh/uv/install.ps1 | iex' 2>&1 |
+        Add-Content -Path $LogFile -Encoding UTF8
+    Add-Log "[EXIT] $LASTEXITCODE"
+    if ($LASTEXITCODE -ne 0) { throw "the uv installer failed (exit $LASTEXITCODE)" }
+    Write-Ok 'uv installed'
+}
+
+# Fatal by default — Git, Python, Node and uv are all required. $Fallback lets a
+# package that has a first-party non-winget installer survive a winget that
+# cannot be repaired; the caller re-checks the tool either way.
+function Install-WingetPkg([string]$Id, [string]$Display, [scriptblock]$Fallback) {
     Write-Info "Installing $Display..."
     if ($DryRun) { Write-Info "[DryRun] winget install $Id"; return }
-    Add-Log "[CMD] winget install $Id"
-    $out = & winget install --id $Id --exact --source winget `
-        --accept-source-agreements --accept-package-agreements `
-        --disable-interactivity --silent 2>&1
-    Add-Content -Path $LogFile -Value ($out | Out-String) -Encoding UTF8
-    Add-Log "[EXIT] $LASTEXITCODE"
-    if ($LASTEXITCODE -ne 0) { Write-Fail "winget could not install $Display (exit $LASTEXITCODE)." }
+    $code = Invoke-Winget @('install', '--id', $Id, '--exact', '--source', 'winget',
+                            '--accept-source-agreements', '--accept-package-agreements',
+                            '--disable-interactivity', '--silent')
+    if ($code -eq 0) { Update-SessionPath; Write-Ok "$Display installed"; return }
+    if (-not $Fallback) {
+        Write-Host ''
+        Write-Host "    Windows' own package manager (winget) is broken on this PC —" -ForegroundColor Yellow
+        Write-Host '    that is a Windows problem, not a Raccoon Studio one.' -ForegroundColor Yellow
+        Write-Host '    Try this in a normal (non-admin) PowerShell window:' -ForegroundColor Cyan
+        Write-Host '        winget source reset --force' -ForegroundColor Gray
+        Write-Host '        winget source update' -ForegroundColor Gray
+        Write-Host "    If that doesn't help, install $Display by hand and run this" -ForegroundColor Cyan
+        Write-Host '    installer again — it skips whatever is already there.' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Fail "winget could not install $Display (exit $code)."
+    }
+    Write-Warn "winget could not install $Display (exit $code) — installing it directly instead"
+    try { & $Fallback } catch {
+        Add-Log "[FALLBACK-FAIL] $Display :: $_"
+        Write-Warn "Direct install of $Display failed: $($_.Exception.Message)"
+    }
     Update-SessionPath
-    Write-Ok "$Display installed"
 }
 
 # ── Custom-node pack helpers ────────────────────────────────────────────────────
@@ -519,13 +598,11 @@ function Install-BuildTools {
     }
     Write-Info 'Installing Visual Studio C++ Build Tools via winget (large — may take a while)...'
     if ($DryRun) { Write-Info '[DryRun] winget install Microsoft.VisualStudio.2022.BuildTools'; return }
-    Add-Log '[CMD] winget install Microsoft.VisualStudio.2022.BuildTools (VCTools workload)'
-    $out = & winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --source winget `
-        --accept-source-agreements --accept-package-agreements --disable-interactivity `
-        --override '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools;includeRecommended' 2>&1
-    Add-Content -Path $LogFile -Value ($out | Out-String) -Encoding UTF8
-    Add-Log "[EXIT] $LASTEXITCODE"
-    if ($LASTEXITCODE -ne 0) {
+    $code = Invoke-Winget @('install', '--id', 'Microsoft.VisualStudio.2022.BuildTools', '--exact',
+                            '--source', 'winget', '--accept-source-agreements',
+                            '--accept-package-agreements', '--disable-interactivity',
+                            '--override', '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools;includeRecommended')
+    if ($code -ne 0) {
         Write-Warn 'C++ Build Tools install did not complete — native node builds (RTX super-res) may fail.'
         Write-Info 'You can install "Desktop development with C++" from the Visual Studio Installer later.'
     } else {
@@ -1011,9 +1088,12 @@ $nodeExe = Get-ExePath 'node'
 $nodeVer = Get-ToolVersion 'node'
 if (-not (Test-NodeSupported $nodeVer)) {
     if ($nodeExe) { Write-Warn "Node.js $nodeVer is too old for Next.js 16 (needs 20.9+) — upgrading to LTS" }
-    Install-WingetPkg 'OpenJS.NodeJS.LTS' 'Node.js LTS'
+    Install-WingetPkg 'OpenJS.NodeJS.LTS' 'Node.js LTS' ${function:Install-NodeLtsDirect}
     $nodeExe = Get-ExePath 'node'
-    if (-not $nodeExe) { Write-Fail 'Node.js not found after installation.' }
+    if (-not $nodeExe) {
+        Write-Fail ('Node.js could not be installed, by winget or directly. Install the LTS ' +
+                    'version from https://nodejs.org (the .msi), then run this installer again.')
+    }
     # An old nvm shim or a stale PATH entry can still win after the LTS install —
     # re-verify, or the failure resurfaces much later as a cryptic npm/next error.
     $nodeVer = Get-ToolVersion 'node'
@@ -1029,15 +1109,18 @@ Write-Step 'Ensuring uv (Python package manager) is installed'
 $uvExe = Get-ExePath 'uv'
 if ($uvExe) { Write-Ok "uv found at $uvExe" }
 else {
-    Install-WingetPkg 'astral-sh.uv' 'uv'
+    Install-WingetPkg 'astral-sh.uv' 'uv' ${function:Install-UvDirect}
     $uvExe = Get-ExePath 'uv'
-    if (-not $uvExe) { Write-Fail 'uv not found after installation.' }
+    if (-not $uvExe) {
+        Write-Fail ('uv could not be installed, by winget or directly. Install it with: ' +
+                    'irm https://astral.sh/uv/install.ps1 | iex   then run this installer again.')
+    }
 }
 
 # ── Step 8: FFmpeg ────────────────────────────────────────────────────────────
 # ffmpeg/ffprobe power Movie Maker MP4 export, Director shot assembly, and video
 # metadata probing — the app shells out to them by bare name, so they must be on
-# PATH. Kept non-fatal (its own winget call, not the fatal Install-WingetPkg) so
+# PATH. Kept non-fatal (a bare Invoke-Winget, not the fatal Install-WingetPkg) so
 # a fresh install still finishes even if FFmpeg can't be fetched.
 Write-Step 'Ensuring FFmpeg is installed'
 if (Get-ExePath 'ffmpeg') {
@@ -1045,12 +1128,9 @@ if (Get-ExePath 'ffmpeg') {
 } else {
     Write-Info 'Installing FFmpeg...'
     if (-not $DryRun) {
-        Add-Log '[CMD] winget install Gyan.FFmpeg'
-        $out = & winget install --id Gyan.FFmpeg --exact --source winget `
-            --accept-source-agreements --accept-package-agreements `
-            --disable-interactivity --silent 2>&1
-        Add-Content -Path $LogFile -Value ($out | Out-String) -Encoding UTF8
-        Add-Log "[EXIT] $LASTEXITCODE"
+        [void](Invoke-Winget @('install', '--id', 'Gyan.FFmpeg', '--exact', '--source', 'winget',
+                               '--accept-source-agreements', '--accept-package-agreements',
+                               '--disable-interactivity', '--silent'))
         Update-SessionPath
     }
     if (Get-ExePath 'ffmpeg') {

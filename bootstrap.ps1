@@ -22,14 +22,27 @@ Write-Host '  == Raccoon Studio bootstrap ==' -ForegroundColor Magenta
 Write-Host ''
 
 # 1) Ensure Git
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Write-Host '  Installing Git via winget...' -ForegroundColor Cyan
+function Install-GitViaWinget {
     winget install --id Git.Git -e --source winget `
         --accept-package-agreements --accept-source-agreements --disable-interactivity
+}
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Host '  Installing Git via winget...' -ForegroundColor Cyan
+    Install-GitViaWinget
+    # winget's local package index corrupts often enough to be worth handling here
+    # (0x8A15003F "the source data is corrupted or tampered"): every call fails in
+    # under a second until the source is reset. Same repair as install-windows.ps1.
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '  winget failed — repairing its package source and retrying...' -ForegroundColor Yellow
+        winget source reset --force
+        winget source update
+        Install-GitViaWinget
+    }
     Use-MachinePath
 }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    throw 'Git is still not on PATH. Close this window, open a new one, and run bootstrap.ps1 again.'
+    throw ('Git is still not on PATH. If winget reported an error, install Git from ' +
+           'https://git-scm.com/download/win, then open a new window and run bootstrap.ps1 again.')
 }
 
 # 2) Locate the repo (already inside it?) or clone it
