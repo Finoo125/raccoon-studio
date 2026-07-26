@@ -816,6 +816,11 @@ main() {
     ok "uv installed"
   fi
   local UV="$(command -v uv)"
+  # uv abandons a stalled response after 30s and retries 3 times, and one stalled
+  # PyPI index fetch aborts the whole install. Set once here: every uv call below
+  # inherits it. (Same values as install-windows.ps1.)
+  export UV_HTTP_TIMEOUT=120
+  export UV_HTTP_RETRIES=5
 
   # ── Step 6: Clone ComfyUI ────────────────────────────────────────────────────
   step "Setting up ComfyUI"
@@ -953,12 +958,16 @@ main() {
       || warn "ReActor clone failed — face swap will be unavailable"
     [ -n "$REACTOR_REV" ] && set_pinned_rev "$REACTOR" "$REACTOR_REV" comfyui-reactor-node
   fi
-  # install.py installs deps (incl. onnxruntime) and downloads inswapper_128.onnx.
-  # ReActor 0.7.0+ needs no Insightface. Non-fatal so the install still completes.
-  if [ -f "$REACTOR/install.py" ]; then
-    spin_run "Installing ReActor deps + face-swap model" \
-      bash -c "cd '$REACTOR' && '$VENV_DIR/bin/python' install.py" \
-      || warn "ReActor setup incomplete — open ComfyUI once to finish model download"
+  # ReActor ships an install.py, but it dies on `import pkg_resources` before doing
+  # anything: setuptools 81+ dropped that module, and the importlib_metadata fallback
+  # it falls back to is not a declared dependency of anything in the venv. Its only
+  # other job is fetching inswapper_128.onnx, which SWAP_ASSETS below downloads
+  # anyway — so install the requirements directly, the way every other pack is
+  # handled. ReActor 0.7.0+ needs no Insightface. Non-fatal: the install completes.
+  if [ -f "$REACTOR/requirements.txt" ]; then
+    spin_run "Installing ReActor deps" \
+      "$UV" pip install --python "$VENV_DIR/bin/python" -r "$REACTOR/requirements.txt" \
+      || warn "ReActor deps incomplete — face swap may not load"
   fi
   # Pre-fetch the face-restore model our default workflow references, so the
   # first face swap runs without an on-demand download.

@@ -1394,18 +1394,17 @@ Invoke-WithSpinner 'Cloning / updating ReActor face-swap node' {
         elseif ($ReactorRev) { Set-PinnedRev $ReactorDir $ReactorRev 'comfyui-reactor-node' }
     }
 }
-# install.py installs deps (incl. onnxruntime) and downloads inswapper_128.onnx.
-# ReActor 0.7.0+ needs no Insightface. Non-fatal so the install still completes.
-$reactorInstall = Join-Path $ReactorDir 'install.py'
-if (Test-Path $reactorInstall) {
-    # ReActor's own install.py downloads inswapper_128.onnx (~530 MB) and prints
-    # only to the log, so name the size here - this is the longest silent gap left.
-    Invoke-WithSpinner 'Installing ReActor deps + face-swap model (~530 MB, no progress shown)' {
-        Push-Location $ReactorDir
-        try {
-            & $VenvPython install.py 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
-            if ($LASTEXITCODE -ne 0) { Write-Warn 'ReActor setup incomplete — open ComfyUI once to finish model download.' }
-        } finally { Pop-Location }
+# ReActor ships an install.py, but it dies on `import pkg_resources` before doing
+# anything: setuptools 81+ dropped that module, and the importlib_metadata fallback
+# it falls back to is not a declared dependency of anything in the venv. Its only
+# other job is fetching inswapper_128.onnx, which $swapAssets below downloads
+# anyway - so install the requirements directly, the way every other pack is
+# handled. ReActor 0.7.0+ needs no Insightface. Non-fatal: the install completes.
+$reactorReq = Join-Path $ReactorDir 'requirements.txt'
+if (Test-Path $reactorReq) {
+    Invoke-WithSpinner 'Installing ReActor deps' {
+        & $uvExe pip install --python $VenvPython -r $reactorReq 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
+        if ($LASTEXITCODE -ne 0) { Write-Warn 'ReActor deps incomplete - face swap may not load.' }
     }
 }
 # Pre-fetch the face-restore model our default workflow references, so the
