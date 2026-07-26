@@ -37,10 +37,29 @@ if ($env:SystemRoot -and $cwd.StartsWith($env:SystemRoot, [StringComparison]::Or
 }
 
 # 1) Ensure Git
+# Git being absent from PATH does not mean Git is absent: winget reports the
+# install fine while leaving PATH untouched (a re-install reuses the previous
+# "Git from Git Bash only" choice, and per-user installs land in LOCALAPPDATA).
+# Look where it actually lands before concluding anything.
+function Add-GitToPath {
+    if (Get-Command git -ErrorAction SilentlyContinue) { return }
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA\Programs")) {
+        if (-not $base) { continue }
+        foreach ($sub in @('Git\cmd', 'Git\bin')) {
+            $dir = Join-Path $base $sub
+            if (Test-Path (Join-Path $dir 'git.exe')) {
+                Write-Host "  Found Git at $dir (it was not on PATH)" -ForegroundColor Gray
+                $env:Path = "$dir;$env:Path"
+                return
+            }
+        }
+    }
+}
 function Install-GitViaWinget {
     winget install --id Git.Git -e --source winget `
         --accept-package-agreements --accept-source-agreements --disable-interactivity
 }
+Add-GitToPath
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host '  Installing Git via winget...' -ForegroundColor Cyan
     Install-GitViaWinget
@@ -54,10 +73,12 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Install-GitViaWinget
     }
     Use-MachinePath
+    Add-GitToPath
 }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    throw ('Git is still not on PATH. If winget reported an error, install Git from ' +
-           'https://git-scm.com/download/win, then open a new window and run bootstrap.ps1 again.')
+    throw ('Git could not be found or installed. Install it from ' +
+           'https://git-scm.com/download/win (accept the default options), then open a ' +
+           'new window and paste the same command again.')
 }
 
 # 2) Locate the repo (already inside it?) or clone it

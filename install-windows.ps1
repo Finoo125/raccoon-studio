@@ -12,6 +12,8 @@ param(
     [switch] $NoDesktopShortcut,
     [switch] $WithControlNet,
     [switch] $SkipControlNet,
+    # Set by the engine (GUI / update): never block on a question. See Test-CanAsk.
+    [switch] $NonInteractive,
     # Which acceleration stack to install for.
     #   auto   - NVIDIA when nvidia-smi is present, else CPU. Deliberately does
     #            NOT pick AMD: ROCm support is experimental and unverified on real
@@ -356,6 +358,16 @@ function Update-SessionPath {
     $m = [Environment]::GetEnvironmentVariable('Path','Machine'); if (-not $m) { $m = '' }
     $u = [Environment]::GetEnvironmentVariable('Path','User');    if (-not $u) { $u = '' }
     $env:Path = "$m;$u;$env:Path"
+}
+
+# ── May we block on a question? ────────────────────────────────────────────────
+# One decision point for every prompt in this script. IsInputRedirected alone is
+# not enough: the engine launches this installer as a child process that still
+# owns a console handle nobody can type into, so the test reports "interactive"
+# and Read-Host waits forever — v1.0.27 hung the GUI launcher at step 1 of 14
+# (7%) on an AMD card, at the ROCm y/N prompt. The engine now says so outright.
+function Test-CanAsk {
+    return (-not ($NonInteractive -or [Console]::IsInputRedirected))
 }
 
 # ── Tool finders ───────────────────────────────────────────────────────────────
@@ -921,7 +933,7 @@ $InstallCnModels = $false
 if ($WithControlNet) { $InstallCnModels = $true }
 elseif (-not $SkipControlNet) {
     try {
-        if (-not [Console]::IsInputRedirected) {
+        if (Test-CanAsk) {
             Write-Host '  Optional: ControlNet + IP-Adapter models (~9 GB download).' -ForegroundColor Cyan
             Write-Host '  Only the ControlNet / IP-Adapter features need them; everything else works without.' -ForegroundColor DarkGray
             Write-Host '  You can also download them later from the Models page.' -ForegroundColor DarkGray
@@ -966,7 +978,7 @@ if ($GpuVendor -eq 'amd') {
         # $null means we could not ask at all (redirected stdin, no console).
         $yn = $null
         try {
-            if (-not [Console]::IsInputRedirected) {
+            if (Test-CanAsk) {
                 $yn = Read-Host '  Install the experimental AMD/ROCm build? [y/N]'
             }
         } catch {}
@@ -1041,8 +1053,10 @@ if ($GpuVendor -eq 'amd') {
         Write-Info 'Continuing without NVIDIA driver (dry-run).'
     } else {
         $yn = 'y'
-        try { $yn = Read-Host '  Continue without NVIDIA driver? [y/N]' }
-        catch { Write-Warn 'No interactive console — continuing CPU-only.'; $yn = 'y' }
+        if (Test-CanAsk) {
+            try { $yn = Read-Host '  Continue without NVIDIA driver? [y/N]' }
+            catch { Write-Warn 'No interactive console — continuing CPU-only.'; $yn = 'y' }
+        }
         if ($yn -notmatch '^[Yy]') { Write-Info 'Aborting.'; exit 0 }
     }
 }
@@ -1623,13 +1637,15 @@ Install-NodePack 'ComfyMath'                'https://github.com/evanspearman/Com
 Install-NodePack 'ComfyLiterals'            'https://github.com/M1kep/ComfyLiterals.git'
 Install-NodePack 'RES4LYF'                  'https://github.com/ClownsharkBatwing/RES4LYF.git'
 Install-NodePack 'controlaltai-nodes'       'https://github.com/gseth/ControlAltAI-Nodes.git'
-Install-NodePack '10S_Nodes'                'https://github.com/TenStrip/10S-Comfy-nodes.git'
 Install-NodePack 'ComfyUI-mxToolkit'        'https://github.com/Smirnov75/ComfyUI-mxToolkit.git'
 Install-NodePack 'comfyui-various'          'https://github.com/jamesWalker55/comfyui-various.git'
-Install-NodePack 'ComfyUI-LTXVideo'         'https://github.com/Lightricks/ComfyUI-LTXVideo.git'
 Install-NodePack 'ComfyUI-VFI'              'https://github.com/GACLove/ComfyUI-VFI.git'
-# comfyui-various imports soundfile lazily (not in its requirements.txt), and
-# ComfyUI-LTXVideo's pyramid blending breaks on kornia 0.8.3 — pin what works.
+# 10S_Nodes and ComfyUI-LTXVideo are deliberately absent: the four nodes the video
+# workflow used from them are vendored in RaccoonVideoNodes. See its LICENSE-10S_Nodes
+# and comfyui/vendor-custom-nodes/README.md.
+# comfyui-various imports soundfile lazily (not in its requirements.txt). The kornia
+# pin was for ComfyUI-LTXVideo's pyramid blending; that pack is gone, but the pin
+# stays until a live render says a newer kornia is safe for the packs that remain.
 Invoke-WithSpinner 'Installing video node extra deps' {
     & $uvExe pip install --python $VenvPython soundfile 'kornia==0.8.1' 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
 }

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events'
-import { spawnSync } from 'child_process'
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from 'child_process'
 import os from 'os'
 import path from 'path'
 import fs from 'fs'
@@ -14,12 +14,6 @@ export type ComfyUIPhase = 'idle' | 'starting' | 'updating' | 'restarting' | 'er
 // would never see lines appended by the start route. Stashing the state on
 // globalThis gives every bundle (and HMR generation) the same instance.
 // ---------------------------------------------------------------------------
-export interface UpdateCheckState {
-  available: boolean | null // null = not checked yet
-  checkedAt: number
-  inFlight: boolean
-}
-
 interface SharedState {
   discoveredBase: string | null
   logBuffer: string[]
@@ -27,7 +21,6 @@ interface SharedState {
   phase: ComfyUIPhase
   phaseMessage: string | null
   phaseSince: number
-  updateCheck: UpdateCheckState
 }
 
 const globalStore = globalThis as typeof globalThis & { __raccoonComfyUIState?: SharedState }
@@ -41,7 +34,6 @@ const state: SharedState = (globalStore.__raccoonComfyUIState ??= (() => {
     phase: 'idle' as ComfyUIPhase,
     phaseMessage: null,
     phaseSince: Date.now(),
-    updateCheck: { available: null, checkedAt: 0, inFlight: false },
   }
 })())
 
@@ -120,17 +112,6 @@ export function setPhase(phase: ComfyUIPhase, message: string | null = null) {
 
 export function getPhase(): { phase: ComfyUIPhase; message: string | null; since: number } {
   return { phase: state.phase, message: state.phaseMessage, since: state.phaseSince }
-}
-
-// ---------------------------------------------------------------------------
-// Update availability cache (filled by lib/comfyui/update-check.ts)
-// ---------------------------------------------------------------------------
-export function getUpdateCheck(): UpdateCheckState {
-  return { ...state.updateCheck }
-}
-
-export function setUpdateCheck(patch: Partial<UpdateCheckState>) {
-  Object.assign(state.updateCheck, patch)
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +214,129 @@ export async function stopTrackedProcess(): Promise<{ stopped: boolean; pid: num
   return { stopped, pid }
 }
 
+/**
+ * ComfyUI's port from its configured base URL, or null if that URL yields no
+ * usable one. `comfyuiBaseUrl` is editable in Settings, and the port is
+ * interpolated into a shell command below — so this is a trust boundary, not a
+ * formality. Anything that is not a plain port number is refused outright.
+ */
+export function getComfyUIPort(): number | null {
+  let raw: string
+  try {
+    raw = new URL(getComfyUIBase()).port
+  } catch {
+    return null
+  }
+  if (raw === '') return 8188 // default port, omitted from the URL
+  if (!/^\d+$/.test(raw)) return null
+  const port = Number(raw)
+  return port > 0 && port <= 65535 ? port : null
+}
+
+/**
+ * Stop whatever is listening on ComfyUI's port, tracked or not.
+ *
+ * `stopTrackedProcess` can only stop a process this app started. The normal way
+ * to run Raccoon Studio is the launcher, which starts ComfyUI itself — so on a
+ * typical install there is no tracked PID at all, and anything that needs
+ * ComfyUI actually stopped (the repair) would otherwise just give up.
+ *
+ * Same mechanism as stop.ps1: find the listener on the port and kill it. The
+ * port comes from our own configured base URL and is re-validated as an integer
+ * before it reaches a shell, since the Windows branch needs one.
+ */
+export async function stopComfyUIByPort(): Promise<boolean> {
+  const port = getComfyUIPort()
+  if (port === null) return false
+
+  try {
+    if (process.platform === 'win32') {
+      spawnSync(
+        'powershell.exe',
+        ['-NoProfile', '-Command',
+          `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | ` +
+          `ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`],
+        { stdio: 'ignore', timeout: 15_000 },
+      )
+    } else {
+      // fuser is not everywhere; lsof covers the rest. Either failing is fine —
+      // the caller decides what to do based on whether the port actually freed.
+      spawnSync('sh', ['-c', `fuser -k ${port}/tcp || lsof -ti tcp:${port} | xargs -r kill -9`], {
+        stdio: 'ignore',
+        timeout: 15_000,
+      })
+    }
+  } catch {
+    return false
+  }
+  clearPid()
+  return true
+}
+
+/**
+ * PIDs of ComfyUI server processes — serving *or* still booting.
+ *
+ * Liveness must not be inferred from HTTP. ComfyUI spends a minute or more
+ * loading custom nodes before it binds its port, so "not answering" covers both
+ * "stopped" and "still starting". Conflating those is how a repair ended up
+ * checking out revisions underneath a booting ComfyUI and then skipping the
+ * restart because the thing it thought it had stopped came up mid-run.
+ */
+export function comfyUIServerPids(): number[] {
+  const [cmd, args]: [string, string[]] =
+    process.platform === 'win32'
+      ? ['powershell.exe', ['-NoProfile', '-Command',
+          `Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" | ` +
+          `Where-Object { $_.CommandLine -like '*ComfyUI*main.py*' } | ForEach-Object { $_.ProcessId }`]]
+      : ['pgrep', ['-f', 'ComfyUI/main.py']]
+  try {
+    const res = spawnSync(cmd, args, { encoding: 'utf8', timeout: 15_000 })
+    return String(res.stdout ?? '')
+      .split('\n')
+      .map((line) => Number(line.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0)
+  } catch {
+    return []
+  }
+}
+
+function killPid(pid: number) {
+  if (process.platform === 'win32') {
+    try { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }) } catch { /* gone */ }
+    return
+  }
+  try { process.kill(-pid, 'SIGKILL') } catch {
+    try { process.kill(pid, 'SIGKILL') } catch { /* gone */ }
+  }
+}
+
+/**
+ * Stop ComfyUI however it was started, and confirm it is actually gone.
+ *
+ * Tracked PID first — a clean process-group kill for an instance this app
+ * spawned — then the port, then any ComfyUI process still standing. The launcher
+ * is how ComfyUI normally starts, so there is usually no tracked PID at all;
+ * treating that as "cannot stop" left both the Stop button and the repair unable
+ * to touch an ordinary install.
+ *
+ * `stopped` means no ComfyUI process remains, verified by looking for one — not
+ * inferred from the port going quiet, which is also true of one that is booting.
+ */
+export async function stopComfyUI(timeoutMs = 30_000): Promise<{ stopped: boolean; pid: number | null }> {
+  const { pid } = await stopTrackedProcess()
+  if (comfyUIServerPids().length === 0) return { stopped: true, pid }
+
+  await stopComfyUIByPort()
+  for (const p of comfyUIServerPids()) killPid(p)
+
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (comfyUIServerPids().length === 0) return { stopped: true, pid }
+    if (Date.now() >= deadline) return { stopped: false, pid }
+    await sleep(500)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Start script path
 // ---------------------------------------------------------------------------
@@ -261,6 +365,38 @@ export function buildStartCommand(
       : { cmd: 'cmd.exe', args: ['/c', winPath] }
   }
   return { cmd: scriptPath, args: [] }
+}
+
+/**
+ * Launch ComfyUI from its start script, streaming output into the boot log and
+ * tracking the PID. Callers attach their own `exit`/`error` handling.
+ *
+ * `detached` is POSIX-only, deliberately. On Linux it puts the child in its own
+ * process group so stopTrackedProcess can signal the whole tree. On Windows the
+ * same flag means DETACHED_PROCESS — the child gets no console, and
+ * powershell.exe then exits 0 within ~100ms *without running the script*. That
+ * failure is completely silent: no output, no error, just an immediate clean
+ * exit that reads as "the start script did nothing". Windows kills the tree via
+ * `taskkill /T` instead, so detaching buys it nothing anyway.
+ */
+export function comfyUISpawnOptions(platform: NodeJS.Platform = process.platform): SpawnOptions {
+  return {
+    detached: platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: platform !== 'win32',
+    windowsHide: true,
+  }
+}
+
+export function spawnComfyUI(scriptPath: string): ChildProcess {
+  const { cmd, args } = buildStartCommand(scriptPath)
+  const child = spawn(cmd, args, comfyUISpawnOptions())
+  const pipe = (chunk: Buffer) => String(chunk).split('\n').filter(Boolean).forEach(appendLog)
+  child.stdout?.on('data', pipe)
+  child.stderr?.on('data', pipe)
+  child.unref()
+  if (child.pid) writePid(child.pid)
+  return child
 }
 
 // ---------------------------------------------------------------------------

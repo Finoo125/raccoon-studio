@@ -1,16 +1,14 @@
 import { NextResponse } from 'next/server'
-import { spawn } from 'child_process'
 import {
   appendLog,
-  buildStartCommand,
   clearLogs,
   clearPid,
-  writePid,
   readPid,
   readAlivePid,
   getStartScriptPath,
   getPhase,
   setPhase,
+  spawnComfyUI,
 } from '@/lib/comfyui/server-state'
 import { log } from '@/lib/logging/logger'
 
@@ -28,21 +26,7 @@ export async function POST() {
   appendLog(`[raccoon-studio] Starting ComfyUI: ${scriptPath}`)
   log('info', 'system', `ComfyUI start requested: ${scriptPath}`)
 
-  const { cmd, args } = buildStartCommand(scriptPath)
-
-  const child = spawn(cmd, args, {
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: process.platform !== 'win32',
-  })
-
-  child.stdout?.on('data', (chunk: Buffer) => {
-    String(chunk).split('\n').filter(Boolean).forEach(appendLog)
-  })
-
-  child.stderr?.on('data', (chunk: Buffer) => {
-    String(chunk).split('\n').filter(Boolean).forEach(appendLog)
-  })
+  const child = spawnComfyUI(scriptPath)
 
   child.on('error', (err: Error) => {
     appendLog(`[raccoon-studio] Error: ${err.message}`)
@@ -62,10 +46,6 @@ export async function POST() {
       setPhase('error', `ComfyUI exited with code ${code ?? 'unknown'} before coming online`)
     }
   })
-
-  child.unref()
-
-  if (child.pid) writePid(child.pid)
 
   return NextResponse.json({ ok: true, pid: child.pid ?? null })
 }

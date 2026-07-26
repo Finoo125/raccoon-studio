@@ -10,7 +10,6 @@ import {
   setPhase,
   appendLog,
 } from '@/lib/comfyui/server-state'
-import { maybeRefreshUpdateCheck } from '@/lib/comfyui/update-check'
 
 const PORTS = [8188, 8189, 8190]
 // How long a boot ('starting'/'restarting') or an update may stay offline
@@ -85,7 +84,6 @@ export async function GET() {
 
   reconcilePhase(online)
   const { phase, message } = getPhase()
-  const { available: updateAvailable } = maybeRefreshUpdateCheck()
 
   return NextResponse.json({
     url,
@@ -94,7 +92,6 @@ export async function GET() {
     source,
     phase,
     phaseMessage: message,
-    updateAvailable,
     hasStartScript: !!getStartScriptPath(),
     hasPid: readAlivePid() !== null,
     hasComfyUIDir: hasComfyUIGit(),

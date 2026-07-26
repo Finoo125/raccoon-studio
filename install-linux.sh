@@ -1184,13 +1184,15 @@ main() {
   install_node_pack "ComfyLiterals"            https://github.com/M1kep/ComfyLiterals.git
   install_node_pack "RES4LYF"                  https://github.com/ClownsharkBatwing/RES4LYF.git
   install_node_pack "controlaltai-nodes"       https://github.com/gseth/ControlAltAI-Nodes.git
-  install_node_pack "10S_Nodes"                https://github.com/TenStrip/10S-Comfy-nodes.git
   install_node_pack "ComfyUI-mxToolkit"        https://github.com/Smirnov75/ComfyUI-mxToolkit.git
   install_node_pack "comfyui-various"          https://github.com/jamesWalker55/comfyui-various.git
-  install_node_pack "ComfyUI-LTXVideo"         https://github.com/Lightricks/ComfyUI-LTXVideo.git
   install_node_pack "ComfyUI-VFI"              https://github.com/GACLove/ComfyUI-VFI.git
-  # comfyui-various imports soundfile lazily (not in its requirements.txt), and
-  # ComfyUI-LTXVideo's pyramid blending breaks on kornia 0.8.3 — pin what works.
+  # 10S_Nodes and ComfyUI-LTXVideo are deliberately absent: the four nodes the video
+  # workflow used from them are vendored in RaccoonVideoNodes. See its
+  # LICENSE-10S_Nodes and comfyui/vendor-custom-nodes/README.md.
+  # comfyui-various imports soundfile lazily (not in its requirements.txt). The kornia
+  # pin was for ComfyUI-LTXVideo's pyramid blending; that pack is gone, but the pin
+  # stays until a live render says a newer kornia is safe for the packs that remain.
   spin_run "Installing video node extra deps" \
     "$UV" pip install --python "$VENV_DIR/bin/python" soundfile "kornia==0.8.1" \
     || warn "video node extra deps failed (comfyui-various / LTXVideo may not load)"

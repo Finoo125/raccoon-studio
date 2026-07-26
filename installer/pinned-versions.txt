@@ -12,8 +12,18 @@
 # Format: <name> <full-40-char-sha>. Blank lines and #-comments ignored.
 # `name` matches the custom_nodes directory (or `ComfyUI` for ComfyUI itself).
 #
-# Node packs captured 2026-07-26 from a working Windows install (images and
-# face swap verified live against them).
+# Node packs re-captured 2026-07-26 from the Windows install that passed a live
+# end-to-end test: a 4 s I2V clip (through the tiled latent upscale), plus
+# Z-Image Turbo with hires fix + face swap + face detailer.
+#
+# The earlier capture had drifted: six packs were recorded at revisions OLDER
+# than the tree that was actually rendering (the five bumped below, plus
+# 10S_Nodes, now vendored and gone from this file). The cause was the in-app
+# button running ComfyUI-Manager `update all` and moving them after the capture.
+# That is fixed — the button now re-applies this file instead of pulling — and
+# these shas are what a passing render was observed on, not what a capture guessed.
+#
+# Keep it that way: only ever write a sha here that a render has passed on.
 #
 # To bump one: update it here, re-run the installer, and re-test that feature.
 # Both install-windows.ps1 and install-linux.sh read this file, so they cannot
@@ -22,54 +32,64 @@
 
 # ── ComfyUI: do not bump without a full video render ─────────────────────────
 # This is the revision the project's end-to-end I2V render last passed on
-# (2026-07-18). It is deliberately NOT the newest. Two independent things break
-# on 806e092 (2026-07-25), both from ComfyUI core changes, neither with an
-# upstream fix available:
+# (2026-07-18). Two independent things used to break on 806e092 (2026-07-25),
+# both from ComfyUI core changes. BOTH ARE NOW DEFUSED:
 #
 #   1. `interleaved_freqs_cis` was removed from comfy.ldm.lightricks.model.
-#      ComfyUI-LTXVideo still imports it, so the pack raises on import and
-#      ComfyUI registers NONE of its 78 nodes. (Already defused: the one node
-#      the video workflow needed is vendored as RaccoonTiledVAEDecode.)
+#      ComfyUI-LTXVideo still imports it, so the pack raised on import and
+#      ComfyUI registered NONE of its 78 nodes. Defused: the one node the video
+#      workflow needed is vendored as RaccoonTiledVAEDecode, and that pack is no
+#      longer installed at all.
 #
 #   2. LatentUpscaleModelLoader now wraps its result in a CoreModelPatcher
 #      instead of returning a bare nn.Module. 10S_Nodes' LTXVLatentUpsamplerTiled
-#      does `next(upscale_model.parameters())`, which a ModelPatcher does not
-#      have -- so an I2V job samples its steps and then dies at the upscale
-#      stage with AttributeError. NOT defused; only this pin prevents it.
+#      did `next(upscale_model.parameters())`, which a ModelPatcher does not
+#      have -- so an I2V job sampled its steps and then died at the upscale stage
+#      with AttributeError. Defused: that node is vendored as
+#      RaccoonLatentUpsamplerTiled and unwraps the patcher, accepting both shapes.
 #
-# Images and face swap work on both revisions, so "images still generate" is
-# not evidence that a bump is safe. Render a video before changing this line.
+# So this pin is no longer load-bearing -- it is now just "the last revision a
+# video actually rendered on". Bumping it is a deliberate act that needs its own
+# verification, not a formality. Images and face swap work on both revisions, so
+# "images still generate" is not evidence that a bump is safe. Render a video
+# before changing this line.
 ComfyUI                   a58473fd9bf3a1e2383a41c6267ca03a168150ba
 
 # Core workflow nodes
-rgthree-comfy             6b76ee6f2c5a007710b5a16f97c94330d6ecc871
+rgthree-comfy             27b4f4cdcf3b127c29d5d8135ac1536ecbd4c383
 comfyui-impact-pack       429d0159ad429e64d2b3916e6e7be9c22d025c3c
 comfyui-impact-subpack    50c7b71a6a224734cc9b21963c6d1926816a97f1
 comfyui-reactor-node      2add1139d491fefff2d3a60e52b6b2b6d5d09e5d
 ComfyUI-Crystools         2f18256c5b5063937106f29a8e0a7db3ae3869b7
-ComfyUI-Manager           c4ed394ec8904bd30dc1805c74cdfef7316eecc0
+ComfyUI-Manager           94a3ae8abd84284573c0b17869c9da81f3608ef9
 
 # ControlNet / IP-Adapter
 comfyui_controlnet_aux    e8b689a513c3e6b63edc44066560ca5919c0576e
 ComfyUI_IPAdapter_plus    a0f451a5113cf9becb0847b92884cb10cbdec0ef
 
 # LTX 2.3 video
-comfyui-kjnodes           e27a505b3ba6ce42687fe00500deda103d9d6071
+comfyui-kjnodes           bc8e4ce4254bcd0050383386ee2f9d753dbf1fa5
 comfyui-videohelpersuite  4ee72c065db22c9d96c2427954dc69e7b908444b
-comfyui-easy-use          960862223b7a896038850f56d8782df314a9a522
+comfyui-easy-use          54d080bf6a4f52da287e984f305243c10db097f5
 ComfyMath                 c01177221c31b8e5fbc062778fc8254aeb541638
 ComfyLiterals             bdddb08ca82d90d75d97b1d437a652e0284a32ac
-RES4LYF                   022c873c6d198c67b3312a1804336533a050df18
+RES4LYF                   419de2d7c78f415dde9aa352a7231820ebfc17a4
 controlaltai-nodes        721492b66c9cede8ae23ae10615462ad80cfd061
-10S_Nodes                 257400c45394efb2fa53a0a8fe3b3e8ac7392548
 ComfyUI-mxToolkit         7f7a0e584f12078a1c589645d866ae96bad0cc35
 comfyui-various           5bd85aaf7616878471469c4ec7e11bbd0cef3bf2
 ComfyUI-VFI               6176a430f12cd16003f4664c1e3c6af8e96cc3c6
 comfyui_nvidia_rtx_nodes  892515e3eb9a4920a131a502a047e47adca9eb0d
 
-# Installed, but nothing depends on it any more: its __init__ fails to import
-# against current ComfyUI (see the header). The one node the video workflow
-# needed — the tiled VAE decode — is vendored in
-# comfyui/vendor-custom-nodes/RaccoonVideoNodes as RaccoonTiledVAEDecode.
-# Kept pinned so a future upstream fix is a deliberate bump, not a surprise.
-ComfyUI-LTXVideo          aceeae9635f6d493f2893ba3c411a1c36031788a
+# ── No longer installed, deliberately ────────────────────────────────────────
+# ComfyUI-LTXVideo and 10S_Nodes used to be cloned here. Every node the video
+# workflow took from them is now vendored in
+# comfyui/vendor-custom-nodes/RaccoonVideoNodes:
+#
+#   ComfyUI-LTXVideo @ aceeae96 → RaccoonTiledVAEDecode
+#   10S_Nodes        @ c412da52 → RaccoonLatentUpsamplerTiled,
+#                                 RaccoonLTXReferenceConditioning,
+#                                 RaccoonLTXReferenceEnable
+#
+# They are listed here only so the revisions we forked from stay recorded.
+# Do not re-add them as pins: a name in this file that nothing installs would
+# make the repair button and the installer disagree about what "installed" means.

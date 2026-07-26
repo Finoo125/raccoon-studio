@@ -15,7 +15,7 @@ const STATUS_DISPLAY: Record<Status, { text: string; label: string; dot?: string
   offline:    { text: 'text-destructive', label: 'Offline',     dot: 'bg-destructive' },
   starting:   { text: 'text-amber-500',   label: 'Starting…' },
   restarting: { text: 'text-sky-500',     label: 'Restarting…' },
-  updating:   { text: 'text-sky-500',     label: 'Updating…' },
+  updating:   { text: 'text-sky-500',     label: 'Repairing…' },
 }
 
 interface DetectResult {
@@ -23,7 +23,6 @@ interface DetectResult {
   online: boolean
   phase: 'idle' | 'starting' | 'updating' | 'restarting' | 'error'
   phaseMessage: string | null
-  updateAvailable: boolean | null
   hasStartScript: boolean
   hasPid: boolean
   hasComfyUIDir: boolean
@@ -35,8 +34,7 @@ export default function ComfyUIStatus({ className }: { className?: string }) {
   const [hasStartScript, setHasStartScript] = useState(false)
   const [hasPid, setHasPid] = useState(false)
   const [hasComfyUIDir, setHasComfyUIDir] = useState(false)
-  const [updateAvailable, setUpdateAvailable] = useState<boolean | null>(null)
-  const [busy, setBusy] = useState<'start' | 'stop' | 'update' | null>(null)
+  const [busy, setBusy] = useState<'start' | 'stop' | 'repair' | null>(null)
   const [logLines, setLogLines] = useState<string[]>([])
   const [logsOpen, setLogsOpen] = useState(false)
   const { setWsBase } = useConnectionStore()
@@ -65,7 +63,6 @@ export default function ComfyUIStatus({ className }: { className?: string }) {
       setHasStartScript(d.hasStartScript)
       setHasPid(d.hasPid)
       setHasComfyUIDir(d.hasComfyUIDir)
-      setUpdateAvailable(d.updateAvailable)
       setPhaseMessage(d.phaseMessage)
       if (d.online && d.url) setWsBase(d.url)
       // The server tracks the lifecycle phase, so a reload mid-boot or
@@ -187,9 +184,18 @@ export default function ComfyUIStatus({ className }: { className?: string }) {
     }
   }
 
-  const handleUpdate = async () => {
-    if (!confirm('Update ComfyUI now? This stops ComfyUI, runs ComfyUI-Manager "update all", then restarts it.')) return
-    setBusy('update')
+  const handleRepair = async () => {
+    if (
+      !confirm(
+        'Re-apply tested versions?\n\n' +
+          'This stops ComfyUI, resets it and its custom nodes to the versions this ' +
+          'release was tested against, then restarts it. Any local changes you made ' +
+          'inside those folders are discarded.\n\n' +
+          'To get a newer Raccoon Studio, use Update in the launcher instead.',
+      )
+    )
+      return
+    setBusy('repair')
     setLogLines([])
     setLogsOpen(true)
     try {
@@ -197,9 +203,9 @@ export default function ComfyUIStatus({ className }: { className?: string }) {
       if (!res.ok) {
         // e.g. 409 while a previous update/restart is still in flight — show
         // the reason and let detect report the real state, don't paint offline.
-        const { error } = (await res.json().catch(() => ({ error: 'Update failed' }))) as { error?: string }
-        setLogLines((prev) => [...prev, `[error] ${error ?? 'Update failed'}`])
-        toast.error(error ?? 'Update failed')
+        const { error } = (await res.json().catch(() => ({ error: 'Repair failed' }))) as { error?: string }
+        setLogLines((prev) => [...prev, `[error] ${error ?? 'Repair failed'}`])
+        toast.error(error ?? 'Repair failed')
         await detect()
         return
       }
@@ -216,10 +222,15 @@ export default function ComfyUIStatus({ className }: { className?: string }) {
   // Dedicated controls sit to the LEFT of the status pill and are always present
   // so the user can drive the ComfyUI instance regardless of the current state.
   const canStart = status === 'offline' && hasStartScript && busy === null
-  const canStop = hasPid && (status === 'online' || status === 'starting' || status === 'restarting') && busy === null
-  // Only offer the Update button when the server-side git check actually
-  // found ComfyUI core or a custom node behind its upstream.
-  const showUpdate = hasComfyUIDir && updateAvailable === true
+  // Not gated on hasPid: the launcher starts ComfyUI on a normal install, so the
+  // app has no tracked PID and this button used to be hidden exactly when someone
+  // needed it. If ComfyUI is answering we can stop it, whoever started it.
+  const canStop = (hasPid || status === 'online') &&
+    (status === 'online' || status === 'starting' || status === 'restarting') && busy === null
+  // Always available once we know where ComfyUI is: this repairs an install that
+  // drifted off the pins (a stray git pull, a half-finished install, ComfyUI-Manager),
+  // so it has to be reachable exactly when something is already broken.
+  const showRepair = hasComfyUIDir
 
   const isTransitional = status === 'starting' || status === 'restarting' || status === 'updating'
   const sd = STATUS_DISPLAY[status]
@@ -266,15 +277,15 @@ export default function ComfyUIStatus({ className }: { className?: string }) {
           </button>
         )}
 
-        {showUpdate && (
+        {showRepair && (
           <button
-            onClick={() => void handleUpdate()}
+            onClick={() => void handleRepair()}
             disabled={busy !== null}
             className="flex items-center gap-1 px-2.5 py-1.5 font-medium text-action transition-colors hover:bg-muted disabled:opacity-40"
-            title="Update ComfyUI (ComfyUI-Manager: update all + restart)"
+            title="Re-apply tested versions — reset ComfyUI and its custom nodes to the pinned revisions, then restart"
           >
             <RefreshCw className="h-3 w-3" />
-            <span className="hidden xl:inline">Update</span>
+            <span className="hidden xl:inline">Repair</span>
           </button>
         )}
 

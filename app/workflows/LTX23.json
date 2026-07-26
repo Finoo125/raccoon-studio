@@ -359,7 +359,7 @@
     0
    ]
   },
-  "class_type": "LTXReferenceEnable",
+  "class_type": "RaccoonLTXReferenceEnable",
   "_meta": {
    "title": "🔗 LTX Reference Enable"
   }
@@ -853,7 +853,7 @@
     0
    ]
   },
-  "class_type": "LTXReferenceConditioning",
+  "class_type": "RaccoonLTXReferenceConditioning",
   "_meta": {
    "title": "🎴 LTX Reference Conditioning"
   }
@@ -991,7 +991,7 @@
     3
    ]
   },
-  "class_type": "LTXVLatentUpsamplerTiled",
+  "class_type": "RaccoonLatentUpsamplerTiled",
   "_meta": {
    "title": "🔍 LTX Latent Upsampler (Tiled)"
   }
@@ -1074,7 +1074,7 @@
     0
    ]
   },
-  "class_type": "LTXReferenceConditioning",
+  "class_type": "RaccoonLTXReferenceConditioning",
   "_meta": {
    "title": "🎴 LTX Reference Conditioning"
   }

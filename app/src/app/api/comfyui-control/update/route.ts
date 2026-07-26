@@ -4,57 +4,20 @@ import fs from 'fs'
 import path from 'path'
 import {
   appendLog,
-  buildStartCommand,
   clearLogs,
   clearPid,
-  getComfyUIBase,
+  comfyUIServerPids,
   getComfyUIDir,
   getPhase,
   getStartScriptPath,
   readPid,
   setPhase,
-  setUpdateCheck,
-  stopTrackedProcess,
-  writePid,
+  spawnComfyUI,
+  stopComfyUI,
 } from '@/lib/comfyui/server-state'
+import { readPins, pinDir } from '@/lib/comfyui/pinned-versions'
+import { getProjectRoot } from '@/lib/system/paths'
 import { log } from '@/lib/logging/logger'
-
-/**
- * Locate the Python interpreter bundled with the ComfyUI install. ComfyUI-Manager
- * relies on the packages installed in that virtualenv, so we must invoke it with
- * the venv interpreter rather than a system Python.
- */
-function findVenvPython(dir: string): string | null {
-  const isWin = process.platform === 'win32'
-  const candidates = isWin
-    ? [path.join(dir, '.venv', 'Scripts', 'python.exe'), path.join(dir, 'venv', 'Scripts', 'python.exe')]
-    : [path.join(dir, '.venv', 'bin', 'python'), path.join(dir, 'venv', 'bin', 'python')]
-  return candidates.find((p) => fs.existsSync(p)) ?? null
-}
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
-
-async function isComfyUIAnswering(): Promise<boolean> {
-  try {
-    const res = await fetch(`${getComfyUIBase()}/system_stats`, {
-      signal: AbortSignal.timeout(1500),
-      cache: 'no-store',
-    })
-    return res.ok
-  } catch {
-    return false
-  }
-}
-
-/** Wait until ComfyUI stops answering, so the update applies to a dead tree and the restart can bind its port. */
-async function waitUntilOffline(timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (!(await isComfyUIAnswering())) return true
-    await sleep(1000)
-  }
-  return false
-}
 
 /**
  * Restart ComfyUI via the configured start script, mirroring the Start route so
@@ -68,25 +31,18 @@ async function restartComfyUI() {
     setPhase('error', msg)
     return
   }
-  if (await isComfyUIAnswering()) {
-    const msg = 'Another ComfyUI instance is still answering — skipping restart to avoid a port conflict'
+  // Process check, not HTTP: an instance that is still loading custom nodes is
+  // not answering yet but very much running, and starting a second one on top of
+  // it is the port conflict this guard exists to prevent.
+  const running = comfyUIServerPids()
+  if (running.length > 0) {
+    const msg = `Another ComfyUI is still running (PID ${running.join(', ')}) — skipping restart to avoid a port conflict`
     appendLog(`[raccoon-studio] ${msg}`)
     setPhase('error', msg)
     return
   }
   appendLog(`[raccoon-studio] Restarting ComfyUI: ${scriptPath}`)
-  const { cmd, args } = buildStartCommand(scriptPath)
-  const child = spawn(cmd, args, {
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: process.platform !== 'win32',
-  })
-  child.stdout?.on('data', (chunk: Buffer) => {
-    String(chunk).split('\n').filter(Boolean).forEach(appendLog)
-  })
-  child.stderr?.on('data', (chunk: Buffer) => {
-    String(chunk).split('\n').filter(Boolean).forEach(appendLog)
-  })
+  const child = spawnComfyUI(scriptPath)
   const myPid = child.pid ?? null
   child.on('exit', (code: number | null) => {
     // code === null means killed by signal — i.e. an intentional stop.
@@ -95,99 +51,169 @@ async function restartComfyUI() {
       : `[raccoon-studio] Process exited with code ${code}`)
     if (myPid !== null && readPid() === myPid) clearPid()
     if (getPhase().phase === 'restarting') {
-      setPhase('error', `ComfyUI exited with code ${code ?? 'unknown'} after the update — check the log`)
+      setPhase('error', `ComfyUI exited with code ${code ?? 'unknown'} after the repair — check the log`)
     }
   })
-  child.unref()
-  if (child.pid) writePid(child.pid)
-}
-
-function runCmCliUpdate(python: string, cmCli: string, managerDir: string, dir: string) {
-  const child = spawn(python, [cmCli, 'update', 'all'], {
-    cwd: managerDir,
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, COMFYUI_PATH: dir, PYTHONUNBUFFERED: '1' },
-  })
-
-  child.stdout?.on('data', (chunk: Buffer) => {
-    String(chunk).split('\n').filter(Boolean).forEach(appendLog)
-  })
-  child.stderr?.on('data', (chunk: Buffer) => {
-    String(chunk).split('\n').filter(Boolean).forEach(appendLog)
-  })
-
-  child.on('exit', (code: number | null) => {
-    const ok = code === 0
-    appendLog(`[raccoon-studio] cm-cli update all exited with code ${code ?? 'unknown'}`)
-    appendLog(
-      ok
-        ? '[raccoon-studio] Update completed — ComfyUI core and all custom nodes are up to date. Restarting ComfyUI…'
-        : `[raccoon-studio] Update reported errors (exit code ${code ?? 'unknown'}). Check the log above. Restarting ComfyUI anyway…`,
-    )
-    log(ok ? 'info' : 'warn', 'system', `ComfyUI update (cm-cli) finished with code ${code ?? 'unknown'}`)
-
-    // Everything was just updated — mark up to date so the Update button hides
-    // until the next periodic check finds something new.
-    if (ok) setUpdateCheck({ available: false, checkedAt: Date.now() })
-
-    // Restart ComfyUI at the end of every update so the user lands on a running
-    // instance regardless of outcome.
-    setPhase('restarting')
-    void restartComfyUI()
-  })
-
-  child.on('error', (err: Error) => {
-    appendLog(`[raccoon-studio] Update error: ${err.message}`)
-    log('error', 'system', `ComfyUI update error: ${err.message}`)
-    setPhase('error', err.message)
-  })
-
-  child.unref()
-}
-
-async function runUpdate(dir: string, managerDir: string, cmCli: string, python: string) {
-  // Stop the tracked instance (whole process group) and wait until the port is
-  // actually released — updating a live install and then starting a second
-  // instance on a busy port is how updates silently "succeed" while the old
-  // process keeps serving.
-  const { stopped, pid } = await stopTrackedProcess()
-  if (pid !== null) {
-    appendLog(
-      stopped
-        ? `[raccoon-studio] Stopped running ComfyUI (PID ${pid}) before update`
-        : `[raccoon-studio] ComfyUI (PID ${pid}) did not exit cleanly`,
-    )
-  }
-  if (await isComfyUIAnswering()) {
-    appendLog('[raccoon-studio] Waiting for ComfyUI to go offline…')
-    if (!(await waitUntilOffline(20_000))) {
-      const msg =
-        'A ComfyUI instance is still running (probably started outside Raccoon Studio) — stop it manually, then retry the update'
-      appendLog(`[error] ${msg}`)
-      log('error', 'system', `ComfyUI update aborted: ${msg}`)
-      setPhase('error', msg)
-      return
-    }
-  }
-  runCmCliUpdate(python, cmCli, managerDir, dir)
 }
 
 /**
- * Updates the ComfyUI install using ComfyUI-Manager's CLI "update all" command.
- * This saves a snapshot, updates ComfyUI core (git pull) and every custom node,
- * then repairs broken pip dependencies — far more reliable than a bare git pull.
+ * Run a command to completion, streaming its output into the boot log.
  *
- * Flow: stop the running instance (and wait for its port to free up) → run
- * `cm-cli.py update all` → restart ComfyUI. Output streams to the shared boot-log
- * ring buffer so the UI can follow progress over SSE, and progress is tracked in
- * the server-side phase state (updating → restarting → idle) that the detect
- * endpoint reports.
+ * No shell: pin names and shas reach git as argv entries, never as a command
+ * line. (`parsePins` also refuses anything that is not a 40-char hex sha, so a
+ * manifest cannot smuggle a git flag through here either.)
+ */
+function run(cmd: string, args: string[]): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const pipe = (chunk: Buffer) => String(chunk).split('\n').filter(Boolean).forEach(appendLog)
+    child.stdout?.on('data', pipe)
+    child.stderr?.on('data', pipe)
+    child.on('error', (err: Error) => {
+      appendLog(`[raccoon-studio] ${cmd} failed to start: ${err.message}`)
+      resolve(-1)
+    })
+    child.on('exit', (code: number | null) => resolve(code ?? -1))
+  })
+}
+
+/**
+ * Move one clone onto its pinned revision. Mirrors `Set-PinnedRev` in
+ * install-windows.ps1 / install-linux.sh, deliberately — the installer and this
+ * button must land an install in the same state.
+ */
+async function pinOne(dir: string, sha: string, name: string): Promise<boolean> {
+  // Shallow-fetching the one object is what keeps this quick, but it needs the
+  // host to allow fetching an arbitrary sha — GitHub does, Codeberg (ReActor)
+  // is not guaranteed to — so fall back to full history rather than giving up.
+  if ((await run('git', ['-C', dir, 'fetch', '--depth=1', 'origin', sha])) !== 0) {
+    appendLog(`[raccoon-studio] ${name}: shallow fetch failed — retrying with full history`)
+    await run('git', ['-C', dir, 'fetch', '--unshallow', 'origin'])
+    await run('git', ['-C', dir, 'fetch', 'origin'])
+  }
+  // Detached on purpose: a branch here would just drift again on the next pull.
+  if ((await run('git', ['-C', dir, 'checkout', '-f', '--detach', sha])) !== 0) {
+    appendLog(`[raccoon-studio] ${name}: could not pin to ${sha} — left on its current revision`)
+    return false
+  }
+  appendLog(`[raccoon-studio] ${name} → ${sha.slice(0, 8)}`)
+  return true
+}
+
+/**
+ * Reset ComfyUI and every pinned custom node to the revisions in
+ * installer/pinned-versions.txt.
+ *
+ * Non-fatal per pack, matching the installer: one pack that will not pin warns
+ * and the rest still get repaired. ComfyUI core is the exception — a half-pinned
+ * core is worse than an untouched one, so a failure there aborts.
+ *
+ * Returns false only when core was attempted and failed.
+ */
+async function syncToPins(comfyuiDir: string): Promise<boolean> {
+  const pins = readPins()
+  if (pins.length === 0) {
+    appendLog('[raccoon-studio] No pins found in installer/pinned-versions.txt — nothing to re-apply')
+    return true
+  }
+  appendLog(`[raccoon-studio] Re-applying ${pins.length} tested versions from installer/pinned-versions.txt`)
+  let coreOk = true
+  for (const { name, sha } of pins) {
+    const dir = pinDir(name, comfyuiDir)
+    if (!fs.existsSync(path.join(dir, '.git'))) {
+      // Not installed, or not a clone (vendored packs are plain directories).
+      appendLog(`[raccoon-studio] ${name}: no git checkout at ${dir} — skipping`)
+      continue
+    }
+    const ok = await pinOne(dir, sha, name)
+    if (!ok && name === 'ComfyUI') coreOk = false
+  }
+  return coreOk
+}
+
+/**
+ * Re-copy the node packs vendored in this repo. They carry no git history, so
+ * the pin loop cannot touch them, but they are just as much part of the tested
+ * set — the video workflow refuses to run without RaccoonVideoNodes. Mirrors
+ * `Copy-VendorPack` in the installers.
+ */
+function restoreVendorPacks(comfyuiDir: string) {
+  const src = path.join(getProjectRoot(), 'comfyui', 'vendor-custom-nodes')
+  let names: string[]
+  try {
+    names = fs.readdirSync(src)
+  } catch {
+    appendLog(`[raccoon-studio] No vendored packs at ${src} — skipping`)
+    return
+  }
+  for (const name of names) {
+    const from = path.join(src, name)
+    if (!fs.statSync(from).isDirectory()) continue
+    try {
+      fs.cpSync(from, path.join(comfyuiDir, 'custom_nodes', name), { recursive: true, force: true })
+      appendLog(`[raccoon-studio] Restored vendored pack ${name}`)
+    } catch (err) {
+      appendLog(`[raccoon-studio] ${name}: vendored copy failed — ${String(err)}`)
+    }
+  }
+}
+
+async function runRepair(comfyuiDir: string) {
+  // ComfyUI genuinely has to be down first: checking out over a running install
+  // leaves half-swapped files (and on Windows, locked ones), and starting a
+  // second instance on a busy port is how this silently "succeeds" while the old
+  // process keeps serving. stopComfyUI covers both a tracked PID and — the
+  // normal case — one the launcher started, which the app never tracked.
+  appendLog('[raccoon-studio] Stopping ComfyUI before the repair…')
+  const { stopped, pid } = await stopComfyUI()
+  if (!stopped) {
+    const msg = 'Could not stop ComfyUI — something else is holding its port. Stop it manually, then retry'
+    appendLog(`[error] ${msg}`)
+    log('error', 'system', `ComfyUI repair aborted: ${msg}`)
+    setPhase('error', msg)
+    return
+  }
+  appendLog(`[raccoon-studio] ComfyUI stopped${pid !== null ? ` (PID ${pid})` : ''}`)
+
+  const coreOk = await syncToPins(comfyuiDir)
+  if (!coreOk) {
+    const msg = 'ComfyUI itself could not be reset to its tested revision — check the log, then re-run the installer'
+    appendLog(`[error] ${msg}`)
+    log('error', 'system', `ComfyUI repair failed: ${msg}`)
+    setPhase('error', msg)
+    return
+  }
+  restoreVendorPacks(comfyuiDir)
+
+  appendLog('[raccoon-studio] Tested versions re-applied. Restarting ComfyUI…')
+  log('info', 'system', 'ComfyUI re-pinned to installer/pinned-versions.txt')
+  setPhase('restarting')
+  await restartComfyUI()
+}
+
+/**
+ * Reset the ComfyUI install to the versions this release was tested against.
+ *
+ * This is a repair, not an update: it never fetches a newer Raccoon Studio and
+ * never moves anything past its pin. Getting *new* versions is the launcher's
+ * Update button, which pulls the release repo and re-runs the installer — that
+ * is the only path that should ever change what `pinned-versions.txt` says.
+ *
+ * It replaces a call to ComfyUI-Manager's `cm-cli.py update all`, which pulled
+ * ComfyUI core and every custom node to whatever master happened to be that day
+ * — undoing the pins on a shipped install and reproducing precisely the
+ * overnight breakage the manifest exists to prevent.
+ *
+ * Flow: stop the running instance (and wait for its port to free up) → check
+ * out every pinned sha → re-copy the vendored packs → restart ComfyUI. Output
+ * streams to the shared boot-log ring buffer so the UI can follow progress over
+ * SSE, and progress is tracked in the server-side phase state
+ * (updating → restarting → idle) that the detect endpoint reports.
  */
 export async function POST() {
   const { phase } = getPhase()
   if (phase === 'updating' || phase === 'restarting') {
-    return NextResponse.json({ error: 'An update is already in progress' }, { status: 409 })
+    return NextResponse.json({ error: 'A repair is already in progress' }, { status: 409 })
   }
 
   const dir = getComfyUIDir()
@@ -198,31 +224,14 @@ export async function POST() {
     )
   }
 
-  const managerDir = path.join(dir, 'custom_nodes', 'ComfyUI-Manager')
-  const cmCli = path.join(managerDir, 'cm-cli.py')
-  if (!fs.existsSync(cmCli)) {
-    return NextResponse.json(
-      { error: `ComfyUI-Manager not found at ${managerDir} — install it to enable "update all"` },
-      { status: 400 },
-    )
-  }
-
-  const python = findVenvPython(dir)
-  if (!python) {
-    return NextResponse.json(
-      { error: `No Python virtualenv found under ${dir} (.venv / venv) — cannot run ComfyUI-Manager` },
-      { status: 400 },
-    )
-  }
-
   clearLogs()
   setPhase('updating')
-  appendLog(`[raccoon-studio] Updating ComfyUI via ComfyUI-Manager (update all) in ${dir}`)
-  log('info', 'system', `ComfyUI update started (cm-cli update all) in ${dir}`)
+  appendLog(`[raccoon-studio] Re-applying tested versions in ${dir}`)
+  log('info', 'system', `ComfyUI repair started (re-pin to manifest) in ${dir}`)
 
-  // The stop → update → restart pipeline runs after the response so the client
+  // The stop → repair → restart pipeline runs after the response so the client
   // can immediately attach to the log stream and follow the phase via detect.
-  after(() => runUpdate(dir, managerDir, cmCli, python))
+  after(() => runRepair(dir))
 
   return NextResponse.json({ ok: true })
 }

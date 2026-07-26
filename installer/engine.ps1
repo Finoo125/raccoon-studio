@@ -79,6 +79,10 @@ function Invoke-Install {
   # Always pass an explicit ControlNet flag: the engine runs headless (GUI/update),
   # so the installer must never fall through to its interactive prompt.
   $psArgs += $(if ($WithControlNet) { '-WithControlNet' } else { '-SkipControlNet' })
+  # Same reason, for every other question the installer might ask. A flag per
+  # prompt does not scale and missing one hangs the GUI on a question nobody can
+  # see (the AMD/ROCm offer did exactly that), so state the condition once.
+  $psArgs += '-NonInteractive'
   # Keep the acceleration stack stable across updates. An explicit -Gpu wins;
   # otherwise inherit whatever the existing venv was built with, because plain
   # `update` would otherwise reinstall CUDA wheels over a working ROCm venv.
