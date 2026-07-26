@@ -3,3 +3,8 @@
 # checkout ships an install-linux.sh that Linux refuses to run ("bad interpreter:
 # /usr/bin/env bash^M"). This shipped broken through v1.0.14.
 *.sh text eol=lf
+
+# install-linux.sh parses this manifest line by line, so it ships LF for the
+# same reason. pinned_rev() strips a stray CR anyway — this keeps the file
+# clean rather than relying on that.
+installer/pinned-versions.txt text eol=lf

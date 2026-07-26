@@ -10,10 +10,14 @@ _log() { mkdir -p "$(dirname "$LOG_FILE")"; printf '%s %s\n' "$(date +%H:%M:%S)"
 
 # Pinned upstream revision for a dependency, or empty when unpinned (caller
 # then follows the default branch). See installer/pinned-versions.txt for why.
+# CR-tolerant: the manifest gets edited on Windows, and a trailing \r would ride
+# along on the sha and turn every checkout into a silent no-match.
 pinned_rev() { # name
-  local file="$RACCOON_ROOT/installer/pinned-versions.txt" name="$1" n rev
+  local file="$RACCOON_ROOT/installer/pinned-versions.txt" name="$1" line n rev
   [ -f "$file" ] || return 0
-  while read -r n rev _; do
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    read -r n rev _ <<<"$line"
     case "$n" in ''|'#'*) continue;; esac
     [ "$n" = "$name" ] && { printf '%s' "$rev"; return 0; }
   done <"$file"

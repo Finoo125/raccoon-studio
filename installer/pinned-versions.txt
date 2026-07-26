@@ -12,15 +12,34 @@
 # Format: <name> <full-40-char-sha>. Blank lines and #-comments ignored.
 # `name` matches the custom_nodes directory (or `ComfyUI` for ComfyUI itself).
 #
-# Captured 2026-07-26 from a working Windows install (images + face swap
-# verified live; video verified against the vendored RaccoonTiledVAEDecode).
+# Node packs captured 2026-07-26 from a working Windows install (images and
+# face swap verified live against them).
 #
 # To bump one: update it here, re-run the installer, and re-test that feature.
 # Both install-windows.ps1 and install-linux.sh read this file, so they cannot
 # drift apart. A name missing from this file falls back to the default branch,
 # so adding a new pack does not require a pin on day one.
 
-ComfyUI                   806e092ed42772e4ce7abf44c97c50021cc4bd10
+# ── ComfyUI: do not bump without a full video render ─────────────────────────
+# This is the revision the project's end-to-end I2V render last passed on
+# (2026-07-18). It is deliberately NOT the newest. Two independent things break
+# on 806e092 (2026-07-25), both from ComfyUI core changes, neither with an
+# upstream fix available:
+#
+#   1. `interleaved_freqs_cis` was removed from comfy.ldm.lightricks.model.
+#      ComfyUI-LTXVideo still imports it, so the pack raises on import and
+#      ComfyUI registers NONE of its 78 nodes. (Already defused: the one node
+#      the video workflow needed is vendored as RaccoonTiledVAEDecode.)
+#
+#   2. LatentUpscaleModelLoader now wraps its result in a CoreModelPatcher
+#      instead of returning a bare nn.Module. 10S_Nodes' LTXVLatentUpsamplerTiled
+#      does `next(upscale_model.parameters())`, which a ModelPatcher does not
+#      have -- so an I2V job samples its steps and then dies at the upscale
+#      stage with AttributeError. NOT defused; only this pin prevents it.
+#
+# Images and face swap work on both revisions, so "images still generate" is
+# not evidence that a bump is safe. Render a video before changing this line.
+ComfyUI                   a58473fd9bf3a1e2383a41c6267ca03a168150ba
 
 # Core workflow nodes
 rgthree-comfy             6b76ee6f2c5a007710b5a16f97c94330d6ecc871
