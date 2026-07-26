@@ -34,6 +34,12 @@ export interface DirectorRun {
   ollamaModel: string
   targetSeconds: number
   clipSeconds: number
+  /**
+   * Final clip resolution, passed straight to ltx23 as `vramMode`: 'high' is
+   * Full HD (~2 MP), 'low' is 720p (~0.9 MP) for roughly 2.3x fewer pixels.
+   * Undefined on runs saved before this existed — treated as 'high'.
+   */
+  videoResolution?: 'high' | 'low'
   beatCount: number
   openingImagePrompt: string
   negativePrompt?: string

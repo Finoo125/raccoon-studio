@@ -26,20 +26,25 @@ const SAVE_ID = Object.keys(BASE).filter(
 )[0]
 
 /**
- * t2v framings — exact LTX-safe /32 dimensions the prompt node resizes to.
- * w/h are the ~2MP high-VRAM targets; lw/lh the ~1MP low-VRAM (16 GB) ones.
+ * t2v framings — the final size, i.e. after the x2 spatial upscaler.
+ * w/h are the ~2MP Full-HD targets; lw/lh the ~0.9MP 720p ones.
+ *
+ * Both sides must be divisible by **64**, not 32: the graph renders the first
+ * pass at half this size (LTX23.json node 532, multiplier 0.5) and
+ * EmptyLTXVLatentVideo floors `// 32`, so an odd multiple of 32 loses up to
+ * 32 px per axis and silently renders smaller than advertised.
  */
 const ORIENTATIONS = [
-  { label: 'Portrait 9:16', value: 'portrait', w: 1088, h: 1920, lw: 736, lh: 1312 },
-  { label: 'Landscape 16:9', value: 'landscape', w: 1920, h: 1088, lw: 1312, lh: 736 },
+  { label: 'Portrait 9:16', value: 'portrait', w: 1088, h: 1920, lw: 704, lh: 1280 },
+  { label: 'Landscape 16:9', value: 'landscape', w: 1920, h: 1088, lw: 1280, lh: 704 },
   { label: 'Square 1:1', value: 'square', w: 1024, h: 1024, lw: 1024, lh: 1024 },
 ]
 
-/** Fit an image's aspect into ~budgetMp megapixels, both sides snapped to /32 (ResMaster rule). */
+/** Fit an image's aspect into ~budgetMp megapixels, both sides snapped to /64 (see ORIENTATIONS). */
 export function ltxDimsForImage(imgW: number, imgH: number, budgetMp = 2): { w: number; h: number } {
   const aspect = imgW / imgH
   const h = Math.sqrt((budgetMp * 1024 * 1024) / aspect)
-  const snap = (n: number) => Math.max(32, Math.round(n / 32) * 32)
+  const snap = (n: number) => Math.max(64, Math.round(n / 64) * 64)
   return { w: snap(h * aspect), h: snap(h) }
 }
 

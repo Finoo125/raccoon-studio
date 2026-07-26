@@ -24,6 +24,7 @@ export default function PlotStep({
   const [plot, setPlot] = useState(run.plot)
   const [imageModel, setImageModel] = useState<DirectorImageModel>(run.imageModel)
   const [targetSeconds, setTargetSeconds] = useState(run.targetSeconds)
+  const [videoResolution, setVideoResolution] = useState(run.videoResolution ?? 'high')
   const [ollamaModel, setOllamaModel] = useState(run.ollamaModel)
   const [models, setModels] = useState<string[]>([])
   const [generating, setGenerating] = useState(false)
@@ -52,7 +53,7 @@ export default function PlotStep({
     if (!ollamaModel) { toast.error('Pick an Ollama model first'); return }
     setGenerating(true)
     try {
-      const updated: DirectorRun = { ...run, name, plot, imageModel, targetSeconds, ollamaModel, beatCount }
+      const updated: DirectorRun = { ...run, name, plot, imageModel, targetSeconds, ollamaModel, beatCount, videoResolution }
       const putRes = await fetch(`/api/director/${run.id}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
@@ -165,6 +166,34 @@ export default function PlotStep({
             />
             <span className="text-xs text-muted-foreground">{CLIP_SECONDS}s per clip</span>
           </label>
+
+          <div className="grid gap-1.5">
+            <span className="text-sm font-medium">Resolution</span>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { id: 'high', label: 'Full HD' },
+                { id: 'low', label: '720p' },
+              ] as const).map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setVideoResolution(r.id)}
+                  className={
+                    'rounded-lg border px-3 py-2 text-sm transition-colors ' +
+                    (videoResolution === r.id
+                      ? 'border-primary bg-primary/10 text-foreground'
+                      : 'border-border text-muted-foreground hover:text-foreground')
+                  }
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {videoResolution === 'low'
+                ? `720p across all ${beatCount} clips — well under half the pixels, much faster.`
+                : `Full HD across all ${beatCount} clips — best quality, slowest.`}
+            </span>
+          </div>
 
           <Button size="lg" className="w-full" disabled={generating} onClick={() => void generate()}>
             {generating ? 'Generating storyboard…' : 'Generate storyboard'}

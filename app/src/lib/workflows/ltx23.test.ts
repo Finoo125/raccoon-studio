@@ -72,8 +72,8 @@ describe('ltx23Workflow.buildPrompt', () => {
       )
       return [n.inputs.rm_w, n.inputs.rm_h]
     }
-    expect(dims('portrait')).toEqual([736, 1312])
-    expect(dims('landscape')).toEqual([1312, 736])
+    expect(dims('portrait')).toEqual([704, 1280])
+    expect(dims('landscape')).toEqual([1280, 704])
     expect(dims('square')).toEqual([1024, 1024]) // already ~1MP
 
     const n = byClass(
@@ -89,6 +89,31 @@ describe('ltx23Workflow.buildPrompt', () => {
     )
     expect(n.inputs.rm_w).toBe(ltxDimsForImage(3000, 2000, 1).w)
     expect(n.inputs.rm_h).toBe(ltxDimsForImage(3000, 2000, 1).h)
+  })
+
+  // The graph halves before building the latent and EmptyLTXVLatentVideo floors
+  // `// 32`, so anything not divisible by 64 silently renders smaller than asked.
+  it('emits /64 dimensions for every orientation, mode and VRAM profile', () => {
+    for (const vramMode of ['high', 'low'] as const) {
+      for (const orientation of ['portrait', 'landscape', 'square']) {
+        const n = byClass(
+          ltx23Workflow.buildPrompt({ ...base, orientation, vramMode }),
+          'RaccoonVideoPrompt',
+        )
+        expect((n.inputs.rm_w as number) % 64).toBe(0)
+        expect((n.inputs.rm_h as number) % 64).toBe(0)
+      }
+      for (const [iw, ih] of [
+        [3000, 2000],
+        [1024, 1024],
+        [900, 1600],
+        [1911, 733],
+      ]) {
+        const d = ltxDimsForImage(iw, ih, vramMode === 'low' ? 1 : 2)
+        expect(d.w % 64).toBe(0)
+        expect(d.h % 64).toBe(0)
+      }
+    }
   })
 
   it('evicts models after text encode: a clean-VRAM node feeds the first-pass sampler', () => {

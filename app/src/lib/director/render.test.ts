@@ -25,6 +25,17 @@ describe('buildBeatVideoParams', () => {
     expect(p.inputImageWidth).toBe(1920)
     expect(p.inputImageHeight).toBe(1088)
   })
+
+  it('carries the run resolution into every beat, defaulting legacy runs to Full HD', () => {
+    expect(buildBeatVideoParams(run(), 0, 'lf0.png').vramMode).toBe('high')
+    expect(
+      buildBeatVideoParams({ ...run(), videoResolution: 'low' }, 0, 'lf0.png').vramMode,
+    ).toBe('low')
+    // Runs saved before the setting existed must keep rendering as they always did.
+    const legacy = { ...run() }
+    delete legacy.videoResolution
+    expect(buildBeatVideoParams(legacy, 0, 'lf0.png').vramMode).toBe('high')
+  })
 })
 
 describe('parseComfyViewUrl', () => {

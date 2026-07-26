@@ -41,6 +41,7 @@ export function createRunDoc(input: CreateRunInput): DirectorRun {
     ollamaModel: input.ollamaModel,
     targetSeconds,
     clipSeconds: CLIP_SECONDS,
+    videoResolution: 'high',
     beatCount: deriveBeatCount(targetSeconds, CLIP_SECONDS),
     openingImagePrompt: '',
     beats: [],

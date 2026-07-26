@@ -24,6 +24,8 @@ export function buildBeatVideoParams(
     durationSeconds: run.clipSeconds,
     fps: d.fps ?? 30,
     seed: -1,
+    // A film is 4-8 clips, so this is the run's single biggest cost knob.
+    vramMode: run.videoResolution ?? 'high',
   }
 }
 

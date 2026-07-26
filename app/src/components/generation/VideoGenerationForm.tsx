@@ -380,29 +380,31 @@ export default function VideoGenerationForm() {
 
       <GroupHeader>Render</GroupHeader>
 
-      {/* VRAM profile — low halves the pixel budget so 16 GB cards stay on-card */}
+      {/* Halving the pixel budget is the biggest speed lever there is; it also
+          keeps 16 GB cards on-card. Labelled by resolution, not by VRAM — the
+          speed is why most people reach for it. */}
       <div className="space-y-2">
-        <SectionLabel>VRAM profile</SectionLabel>
+        <SectionLabel>Resolution</SectionLabel>
         <div className="grid grid-cols-2 gap-2">
           <Button
             variant={params.vramMode !== 'low' ? 'default' : 'outline'}
             className="h-9 text-sm"
             onClick={() => set('vramMode', 'high')}
           >
-            High — 24 GB+
+            Full HD — ~2 MP
           </Button>
           <Button
             variant={params.vramMode === 'low' ? 'default' : 'outline'}
             className="h-9 text-sm"
             onClick={() => set('vramMode', 'low')}
           >
-            Low — 16 GB
+            720p — ~0.9 MP
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
           {params.vramMode === 'low'
-            ? 'Renders at ~1 MP so 16 GB cards don’t spill into shared GPU memory.'
-            : 'Full ~2 MP render for 24 GB+ cards.'}
+            ? 'Less than half the pixels — much faster, and keeps 16 GB cards out of shared GPU memory.'
+            : 'Full-size render. Slowest setting; wants 24 GB+.'}
         </p>
       </div>
 
