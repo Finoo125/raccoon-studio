@@ -1158,6 +1158,12 @@ else {
                     'irm https://astral.sh/uv/install.ps1 | iex   then run this installer again.')
     }
 }
+# uv abandons a stalled response after 30s and retries 3 times, and one stalled
+# PyPI index fetch aborts the whole install — an AMD tester lost a 15-minute run
+# to pypi.org/simple/pydantic/ timing out on an otherwise 500 Mbit/s link. Set
+# once here: every uv call below inherits it.
+$env:UV_HTTP_TIMEOUT = '120'
+$env:UV_HTTP_RETRIES = '5'
 
 # ── Step 8: FFmpeg ────────────────────────────────────────────────────────────
 # ffmpeg/ffprobe power Movie Maker MP4 export, Director shot assembly, and video
@@ -1316,7 +1322,10 @@ Invoke-WithSpinner 'Installing ComfyUI requirements' {
     $req = Join-Path $ComfyDir 'requirements.txt'
     Add-Log "[CMD] uv pip install -r requirements.txt"
     & $uvExe pip install --python $VenvPython -r $req 2>&1 | Add-Content -Path $LogFile -Encoding UTF8
-    if ($LASTEXITCODE -ne 0) { Write-Fail 'ComfyUI requirements failed.' }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail ('ComfyUI requirements failed - most often pypi.org stalling or being blocked. ' +
+                    'Check your connection and run this installer again: it resumes where it left off.')
+    }
 }
 Write-Ok 'ComfyUI requirements installed'
 
