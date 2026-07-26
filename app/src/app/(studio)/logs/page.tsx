@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { ScrollText, RefreshCw, Search, X } from 'lucide-react'
+import { ScrollText, RefreshCw, Search, X, LifeBuoy } from 'lucide-react'
+import { toast } from 'sonner'
 import type { LogLevel } from '@/lib/logging/logger'
 
 interface LogEntry {
@@ -39,6 +40,30 @@ export default function LogsPage() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState(false)
+  const [bundling, setBundling] = useState(false)
+
+  // Downloaded via a blob rather than a plain <a download> so a failed build
+  // surfaces as a toast instead of navigating the tab to an error page.
+  const createBundle = useCallback(async () => {
+    setBundling(true)
+    try {
+      const res = await fetch('/api/logs/bundle', { cache: 'no-store' })
+      if (!res.ok) throw new Error(await res.text())
+      const disposition = res.headers.get('Content-Disposition') ?? ''
+      const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'raccoon-support.txt'
+      const url = URL.createObjectURL(await res.blob())
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success(`Saved ${name}`, { description: 'Attach this file to your support request.' })
+    } catch (e) {
+      toast.error(`Could not create support bundle: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBundling(false)
+    }
+  }, [])
 
   // `load` carries the current filters in its deps, so the effects below simply
   // depend on `load` — no ref juggling.
@@ -85,6 +110,16 @@ export default function LogsPage() {
             <h1 className="font-heading text-xl font-bold tracking-tight leading-none">Logs</h1>
             <p className="text-xs text-muted-foreground mt-1">Recent application activity (last 7 days)</p>
           </div>
+          <button
+            type="button"
+            onClick={() => void createBundle()}
+            disabled={bundling}
+            title="Collect logs, config and ComfyUI status into one file to attach to a support request"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-primary/20 disabled:opacity-60"
+          >
+            <LifeBuoy className={`h-3.5 w-3.5 ${bundling ? 'animate-spin' : ''}`} />
+            {bundling ? 'Collecting…' : 'Create Support Bundle'}
+          </button>
           <button
             type="button"
             onClick={() => setAutoRefresh((v) => !v)}

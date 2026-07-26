@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { PATREON_PATTERNS, isPatreonModel, patreonSubfolder, matchesPatreonPreset } from '@/lib/models/patreon'
 import { LTX23_ASSETS, ltxAssetInstalled, type Ltx23Asset } from '@/lib/models/ltx23-assets'
+import { comboOptions } from '@/lib/models/installed'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -394,12 +395,11 @@ export default function ModelsPage() {
         safeFetch('/api/comfyui/object_info/LoraLoader'),
         safeFetch('/api/comfyui/object_info/CheckpointLoaderSimple'),
       ])
-      type ObjInfo = Record<string, { input?: { required?: Record<string, [string[]]> } }>
-      const unetNames: string[] = (unetData as ObjInfo)?.UNETLoader?.input?.required?.unet_name?.[0] ?? []
-      const clipNames: string[] = (clipData as ObjInfo)?.CLIPLoader?.input?.required?.clip_name?.[0] ?? []
-      const vaeNames: string[]  = (vaeData  as ObjInfo)?.VAELoader?.input?.required?.vae_name?.[0]  ?? []
-      const loraNames: string[] = (loraData as ObjInfo)?.LoraLoader?.input?.required?.lora_name?.[0] ?? []
-      const ckptNames: string[] = (ckptData as ObjInfo)?.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0] ?? []
+      const unetNames = comboOptions(unetData, 'UNETLoader', 'unet_name')
+      const clipNames = comboOptions(clipData, 'CLIPLoader', 'clip_name')
+      const vaeNames  = comboOptions(vaeData,  'VAELoader', 'vae_name')
+      const loraNames = comboOptions(loraData, 'LoraLoader', 'lora_name')
+      const ckptNames = comboOptions(ckptData, 'CheckpointLoaderSimple', 'ckpt_name')
 
       const allPresent = [...unetNames, ...clipNames, ...vaeNames, ...ckptNames]
       for (const preset of PRESETS) {
@@ -432,15 +432,12 @@ export default function ModelsPage() {
         safeFetch('/api/comfyui/object_info/CLIPLoader'),
         safeFetch('/api/comfyui/object_info/LatentUpscaleModelLoader'),
       ])
-      type ObjInfo = Record<string, { input?: { required?: Record<string, [string[]]> } }>
-      const pick = (d: unknown, node: string, field: string): string[] =>
-        (d as ObjInfo)?.[node]?.input?.required?.[field]?.[0] ?? []
       const available = new Set<string>([
-        ...pick(ckpt, 'CheckpointLoaderSimple', 'ckpt_name'),
-        ...pick(lora, 'LoraLoader', 'lora_name'),
-        ...pick(vae, 'VAELoader', 'vae_name'),
-        ...pick(clip, 'CLIPLoader', 'clip_name'),
-        ...pick(latent, 'LatentUpscaleModelLoader', 'model_name'),
+        ...comboOptions(ckpt, 'CheckpointLoaderSimple', 'ckpt_name'),
+        ...comboOptions(lora, 'LoraLoader', 'lora_name'),
+        ...comboOptions(vae, 'VAELoader', 'vae_name'),
+        ...comboOptions(clip, 'CLIPLoader', 'clip_name'),
+        ...comboOptions(latent, 'LatentUpscaleModelLoader', 'model_name'),
       ])
       for (const asset of LTX23_ASSETS) {
         patchState(`ltx23::${asset.name}`, {
@@ -460,8 +457,7 @@ export default function ModelsPage() {
       }
       for (const asset of DETAILER_ASSETS) {
         const data = await safeFetch(`/api/comfyui/object_info/${asset.nodeClass}`)
-        type ObjInfo = Record<string, { input?: { required?: Record<string, [string[]]> } }>
-        const names: string[] = (data as ObjInfo)?.[asset.nodeClass]?.input?.required?.[asset.fieldName]?.[0] ?? []
+        const names = comboOptions(data, asset.nodeClass, asset.fieldName)
         const installed = names.some((n) => n === asset.name || n.endsWith('/' + asset.name))
         patchState(`detailer::${asset.name}`, { status: installed ? 'present' : 'missing', progress: 0 })
       }
@@ -484,8 +480,7 @@ export default function ModelsPage() {
       for (const [prefix, assets] of groups) {
         for (const asset of assets) {
           const data = await safeFetch(`/api/comfyui/object_info/${asset.nodeClass}`)
-          type ObjInfo = Record<string, { input?: { required?: Record<string, [string[]]> } }>
-          const names: string[] = (data as ObjInfo)?.[asset.nodeClass]?.input?.required?.[asset.fieldName]?.[0] ?? []
+          const names = comboOptions(data, asset.nodeClass, asset.fieldName)
           const installed = names.some((n) => n === asset.name || n.endsWith('/' + asset.name))
           patchState(`${prefix}::${asset.name}`, { status: installed ? 'present' : 'missing', progress: 0 })
         }
