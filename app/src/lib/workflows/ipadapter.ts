@@ -29,6 +29,13 @@ export function appendIpAdapter(wf: ComfyUIPrompt, params: GenerationParams, ref
       ipadapter: ['ip:loader', 1],
       image: ['ip:image', 0],
       weight: ip.weight ?? 0.7,
+      // IPAdapterAdvanced marks these "required", so ComfyUI 400s the whole
+      // prompt if they're absent — widget defaults are not filled in server-side.
+      weight_type: 'linear',
+      combine_embeds: 'concat',
+      start_at: 0.0,
+      end_at: 1.0,
+      embeds_scaling: 'V only',
     },
   }
   ksampler.inputs.model = ['ip:apply', 0]

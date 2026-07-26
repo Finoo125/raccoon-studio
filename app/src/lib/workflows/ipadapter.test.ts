@@ -35,6 +35,13 @@ describe('appendIpAdapter', () => {
     expect(wf.ks.inputs.model).toEqual(['ip:apply', 0])
   })
 
+  it('sends every input IPAdapterAdvanced marks required', () => {
+    const wf = baseGraph()
+    appendIpAdapter(wf, p({ ipAdapter: { image: 's.png', weight: 0.6 } }), refs)
+    for (const k of ['model', 'ipadapter', 'image', 'weight', 'weight_type', 'combine_embeds', 'start_at', 'end_at', 'embeds_scaling'])
+      expect(wf['ip:apply'].inputs[k], k).toBeDefined()
+  })
+
   it('defaults weight to 0.7', () => {
     const wf = baseGraph()
     appendIpAdapter(wf, p({ ipAdapter: { image: 's.png', weight: undefined as unknown as number } }), refs)
