@@ -52,6 +52,11 @@ export default function RecentRail() {
             >
               {/* eslint-disable-next-line @next/next/no-img-element -- local gallery image */}
               <img src={img.thumbnailUrl || img.url} alt="Recent generation" className="h-full w-full object-cover" />
+              {img.metadata.loras && img.metadata.loras.length > 0 && (
+                <span className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+                  LoRA ×{img.metadata.loras.length}
+                </span>
+              )}
             </button>
           ))}
         </div>

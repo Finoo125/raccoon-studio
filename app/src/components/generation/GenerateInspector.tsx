@@ -11,6 +11,7 @@ import { useDirectorStage } from '@/lib/director/director-stage'
 import { useRouter } from 'next/navigation'
 import { workflows } from '@/lib/workflows'
 import type { GenerationParams } from '@/types/workflow'
+import { galleryMetadataToGenerationParams } from '@/lib/gallery/reuse-settings'
 
 /**
  * Centered modal that inspects a recent gallery image. Opened by the RecentRail
@@ -70,13 +71,7 @@ export default function GenerateInspector() {
           (w) => w.id === m.workflow!.toLowerCase() || w.name.toLowerCase() === m.workflow!.toLowerCase(),
         )
       : undefined
-    const params: Partial<GenerationParams> = {
-      ...(m.prompt ? { prompt: m.prompt } : {}),
-      ...(m.negativePrompt ? { negativePrompt: m.negativePrompt } : {}),
-      ...(m.seed !== undefined ? { seed: m.seed } : {}),
-      ...(m.width ? { width: m.width } : {}),
-      ...(m.height ? { height: m.height } : {}),
-    }
+    const params: Partial<GenerationParams> = galleryMetadataToGenerationParams(m)
     setPrefill({ workflowId: wf?.id ?? workflows[0].id, params })
     setInspectImage(null)
     toast.success('Settings loaded — hit Generate')
@@ -189,6 +184,19 @@ export default function GenerateInspector() {
                   {m.sampler && <div>{m.sampler}</div>}
                   <div>{new Date(image.createdAt).toLocaleString()}</div>
                 </div>
+                {m.loras && m.loras.length > 0 && (
+                  <div className="space-y-1.5 border-t border-border pt-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">LoRAs</p>
+                    {m.loras.map((lora, index) => (
+                      <div key={`${lora.name}-${index}`} className="flex items-center justify-between gap-3 text-xs">
+                        <span className="min-w-0 break-all">{lora.name}</span>
+                        <span className="shrink-0 font-mono text-muted-foreground">
+                          {lora.strength ?? 1}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {m.prompt === undefined && m.seed === undefined && (
                   <p className="text-xs italic text-muted-foreground">No embedded metadata in this file.</p>
                 )}

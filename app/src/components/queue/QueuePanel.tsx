@@ -4,6 +4,7 @@ import { RotateCw, Trash2, Images, Clapperboard } from 'lucide-react'
 import { useQueueStore } from '@/lib/comfyui/queue'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import type { GenerationParams } from '@/types/workflow'
 
 export default function QueuePanel({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const jobs = useQueueStore((s) => s.jobs)
@@ -30,6 +31,9 @@ export default function QueuePanel({ open, onOpenChange }: { open: boolean; onOp
           )}
           {[...jobs].sort((a, b) => b.createdAt - a.createdAt).map((job) => {
             const thumb = job.outputImages[0] ?? job.livePreview
+            const loras = job.kind === 'image'
+              ? (job.generationParams as GenerationParams).loras?.filter((lora) => lora.name)
+              : undefined
             return (
               <div key={job.id} className="flex gap-3 rounded-lg border border-border bg-card p-2.5">
                 <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md bg-muted">
@@ -53,6 +57,11 @@ export default function QueuePanel({ open, onOpenChange }: { open: boolean; onOp
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium">{job.workflowName}</p>
                   <p className="truncate text-xs text-muted-foreground">{job.prompt}</p>
+                  {loras && loras.length > 0 && (
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      LoRA ×{loras.length} · {loras.map((lora) => lora.name).join(', ')}
+                    </p>
+                  )}
                   <p className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{job.status}</p>
                 </div>
                 <div className="flex shrink-0 flex-col gap-1">
