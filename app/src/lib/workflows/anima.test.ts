@@ -92,7 +92,11 @@ describe('animaWorkflow.buildPrompt', () => {
     const aria = animaWorkflow.buildPrompt({ ...base, ariaModel: 'aria_anima_01.safetensors' })
     expect(aria['60:44'].inputs.unet_name).toBe('aria_anima_01.safetensors')
     // A manual LoRA drives the LoRA node regardless of the Aria selection.
-    const both = animaWorkflow.buildPrompt({ ...base, ariaModel: 'aria_anima_01.safetensors', lora1: 'extra.safetensors', lora1Strength: 0.7 })
+    const both = animaWorkflow.buildPrompt({
+      ...base,
+      ariaModel: 'aria_anima_01.safetensors',
+      loras: [{ name: 'extra.safetensors', strength: 0.7 }],
+    })
     expect(both['60:44'].inputs.unet_name).toBe('aria_anima_01.safetensors')
     expect(both['60:61'].inputs.lora_name).toBe('extra.safetensors')
     expect(both['60:61'].inputs.strength_model).toBe('0.7')

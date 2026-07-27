@@ -315,9 +315,12 @@ function scanVideosRaw(sidecars: Map<string, { favorite: boolean; tags: string[]
 // offline. A fresh scan happens on demand (refresh) or when the cache is stale.
 // ---------------------------------------------------------------------------
 interface GalleryCache {
+  version: number
   scannedAt: string
   images: GalleryImage[]
 }
+
+const GALLERY_CACHE_VERSION = 2
 
 function readCache(): GalleryCache | null {
   try {
@@ -347,7 +350,8 @@ export interface GalleryResult {
  */
 export function getGalleryRaw(refresh = false): GalleryResult {
   const cache = readCache()
-  const fresh = cache && Date.now() - new Date(cache.scannedAt).getTime() < CACHE_TTL_MS
+  const cacheIsCurrent = cache?.version === GALLERY_CACHE_VERSION
+  const fresh = cacheIsCurrent && Date.now() - new Date(cache.scannedAt).getTime() < CACHE_TTL_MS
 
   if (!refresh && fresh && cache) {
     const sidecars = readAllSidecars()
@@ -360,9 +364,9 @@ export function getGalleryRaw(refresh = false): GalleryResult {
   }
 
   const started = Date.now()
-  const images = scanRaw(cache?.images ?? [])
+  const images = scanRaw(cacheIsCurrent ? cache.images : [])
   const scannedAt = new Date().toISOString()
-  writeCache({ scannedAt, images })
+  writeCache({ version: GALLERY_CACHE_VERSION, scannedAt, images })
   log('info', 'gallery', `Scanned ${images.length} images in ${Date.now() - started}ms`)
   return { images, scannedAt, imagesDir: getImagesDir(), cached: false }
 }
@@ -399,7 +403,8 @@ export function applyFilters(images: GalleryImage[], opts: ScanOptions): Gallery
         m.model?.toLowerCase().includes(q) ||
         String(m.seed).includes(q) ||
         i.filename.toLowerCase().includes(q) ||
-        m.workflow?.toLowerCase().includes(q)
+        m.workflow?.toLowerCase().includes(q) ||
+        m.loras?.some((lora) => lora.name.toLowerCase().includes(q))
       )
     })
   }

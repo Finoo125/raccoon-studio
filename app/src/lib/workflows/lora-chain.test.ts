@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { selectedLoras, prependLoraChain, LORA_SLOTS, EMPTY_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS } from './lora-chain'
+import { selectedLoras, prependLoraChain, DEFAULT_LORA_PARAMS, EMPTY_LORA_PARAMS, FREE_LORA_SLOTS } from './lora-chain'
 import { animaWorkflow } from './anima'
 import { zImageTurboWorkflow } from './z-image-turbo'
 import { ernieTurboWorkflow } from './ernie-turbo'
@@ -9,13 +9,18 @@ import type { GenerationParams } from '@/types/workflow'
 
 const base: GenerationParams = { prompt: 'a raccoon', width: 832, height: 1216, seed: 1 }
 
-const five = {
-  lora1: 'one.safetensors', lora1Strength: 0.1,
-  lora2: 'two.safetensors', lora2Strength: 0.2,
-  lora3: 'three.safetensors', lora3Strength: 0.3,
-  lora4: 'four.safetensors', lora4Strength: 0.4,
-  lora5: 'five.safetensors', lora5Strength: 0.5,
-}
+const many = Array.from({ length: 12 }, (_, i) => ({
+  name: `${i + 1}.safetensors`,
+  strength: (i + 1) / 20,
+}))
+
+const five = [
+  { name: 'one.safetensors', strength: 0.1 },
+  { name: 'two.safetensors', strength: 0.2 },
+  { name: 'three.safetensors', strength: 0.3 },
+  { name: 'four.safetensors', strength: 0.4 },
+  { name: 'five.safetensors', strength: 0.5 },
+]
 
 /**
  * Every LoRA filename the built graph actually references, from any loader style
@@ -34,19 +39,21 @@ function loraNamesIn(wf: ComfyUIPrompt): string[] {
 
 describe('selectedLoras', () => {
   it('returns only the set slots, in order', () => {
-    expect(selectedLoras({ ...base, ...five }).map((l) => l.name)).toEqual([
-      'one.safetensors', 'two.safetensors', 'three.safetensors', 'four.safetensors', 'five.safetensors',
-    ])
+    expect(selectedLoras({ ...base, loras: many })).toEqual(many)
   })
 
   it('compacts gaps so an empty middle slot leaves no hole', () => {
-    const picked = selectedLoras({ ...base, lora1: 'a.safetensors', lora4: 'd.safetensors', lora4Strength: 0.5 })
+    const picked = selectedLoras({
+      ...base,
+      loras: [{ name: 'a.safetensors' }, { name: '' }, { name: 'd.safetensors', strength: 0.5 }],
+    })
     expect(picked).toEqual([{ name: 'a.safetensors', strength: undefined }, { name: 'd.safetensors', strength: 0.5 }])
   })
 
   it('is empty when nothing is picked', () => {
     expect(selectedLoras(base)).toEqual([])
   })
+
 })
 
 describe('prependLoraChain', () => {
@@ -85,8 +92,8 @@ describe('prependLoraChain', () => {
   })
 })
 
-describe('every image workflow applies all five slots', () => {
-  const expected = ['five.safetensors', 'four.safetensors', 'one.safetensors', 'three.safetensors', 'two.safetensors']
+describe('every image workflow applies an arbitrary number of LoRAs', () => {
+  const expected = many.map((lora) => lora.name).sort()
 
   it.each([
     ['anima', animaWorkflow],
@@ -94,7 +101,7 @@ describe('every image workflow applies all five slots', () => {
     ['ernie', ernieTurboWorkflow],
     ['sdxl', sdxlWorkflow],
   ])('%s', (_name, workflow) => {
-    expect(loraNamesIn(workflow.buildPrompt({ ...base, ...five }))).toEqual(expected)
+    expect(loraNamesIn(workflow.buildPrompt({ ...base, loras: many }))).toEqual(expected)
   })
 })
 
@@ -102,7 +109,7 @@ describe('per-family wiring', () => {
   it('Anima chains slots 2+ upstream of its single-slot loader', () => {
     // Regression: Anima's LoraLoaderModelOnly holds one LoRA, and every slot past
     // the first used to be dropped on the floor without a word.
-    const wf = animaWorkflow.buildPrompt({ ...base, lora1: 'a.safetensors', lora2: 'b.safetensors' })
+    const wf = animaWorkflow.buildPrompt({ ...base, loras: [{ name: 'a.safetensors' }, { name: 'b.safetensors' }] })
     expect(wf['60:61'].inputs.lora_name).toBe('a.safetensors')
     expect(wf['lora:x:0'].inputs.lora_name).toBe('b.safetensors')
     // The chain sits between the UNETLoader and 60:61, so downstream is untouched.
@@ -121,7 +128,7 @@ describe('per-family wiring', () => {
     ['z-image', zImageTurboWorkflow, '57:62', ['57:28', 0], ['57:30', 0]],
     ['ernie', ernieTurboWorkflow, '88:104', ['88:66', 0], ['88:62', 0]],
   ])('%s fills the four stack slots and chains the fifth upstream', (_n, workflow, stackId, model, clip) => {
-    const wf = workflow.buildPrompt({ ...base, ...five })
+    const wf = workflow.buildPrompt({ ...base, loras: five })
     expect(wf[stackId].inputs.lora_01).toBe('one.safetensors')
     expect(wf[stackId].inputs.lora_04).toBe('four.safetensors')
     // Fifth has no slot, so it becomes a loader feeding the stack's inputs.
@@ -136,7 +143,7 @@ describe('per-family wiring', () => {
     ['z-image', zImageTurboWorkflow, '57:62'],
     ['ernie', ernieTurboWorkflow, '88:104'],
   ])('%s blanks unused stack slots and adds no chain', (_n, workflow, stackId) => {
-    const wf = workflow.buildPrompt({ ...base, lora1: 'a.safetensors' })
+    const wf = workflow.buildPrompt({ ...base, loras: [{ name: 'a.safetensors' }] })
     expect(wf[stackId].inputs.lora_01).toBe('a.safetensors')
     expect(wf[stackId].inputs.lora_02).toBe('None')
     expect(wf[stackId].inputs.lora_03).toBe('None')
@@ -145,22 +152,21 @@ describe('per-family wiring', () => {
   })
 
   it('SDXL chains all five and points the sampler at the tail', () => {
-    const wf = sdxlWorkflow.buildPrompt({ ...base, ...five })
+    const wf = sdxlWorkflow.buildPrompt({ ...base, loras: five })
     expect(wf['100'].inputs.lora_name).toBe('one.safetensors')
     expect(wf['104'].inputs.lora_name).toBe('five.safetensors')
     expect(wf['3'].inputs.model).toEqual(['104', 0])
   })
 })
 
-describe('slot metadata', () => {
-  it('exposes one entry per slot up to the ceiling', () => {
-    expect(LORA_SLOTS).toHaveLength(MAX_LORAS)
-    expect(FREE_LORA_SLOTS).toBeLessThan(MAX_LORAS)
+describe('dynamic array defaults', () => {
+  it('starts with the free rows but has no maximum', () => {
+    expect(DEFAULT_LORA_PARAMS).toHaveLength(FREE_LORA_SLOTS)
   })
 
-  it('EMPTY_LORA_PARAMS clears every slot', () => {
-    const cleared = { ...five, ...EMPTY_LORA_PARAMS } as GenerationParams
+  it('EMPTY_LORA_PARAMS resets the array', () => {
+    const cleared = { ...base, loras: many, ...EMPTY_LORA_PARAMS } as GenerationParams
     expect(selectedLoras(cleared)).toEqual([])
-    for (const slot of LORA_SLOTS) expect(cleared[slot.strength]).toBe(1)
+    expect(cleared.loras).toHaveLength(FREE_LORA_SLOTS)
   })
 })

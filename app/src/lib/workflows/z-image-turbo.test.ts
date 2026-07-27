@@ -34,7 +34,10 @@ describe('zImageTurboWorkflow.buildPrompt', () => {
   })
 
   it('writes a selected LoRA into the corresponding stack slot', () => {
-    const wf = zImageTurboWorkflow.buildPrompt({ ...base, lora1: 'a.safetensors', lora1Strength: 0.8, lora2: 'b.safetensors', lora2Strength: 0.6 })
+    const wf = zImageTurboWorkflow.buildPrompt({
+      ...base,
+      loras: [{ name: 'a.safetensors', strength: 0.8 }, { name: 'b.safetensors', strength: 0.6 }],
+    })
     expect(wf['57:62'].inputs.lora_01).toBe('a.safetensors')
     expect(wf['57:62'].inputs.strength_01).toBe('0.8')
     expect(wf['57:62'].inputs.lora_02).toBe('b.safetensors')

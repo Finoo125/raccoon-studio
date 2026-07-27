@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parsePngTextChunks } from './metadata'
+import { extractMetadataFromPromptChunk, parsePngTextChunks } from './metadata'
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 
@@ -39,5 +39,44 @@ describe('parsePngTextChunks', () => {
   it('returns nothing for a non-PNG buffer (e.g. a jpeg prefix)', () => {
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0])
     expect(parsePngTextChunks(jpeg)).toEqual({})
+  })
+})
+
+describe('extractMetadataFromPromptChunk LoRAs', () => {
+  it('extracts dynamic loaders and model-only loaders with strengths', () => {
+    const prompt = JSON.stringify({
+      '100': {
+        class_type: 'LoraLoader',
+        inputs: { lora_name: 'style-a.safetensors', strength_model: 0.65 },
+      },
+      '101': {
+        class_type: 'LoraLoaderModelOnly',
+        inputs: { lora_name: 'style-b.safetensors', strength_model: '0.8' },
+      },
+    })
+
+    expect(extractMetadataFromPromptChunk(prompt).loras).toEqual([
+      { name: 'style-a.safetensors', strength: 0.65 },
+      { name: 'style-b.safetensors', strength: 0.8 },
+    ])
+  })
+
+  it('extracts populated rgthree stack rows and ignores None', () => {
+    const prompt = JSON.stringify({
+      stack: {
+        class_type: 'Lora Loader Stack (rgthree)',
+        inputs: {
+          lora_01: 'one.safetensors', strength_01: '0.4',
+          lora_02: 'None', strength_02: '1',
+          lora_03: 'three.safetensors', strength_03: 0.9,
+          lora_04: 'None', strength_04: '1',
+        },
+      },
+    })
+
+    expect(extractMetadataFromPromptChunk(prompt).loras).toEqual([
+      { name: 'one.safetensors', strength: 0.4 },
+      { name: 'three.safetensors', strength: 0.9 },
+    ])
   })
 })
