@@ -13,7 +13,7 @@ import { workflows } from '@/lib/workflows'
 import { FUN_MODEL } from '@/lib/workflows/zimage-controlnet'
 import { SDXL_FIX_VAE } from '@/lib/workflows/sdxl'
 import { isAriaModel } from '@/lib/models/patreon'
-import { LORA_SLOTS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
+import { DEFAULT_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { useQueueStore } from '@/lib/comfyui/queue'
 import { submitPrompt } from '@/lib/comfyui/submit'
@@ -30,6 +30,7 @@ import { expandWildcards, hasWildcards } from '@/lib/prompts/wildcards-expand'
 import { uploadImageBlob } from '@/lib/generation/upload'
 import type { WildcardLists } from '@/lib/prompts/store'
 import type { GenerationParams } from '@/types/workflow'
+import { parseGalleryLoras } from '@/lib/gallery/lora-transfer'
 
 // Persists the workflow choice and all form params across reloads (localStorage).
 const FORM_STORAGE_KEY = 'raccoon-studio:generate-form'
@@ -64,6 +65,7 @@ export default function GenerationForm() {
     height: 1216,
     seed: -1,
     promptEnhancer: false,
+    loras: DEFAULT_LORA_PARAMS.map((lora) => ({ ...lora })),
     ...workflows[0].defaultParams,
   })
   // Per-model prompt memory: each model preset keeps its own last-used
@@ -73,9 +75,6 @@ export default function GenerationForm() {
   // ponytail: in-memory only (resets on reload); persist per-model if users ask.
   const [promptStash, setPromptStash] = useState<Record<string, { prompt: string; negativePrompt: string }>>({})
   const [isGenerating, setIsGenerating] = useState(false)
-  // Visible LoRA rows. Starts at the two free slots; the rest unlock behind a
-  // one-time quality warning (LORA_ACK_KEY).
-  const [loraSlots, setLoraSlots] = useState(FREE_LORA_SLOTS)
   const [loraWarnOpen, setLoraWarnOpen] = useState(false)
   // Wildcard lists for `__name__` expansion, loaded once; drives the inline
   // preview and the per-job expansion at submit time.
@@ -247,7 +246,8 @@ export default function GenerationForm() {
     const negative = searchParams.get('negative')
     const seed = searchParams.get('seed')
     const wf = searchParams.get('workflow')
-    if (prompt || negative || seed || wf) {
+    const loras = parseGalleryLoras(searchParams.get('loras'))
+    if (prompt || negative || seed || wf || loras) {
       if (wf) {
         const found = workflows.find((w) => w.id === wf || w.name.toLowerCase() === wf.toLowerCase())
         // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing form from URL params
@@ -258,6 +258,7 @@ export default function GenerationForm() {
         ...(prompt ? { prompt } : {}),
         ...(negative ? { negativePrompt: negative } : {}),
         ...(seed ? { seed: Number(seed) } : {}),
+        ...(loras ? { loras } : {}),
       }))
     }
   }, [searchParams])
@@ -280,7 +281,8 @@ export default function GenerationForm() {
       searchParams.get('prompt') ||
       searchParams.get('negative') ||
       searchParams.get('seed') ||
-      searchParams.get('workflow')
+      searchParams.get('workflow') ||
+      searchParams.get('loras')
     )
     if (!hasQuery) {
       try {
@@ -291,14 +293,8 @@ export default function GenerationForm() {
           if (saved.workflowId && workflows.some((w) => w.id === saved.workflowId)) {
             setWorkflowId(saved.workflowId)
           }
-          // LoRA slots always restore to None (matching the new-session default
-          // for every model): a persisted selection may have been uninstalled
-          // since, and forwarding a missing LoRA name fails ComfyUI validation.
-          // Overriding here — not just when re-persisting — guarantees the live
-          // form never carries a stale LoRA, even from a blob written by an
-          // older build.
           if (saved.params) {
-            setParams((p) => ({ ...p, ...saved.params, ...EMPTY_LORA_PARAMS }))
+            setParams((p) => ({ ...p, ...saved.params }))
           }
           /* eslint-enable react-hooks/set-state-in-effect */
         }
@@ -315,15 +311,14 @@ export default function GenerationForm() {
   // inert until a new photo is picked (buildPrompt needs both to act). baseImage
   // and maskImage are dropped for the same reason — no preview survives a reload,
   // so the base-image section restores empty rather than referencing an upload
-  // the user can no longer see. LoRA slots are dropped too: they default to None
-  // every session so a selection that was since uninstalled (or belongs to a
-  // different model family) can't silently persist and fail ComfyUI validation.
+  // the user can no longer see. LoRAs remain persisted so their row count,
+  // selections and strengths survive route changes and reloads.
   useEffect(() => {
     if (!restored) return
     try {
       localStorage.setItem(
         FORM_STORAGE_KEY,
-        JSON.stringify({ workflowId, params: { ...params, inputImage: undefined, baseImage: undefined, maskImage: undefined, controlNet: undefined, ipAdapter: undefined, ...EMPTY_LORA_PARAMS } }),
+        JSON.stringify({ workflowId, params: { ...params, inputImage: undefined, baseImage: undefined, maskImage: undefined, controlNet: undefined, ipAdapter: undefined } }),
       )
     } catch {
       /* quota or unavailable — non-fatal */
@@ -335,11 +330,15 @@ export default function GenerationForm() {
 
   // Slots past the free two are gated once per browser: stacked LoRAs compete for
   // the same weights, so the user acknowledges the quality cost before unlocking.
-  const addLoraSlot = () => setLoraSlots((n) => Math.min(MAX_LORAS, n + 1))
+  const addLoraSlot = () =>
+    setParams((p) => {
+      const rows = p.loras ?? DEFAULT_LORA_PARAMS
+      return rows.length >= MAX_LORAS ? p : { ...p, loras: [...rows, { name: '', strength: 1 }] }
+    })
   const requestLoraSlot = () => {
     let acked = false
     try { acked = localStorage.getItem(LORA_ACK_KEY) === '1' } catch { /* unavailable */ }
-    if (loraSlots >= FREE_LORA_SLOTS && !acked) setLoraWarnOpen(true)
+    if ((params.loras?.length ?? FREE_LORA_SLOTS) >= FREE_LORA_SLOTS && !acked) setLoraWarnOpen(true)
     else addLoraSlot()
   }
   const confirmLoraSlots = () => {
@@ -819,21 +818,28 @@ export default function GenerationForm() {
         <div className="space-y-2">
           <SectionLabel>LoRAs</SectionLabel>
           <div className="space-y-2">
-            {LORA_SLOTS.slice(0, loraSlots).map((slot, i) => (
+            {(params.loras ?? DEFAULT_LORA_PARAMS).map((lora, i) => (
               <LoraSelector
-                key={slot.name}
+                key={i}
                 label={`LoRA ${i + 1}`}
                 family={workflow.loraFamily}
-                value={(params[slot.name] as string | undefined) ?? ''}
-                strength={(params[slot.strength] as number | undefined) ?? 1}
-                onChange={(lora, strength) =>
-                  setParams((p) => ({ ...p, [slot.name]: lora, [slot.strength]: strength }))
-                }
+                value={lora.name}
+                strength={lora.strength ?? 1}
+                onChange={(name, strength) => setParams((p) => ({
+                  ...p,
+                  loras: (p.loras ?? DEFAULT_LORA_PARAMS).map((item, index) =>
+                    index === i ? { name, strength } : item,
+                  ),
+                }))}
+                onRemove={() => setParams((p) => ({
+                  ...p,
+                  loras: (p.loras ?? DEFAULT_LORA_PARAMS).filter((_, index) => index !== i),
+                }))}
               />
             ))}
           </div>
 
-          {loraSlots < MAX_LORAS && (
+          {(params.loras ?? DEFAULT_LORA_PARAMS).length < MAX_LORAS && (
             <Button
               variant="outline"
               onClick={requestLoraSlot}

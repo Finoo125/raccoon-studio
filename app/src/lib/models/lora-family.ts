@@ -35,3 +35,16 @@ export function visibleLoras(
   })
   return selected && !kept.includes(selected) ? [selected, ...kept] : kept
 }
+
+/**
+ * True when a picked LoRA is not among the ones ComfyUI actually reports.
+ *
+ * Selections survive reloads and arrive from gallery deep-links, so a name can
+ * outlive the file — and ComfyUI rejects a name it can't resolve with
+ * `value_not_in_list`, which surfaces as a raw "Generation failed". An empty
+ * `installed` means the list never loaded (ComfyUI down), not that everything
+ * vanished, so it never reports missing.
+ */
+export function loraIsMissing(selected: string, installed: string[]): boolean {
+  return Boolean(selected) && installed.length > 0 && !installed.includes(selected)
+}

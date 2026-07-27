@@ -36,7 +36,10 @@ describe('sdxlWorkflow.buildPrompt', () => {
   })
 
   it('inserts muscgi LoRAs and re-points the model + clip consumers', () => {
-    const wf = sdxlWorkflow.buildPrompt({ ...base, lora1: 'muscgi_x.safetensors', lora1Strength: 0.8 })
+    const wf = sdxlWorkflow.buildPrompt({
+      ...base,
+      loras: [{ name: 'muscgi_x.safetensors', strength: 0.8 }],
+    })
     // One LoraLoader inserted (node 100), chained from the checkpoint.
     expect(wf['100'].class_type).toBe('LoraLoader')
     expect(wf['100'].inputs.strength_clip).toBe(0.8)
@@ -52,7 +55,8 @@ describe('sdxlWorkflow.buildPrompt', () => {
 
   it('chains two LoRAs in order', () => {
     const wf = sdxlWorkflow.buildPrompt({
-      ...base, lora1: 'a.safetensors', lora2: 'b.safetensors',
+      ...base,
+      loras: [{ name: 'a.safetensors' }, { name: 'b.safetensors' }],
     })
     expect(wf['100'].inputs.model).toEqual(['4', 0])
     expect(wf['101'].inputs.model).toEqual(['100', 0])
@@ -105,7 +109,7 @@ describe('sdxlWorkflow hires-fix', () => {
   })
 
   it('resamples with the LoRA-chain tail as its model', () => {
-    const wf = sdxlWorkflow.buildPrompt({ ...base, lora1: 'a.safetensors' })
+    const wf = sdxlWorkflow.buildPrompt({ ...base, loras: [{ name: 'a.safetensors' }] })
     expect(wf['hires:sample'].inputs.model).toEqual(['100', 0])
   })
 
@@ -136,7 +140,7 @@ describe('sdxl clip skip', () => {
   })
 
   it('illustrious clip-skip reads the LoRA-chain clip tail', () => {
-    const wf = illustriousWorkflow.buildPrompt({ ...base, lora1: 'a.safetensors' })
+    const wf = illustriousWorkflow.buildPrompt({ ...base, loras: [{ name: 'a.safetensors' }] })
     expect(wf['clip:skip'].inputs.clip).toEqual(['100', 1])
     expect(wf['6'].inputs.clip).toEqual(['clip:skip', 0])
   })
@@ -174,7 +178,11 @@ describe('sdxlWorkflow detailer', () => {
   })
 
   it('detailer with LoRA uses the LoRA-chain tail as model/clip refs', () => {
-    const wf = sdxlWorkflow.buildPrompt({ ...base, lora1: 'a.safetensors', detailer: true })
+    const wf = sdxlWorkflow.buildPrompt({
+      ...base,
+      loras: [{ name: 'a.safetensors' }],
+      detailer: true,
+    })
     expect(wf['det:face'].inputs.model).toEqual(['100', 0])
     expect(wf['det:face'].inputs.clip).toEqual(['100', 1])
   })

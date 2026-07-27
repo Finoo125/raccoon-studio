@@ -46,6 +46,14 @@ describe('applyFilters — tag + metadata', () => {
     const list = [item({ id: 'a', tags: ['portrait'] }), item({ id: 'b', tags: ['landscape'] })]
     expect(applyFilters(list, { tag: 'portrait' })).toHaveLength(1)
   })
+
+  it('searches by LoRA filename', () => {
+    const images = [
+      item({ id: 'a', metadata: { loras: [{ name: 'portrait-style.safetensors', strength: 0.7 }] } }),
+      item({ id: 'b', metadata: { loras: [{ name: 'landscape.safetensors', strength: 1 }] } }),
+    ]
+    expect(applyFilters(images, { search: 'portrait-style' }).map((i) => i.id)).toEqual(['a'])
+  })
   it('filters by model and sampler exact match', () => {
     const list = [
       item({ id: 'a', metadata: { model: 'sdxl', sampler: 'euler' } }),

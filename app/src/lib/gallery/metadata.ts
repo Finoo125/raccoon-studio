@@ -6,6 +6,21 @@ export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadat
       JSON.parse(promptJson)
 
     const meta: ImageMetadata = {}
+    const loras: NonNullable<ImageMetadata['loras']> = []
+
+    const addLora = (name: unknown, strength: unknown) => {
+      if (typeof name !== 'string' || !name || name === 'None') return
+      const parsedStrength =
+        typeof strength === 'number' ? strength :
+          typeof strength === 'string' && strength.trim() !== '' ? Number(strength) :
+            undefined
+      loras.push({
+        name,
+        ...(parsedStrength !== undefined && Number.isFinite(parsedStrength)
+          ? { strength: parsedStrength }
+          : {}),
+      })
+    }
 
     for (const node of Object.values(nodes)) {
       const ct = node.class_type
@@ -34,6 +49,17 @@ export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadat
       if (ct === 'UNETLoader') meta.model = inp.unet_name as string
       if (ct === 'CheckpointLoaderSimple') meta.model = inp.ckpt_name as string
 
+      if (ct === 'LoraLoader' || ct === 'LoraLoaderModelOnly') {
+        addLora(inp.lora_name, inp.strength_model)
+      }
+
+      if (ct === 'Lora Loader Stack (rgthree)') {
+        for (let i = 1; i <= 4; i += 1) {
+          const slot = String(i).padStart(2, '0')
+          addLora(inp[`lora_${slot}`], inp[`strength_${slot}`])
+        }
+      }
+
       if (ct === 'EmptyLatentImage' || ct === 'EmptySD3LatentImage' || ct === 'EmptyFlux2LatentImage') {
         meta.width = Number(inp.width)
         meta.height = Number(inp.height)
@@ -45,6 +71,7 @@ export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadat
       }
     }
 
+    if (loras.length > 0) meta.loras = loras
     return meta
   } catch {
     return {}

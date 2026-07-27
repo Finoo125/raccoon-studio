@@ -26,7 +26,12 @@ export default function CompareOverlay({ open, onOpenChange }: { open: boolean; 
     { label: 'CFG', get: (i) => i.metadata.cfg?.toString() },
     { label: 'Seed', get: (i) => i.metadata.seed?.toString() },
     { label: 'Size', get: (i) => (i.metadata.width && i.metadata.height ? `${i.metadata.width}×${i.metadata.height}` : undefined) },
-    { label: 'LoRAs', get: (i) => i.metadata.loras?.join(', ') },
+    {
+      label: 'LoRAs',
+      get: (i) => i.metadata.loras
+        ?.map((lora) => `${lora.name} (${lora.strength ?? 1})`)
+        .join(', '),
+    },
   ]
 
   return (

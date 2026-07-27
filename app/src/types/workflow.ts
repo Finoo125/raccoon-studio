@@ -7,6 +7,11 @@ export interface AspectRatio {
   height: number
 }
 
+export interface LoraParam {
+  name: string
+  strength?: number
+}
+
 export interface GenerationParams {
   prompt: string
   negativePrompt?: string
@@ -19,18 +24,8 @@ export interface GenerationParams {
   jobCount?: number
   steps?: number
   cfg?: number
-  /** LoRA slots 1–5. The form offers two by default and unlocks the rest behind
-   *  a confirmation — see MAX_LORAS / FREE_LORA_SLOTS in lib/workflows/lora-chain. */
-  lora1?: string
-  lora1Strength?: number
-  lora2?: string
-  lora2Strength?: number
-  lora3?: string
-  lora3Strength?: number
-  lora4?: string
-  lora4Strength?: number
-  lora5?: string
-  lora5Strength?: number
+  /** Ordered LoRA stack. The form starts with two rows and can append any number. */
+  loras?: LoraParam[]
   /** Selected Patreon/Aria model (applied to the workflow's model/LoRA node). */
   ariaModel?: string
   ariaModelStrength?: number

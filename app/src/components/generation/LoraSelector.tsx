@@ -1,14 +1,17 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { X } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { visibleLoras, type LoraFamily } from '@/lib/models/lora-family'
+import { Button } from '@/components/ui/button'
+import { loraIsMissing, visibleLoras, type LoraFamily } from '@/lib/models/lora-family'
 
 interface Props {
   label: string
   value: string
   strength: number
   onChange: (lora: string, strength: number) => void
+  onRemove?: () => void
   /**
    * Base-model family of the workflow this picker belongs to. When set, LoRAs
    * known to belong to a *different* family are hidden — an SDXL LoRA can't load
@@ -18,7 +21,7 @@ interface Props {
   family?: LoraFamily
 }
 
-export default function LoraSelector({ label, value, strength, onChange, family }: Props) {
+export default function LoraSelector({ label, value, strength, onChange, onRemove, family }: Props) {
   const [loras, setLoras] = useState<string[]>([])
   const [families, setFamilies] = useState<Record<string, LoraFamily | null>>({})
 
@@ -55,6 +58,15 @@ export default function LoraSelector({ label, value, strength, onChange, family 
     () => visibleLoras(loras, families, family, value),
     [loras, families, family, value],
   )
+
+  // Selections outlive the file they name: they persist across reloads and ride
+  // in on gallery "Send to Generate" links. Drop one the moment ComfyUI's own
+  // list proves it is gone, rather than forwarding a name that fails validation
+  // mid-job. Every entry path routes through this picker, so this is the one
+  // guard needed. Self-limiting: clearing sets value to '', which no-ops here.
+  useEffect(() => {
+    if (loraIsMissing(value, loras)) onChange('', strength)
+  }, [value, loras, strength, onChange])
 
   const active = Boolean(value)
 
@@ -97,6 +109,20 @@ export default function LoraSelector({ label, value, strength, onChange, family 
             aria-label={`${label} strength`}
           />
         </div>
+      )}
+
+      {onRemove && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+          onClick={onRemove}
+          aria-label={`Remove ${label}`}
+          title={`Remove ${label}`}
+        >
+          <X className="h-4 w-4" />
+        </Button>
       )}
     </div>
   )

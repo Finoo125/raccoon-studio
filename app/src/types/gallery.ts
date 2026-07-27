@@ -31,7 +31,10 @@ export interface ImageMetadata {
   width?: number
   height?: number
   workflow?: string
-  loras?: string[]
+  loras?: Array<{
+    name: string
+    strength?: number
+  }>
 }
 
 export type GallerySortKey = 'newest' | 'oldest' | 'name' | 'largest' | 'random'

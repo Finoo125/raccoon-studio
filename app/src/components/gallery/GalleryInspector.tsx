@@ -12,6 +12,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import MoviePickerDialog from './MoviePickerDialog'
 import { useGalleryStore } from '@/lib/gallery/store'
 import { useRouter } from 'next/navigation'
+import { serializeGalleryLoras } from '@/lib/gallery/lora-transfer'
 
 export default function GalleryInspector() {
   const { selected, images, setSelected, toggleFavorite, removeImages } = useGalleryStore()
@@ -130,6 +131,8 @@ export default function GalleryInspector() {
     if (selected.metadata.negativePrompt) params.set('negative', selected.metadata.negativePrompt)
     if (selected.metadata.seed !== undefined) params.set('seed', String(selected.metadata.seed))
     if (selected.metadata.workflow) params.set('workflow', selected.metadata.workflow.toLowerCase())
+    const loras = serializeGalleryLoras(selected.metadata.loras)
+    if (loras) params.set('loras', loras)
     router.push(`${isVideo ? '/generate-videos' : '/generate'}?${params}`)
     toast.success(`Settings sent to ${isVideo ? 'Generate Videos' : 'Generate'} page`)
   }
@@ -326,6 +329,22 @@ export default function GalleryInspector() {
             {m.scheduler && <MetaRow label="Scheduler" value={m.scheduler} />}
             {m.width && m.height && <MetaRow label="Size" value={`${m.width}×${m.height}`} />}
           </div>
+
+          {m.loras && m.loras.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">LoRAs</p>
+              <div className="space-y-1">
+                {m.loras.map((lora, index) => (
+                  <div key={`${lora.name}-${index}`} className="flex items-center justify-between gap-3 text-xs">
+                    <span className="min-w-0 break-all">{lora.name}</span>
+                    <span className="shrink-0 font-mono text-muted-foreground">
+                      {lora.strength ?? 1}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {m.prompt === undefined &&
             m.seed === undefined &&
