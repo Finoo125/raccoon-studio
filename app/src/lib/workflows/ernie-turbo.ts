@@ -8,6 +8,15 @@ import { appendFilmGrain } from './film-grain'
 import { appendHiresFix } from './hires-fix'
 import { appendImg2Img } from './img2img'
 
+/**
+ * The distilled model's native sampler budget — what the template JSON's KSampler
+ * already carries, named here so the hires-fix / detailer passes below and the
+ * Expert Mode panel's starting values all read the same numbers instead of three
+ * copies drifting apart. Only Expert Mode can change what actually runs
+ * (see expert-sampler.ts).
+ */
+const NATIVE = { steps: 8, cfg: 1, sampler: 'euler', scheduler: 'simple' } as const
+
 export const ernieTurboWorkflow: WorkflowDefinition = {
   id: 'ernie-turbo',
   name: 'Ernie Image Turbo',
@@ -34,6 +43,7 @@ export const ernieTurboWorkflow: WorkflowDefinition = {
     width: 832,
     height: 1216,
     seed: -1,
+    ...NATIVE,
     promptEnhancer: false,
     upscale: true,
   },
@@ -119,10 +129,10 @@ export const ernieTurboWorkflow: WorkflowDefinition = {
         netScale: 1.5,
         modelScale: 4,
         sampler: {
-          steps: 8,
-          cfg: 1,
-          sampler_name: 'euler',
-          scheduler: 'simple',
+          steps: NATIVE.steps,
+          cfg: NATIVE.cfg,
+          sampler_name: NATIVE.sampler,
+          scheduler: NATIVE.scheduler,
           denoise: 0.2,
           seed: params.seed < 0 ? Math.floor(Math.random() * 9999999999999) : params.seed,
         },
@@ -138,7 +148,7 @@ export const ernieTurboWorkflow: WorkflowDefinition = {
         vae: ['88:63', 0],
         positive: ['88:67', 0],
         negative: ['88:91', 0],
-        sampler: { steps: 8, cfg: 1, sampler_name: 'euler', scheduler: 'simple', denoise: 0.25 },
+        sampler: { steps: NATIVE.steps, cfg: NATIVE.cfg, sampler_name: NATIVE.sampler, scheduler: NATIVE.scheduler, denoise: 0.25 },
       })
     }
 

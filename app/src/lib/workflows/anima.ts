@@ -61,6 +61,14 @@ function animaFamily(v: AnimaVariant): WorkflowDefinition {
       seed: -1,
       prompt: ANIMA_DEFAULT_POSITIVE,
       negativePrompt: v.negativePrompt ? ANIMA_DEFAULT_NEGATIVE : '',
+      // The variant's native sampler budget. Only read when Expert Mode is on
+      // (see expert-sampler.ts); it lives here so the Expert panel opens showing
+      // what this model actually runs, and so switching model resets it. The
+      // scheduler is not a variant field — every Anima pass uses `simple`.
+      steps: v.steps,
+      cfg: v.cfg,
+      sampler: v.sampler,
+      scheduler: 'simple',
       upscale: true,
     },
     buildPrompt(params: GenerationParams): ComfyUIPrompt {

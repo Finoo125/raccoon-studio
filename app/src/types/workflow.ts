@@ -22,8 +22,20 @@ export interface GenerationParams {
   batchSize?: number
   /** Number of separate jobs to queue, each producing `batchSize` images. */
   jobCount?: number
+  /**
+   * Expert Mode: hand the sampler knobs below to the user. Off (absent/false)
+   * ⇒ `steps`, `cfg`, `sampler` and `scheduler` are ignored entirely and every
+   * family renders on its own tuned budget. See `expert-sampler.ts`.
+   */
+  expertMode?: boolean
+  /** Main-pass step count. Expert Mode only. */
   steps?: number
+  /** Main-pass CFG. Expert Mode only. Distilled families are trained at 1. */
   cfg?: number
+  /** Main-pass ComfyUI `sampler_name`. Expert Mode only. */
+  sampler?: string
+  /** Main-pass ComfyUI `scheduler`. Expert Mode only. */
+  scheduler?: string
   /** Ordered LoRA stack. The form starts with two rows and can append any number. */
   loras?: LoraParam[]
   /** Selected Patreon/Aria model (applied to the workflow's model/LoRA node). */

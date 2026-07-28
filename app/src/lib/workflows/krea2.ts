@@ -128,6 +128,14 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
       height: 1216,
       seed: -1,
       upscale: true,
+      // The variant's native sampler budget. Only read when Expert Mode is on
+      // (see expert-sampler.ts); it lives here so the Expert panel opens showing
+      // what this model actually runs, and so switching model resets it. Sampler
+      // and scheduler are not variant fields — every Krea2 pass uses this pair.
+      steps: v.steps,
+      cfg: v.cfg,
+      sampler: 'er_sde',
+      scheduler: 'simple',
       // Off by default: the enhancer rewrites what the user typed, so it is
       // opt-in, matching how Ernie's enhancer behaves.
       promptEnhancer: false,

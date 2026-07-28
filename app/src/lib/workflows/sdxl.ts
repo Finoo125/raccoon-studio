@@ -104,8 +104,13 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
       height: 1216,
       seed: -1,
       negativePrompt: config.defaultNegative,
+      // The family's native sampler budget. Only read when Expert Mode is on
+      // (see expert-sampler.ts); it lives here so the Expert panel opens showing
+      // what this model actually runs, and so switching model resets it.
       steps: config.steps,
       cfg: config.cfg,
+      sampler: config.sampler,
+      scheduler: config.scheduler,
       upscale: true,
       // Only the anime families seed a default positive prompt; the photoreal
       // base leaves the box blank so a switch to it doesn't clobber the prompt.
@@ -139,11 +144,14 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
       wf['5'].inputs.height = params.height
       wf['5'].inputs.batch_size = Math.max(1, Math.min(4, Math.round(params.batchSize ?? 1)))
 
-      // Sampler. sampler_name/scheduler are the per-family recommended pair
-      // (not user-exposed yet); steps/cfg fall back to the family default.
+      // Sampler — always the family's recommended pair and budget. params.steps /
+      // params.cfg are deliberately NOT read here: Expert Mode is the only path
+      // from those fields into a graph (expert-sampler.ts, applied after this
+      // builder), so a value left behind by an expert session cannot leak into a
+      // render made with the switch off.
       wf['3'].inputs.seed = params.seed < 0 ? Math.floor(Math.random() * 9999999999999) : params.seed
-      wf['3'].inputs.steps = params.steps ?? config.steps
-      wf['3'].inputs.cfg = params.cfg ?? config.cfg
+      wf['3'].inputs.steps = config.steps
+      wf['3'].inputs.cfg = config.cfg
       wf['3'].inputs.sampler_name = config.sampler
       wf['3'].inputs.scheduler = config.scheduler
 
@@ -220,7 +228,7 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
           modelScale: 4,
           sampler: {
             steps: 12,
-            cfg: config.hiresCfg ?? params.cfg ?? config.cfg,
+            cfg: config.hiresCfg ?? config.cfg,
             sampler_name: config.sampler,
             scheduler: config.scheduler,
             denoise: config.hiresDenoise ?? 0.2,
@@ -239,8 +247,8 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
           positive: ['6', 0],
           negative: ['7', 0],
           sampler: {
-            steps: params.steps ?? config.steps,
-            cfg: params.cfg ?? config.cfg,
+            steps: config.steps,
+            cfg: config.cfg,
             sampler_name: config.sampler,
             scheduler: config.scheduler,
             denoise: 0.15,

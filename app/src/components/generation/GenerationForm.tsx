@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus, LayoutGrid } from 'lucide-react'
+import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus, LayoutGrid, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -17,6 +17,7 @@ import { FACE_SWAP_NODE, PIXEL_BOOST_NODE } from '@/lib/workflows/face-swap'
 import { comboOptions } from '@/lib/models/installed'
 import { isAriaModel } from '@/lib/models/patreon'
 import { DEFAULT_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
+import { negativePromptApplies } from '@/lib/workflows/expert-sampler'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { useQueueStore } from '@/lib/comfyui/queue'
 import { submitPrompt } from '@/lib/comfyui/submit'
@@ -41,6 +42,9 @@ const FORM_STORAGE_KEY = 'raccoon-studio:generate-form'
 // a one-time gate rather than a nag on every reload. The slot count itself is
 // not persisted — sessions start at two, same as the selections.
 const LORA_ACK_KEY = 'raccoon-studio:lora-stack-ack'
+// Same one-time-gate treatment for Expert Mode: the sampler settings a family
+// ships are what it was tuned for, so the first unlock asks once per browser.
+const EXPERT_ACK_KEY = 'raccoon-studio:expert-mode-ack'
 
 export default function GenerationForm() {
   const { clientId, addJob } = useQueueStore()
@@ -79,6 +83,13 @@ export default function GenerationForm() {
   const [promptStash, setPromptStash] = useState<Record<string, { prompt: string; negativePrompt: string }>>({})
   const [isGenerating, setIsGenerating] = useState(false)
   const [loraWarnOpen, setLoraWarnOpen] = useState(false)
+  const [expertWarnOpen, setExpertWarnOpen] = useState(false)
+  // Sampler/scheduler choices, read live off ComfyUI's own KSampler definition so
+  // the lists follow what this install actually offers rather than a hardcoded
+  // copy that drifts. Empty when ComfyUI is offline — the Expert dropdowns then
+  // show the current value and nothing else, which still submits fine.
+  const [samplerNames, setSamplerNames] = useState<string[]>([])
+  const [schedulerNames, setSchedulerNames] = useState<string[]>([])
   // Wildcard lists for `__name__` expansion, loaded once; drives the inline
   // preview and the per-job expansion at submit time.
   const [wildcardLists, setWildcardLists] = useState<WildcardLists>({})
@@ -273,6 +284,27 @@ export default function GenerationForm() {
     void checkReference()
   }, [])
 
+  // Sampler/scheduler lists, fetched when the Expert panel is actually opened
+  // rather than at mount. ComfyUI is routinely still starting when this page
+  // first loads, and a one-shot mount fetch would leave the dropdowns showing
+  // nothing but the current value for the rest of the session — the control
+  // would look broken rather than merely offline. Deferring also spares every
+  // user who never opens the panel a request for a list they'll never see.
+  // Empty lists re-trigger it, so toggling the panel retries.
+  useEffect(() => {
+    if (!params.expertMode || samplerNames.length > 0) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const d = await (await fetch('/api/comfyui/object_info/KSampler')).json()
+        if (cancelled) return
+        setSamplerNames(comboOptions(d, 'KSampler', 'sampler_name'))
+        setSchedulerNames(comboOptions(d, 'KSampler', 'scheduler'))
+      } catch { /* ComfyUI offline — dropdowns keep the current value, retried on reopen */ }
+    })()
+    return () => { cancelled = true }
+  }, [params.expertMode, samplerNames.length])
+
   // Prefill from history strip "Regenerate"
   useEffect(() => {
     if (!prefill) return
@@ -390,6 +422,25 @@ export default function GenerationForm() {
     try { localStorage.setItem(LORA_ACK_KEY, '1') } catch { /* quota or unavailable */ }
     addLoraSlot()
   }
+
+  // Expert Mode is gated the same way, and only on the way *on* — switching it
+  // back off restores the model's own settings and needs no confirmation.
+  const requestExpertMode = () => {
+    if (params.expertMode) {
+      set('expertMode', false)
+      return
+    }
+    let acked = false
+    try { acked = localStorage.getItem(EXPERT_ACK_KEY) === '1' } catch { /* unavailable */ }
+    if (acked) set('expertMode', true)
+    else setExpertWarnOpen(true)
+  }
+  const confirmExpertMode = () => {
+    try { localStorage.setItem(EXPERT_ACK_KEY, '1') } catch { /* quota or unavailable */ }
+    set('expertMode', true)
+  }
+
+  const showNegativePrompt = negativePromptApplies(params, workflow)
 
   const handleGenerate = useCallback(async () => {
     if (!params.prompt.trim()) {
@@ -714,8 +765,8 @@ export default function GenerationForm() {
         )}
       </div>
 
-      {/* Negative prompt — only for workflows that support it */}
-      {workflow.supportsNegativePrompt && (
+      {/* Negative prompt — only where it does anything (see showNegativePrompt) */}
+      {showNegativePrompt && (
         <div className="space-y-2">
           <SectionLabel>
             Negative prompt
@@ -881,6 +932,137 @@ export default function GenerationForm() {
                 </p>
               </div>
             )}
+          </div>
+        )
+      })()}
+
+      {/* Expert Mode — hand the sampler knobs to the user. Every family offers it,
+          including the distilled ones: nudging a turbo model to CFG 1.5-2 is a
+          real technique, and the one-time warning covers the rest. Off, none of
+          these four values reaches the graph at all (expert-sampler.ts). */}
+      {(() => {
+        const expert = params.expertMode ?? false
+        const d = workflow.defaultParams
+        // Fall back to the family's native value, so the panel opens showing what
+        // this model actually runs rather than blank fields.
+        const steps = params.steps ?? d.steps ?? 20
+        const cfg = params.cfg ?? d.cfg ?? 1
+        const sampler = params.sampler ?? d.sampler ?? ''
+        const scheduler = params.scheduler ?? d.scheduler ?? ''
+        // ComfyUI offline leaves the fetched lists empty; keep the current value
+        // selectable so the dropdown never renders as blank-and-unrecoverable.
+        const withCurrent = (list: string[], current: string) =>
+          current && !list.includes(current) ? [current, ...list] : list
+        return (
+          <div className="space-y-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={expert}
+              onClick={requestExpertMode}
+              className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
+                expert ? 'border-primary/40 bg-primary/10' : 'border-border bg-muted/30 hover:bg-muted/50'
+              }`}
+            >
+              <span
+                className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${
+                  expert ? 'bg-primary' : 'bg-input'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-sm transition-transform mt-0.5 ${
+                    expert ? 'translate-x-[1.375rem]' : 'translate-x-0.5'
+                  }`}
+                />
+              </span>
+              <span className="min-w-0 flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 shrink-0 text-primary" />
+                <span>
+                  <span className="block text-sm font-semibold">Expert mode</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Set the sampler, scheduler, steps and CFG yourself
+                  </span>
+                </span>
+              </span>
+            </button>
+
+            {expert && (
+              <div className="space-y-3 pl-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <SectionLabel>Sampler</SectionLabel>
+                    <Select value={sampler} onValueChange={(v) => { if (v) set('sampler', v) }}>
+                      <SelectTrigger className="h-9 w-full text-sm">
+                        <SelectValue placeholder="Sampler" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {withCurrent(samplerNames, sampler).map((n) => (
+                          <SelectItem key={n} value={n} className="font-mono text-xs">{n}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <SectionLabel>Scheduler</SectionLabel>
+                    <Select value={scheduler} onValueChange={(v) => { if (v) set('scheduler', v) }}>
+                      <SelectTrigger className="h-9 w-full text-sm">
+                        <SelectValue placeholder="Scheduler" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {withCurrent(schedulerNames, scheduler).map((n) => (
+                          <SelectItem key={n} value={n} className="font-mono text-xs">{n}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <SectionLabel>Steps</SectionLabel>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={150}
+                      value={steps}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        set('steps', Math.max(1, Math.min(150, Math.round(Number(e.target.value) || 1))))
+                      }
+                      className="h-9 font-mono text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <SectionLabel>CFG</SectionLabel>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={30}
+                      step={0.5}
+                      value={cfg}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        set('cfg', Math.max(0, Math.min(30, Number(e.target.value) || 0)))
+                      }
+                      className="h-9 font-mono text-sm"
+                    />
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  {workflow.name} runs at {d.steps} steps / CFG {d.cfg} on {d.sampler} + {d.scheduler}.
+                  {(d.cfg ?? 1) <= 1 && ' It is a distilled model — trained for CFG 1, and it burns above roughly 2.'}
+                  {' '}Switch expert mode off to restore all four.
+                </p>
+              </div>
+            )}
+
+            <ConfirmDialog
+              open={expertWarnOpen}
+              onOpenChange={setExpertWarnOpen}
+              title="Take manual control of the sampler?"
+              description="These four values are what each model was tuned for — the distilled ones especially, which are trained to run at CFG 1 and a handful of steps and burn out above that. Change them and renders may come out worse, slower, or both. Switch it back off to restore the model's own settings."
+              confirmLabel="Enable anyway"
+              onConfirm={confirmExpertMode}
+            />
           </div>
         )
       })()}
