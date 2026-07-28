@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Download, Copy, RotateCcw, Maximize2, Sparkles, ArrowUpRight, Check, Loader2 } from 'lucide-react'
+import { Download, Copy, RotateCcw, Maximize2, Sparkles, ArrowUpRight, Check, Loader2, Film } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { useQueueStore } from '@/lib/comfyui/queue'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import { canvasMediaKey } from '@/lib/generation/canvas-preview'
+import { useSendToVideo } from '@/lib/generation/useSendToVideo'
 import { formatEta } from '@/lib/generation/eta'
 import { workflows } from '@/lib/workflows'
 import { Progress } from '@/components/ui/progress'
@@ -25,6 +26,7 @@ export default function StudioCanvas() {
   const [isHovered, setIsHovered] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const { activeImageUrl, setPrefill } = useStudioStore()
+  const { sendToVideo, busy: videoBusy } = useSendToVideo()
   const director = useDirectorStage('image')
   const jobs = useQueueStore((s) => s.jobs)
 
@@ -228,6 +230,16 @@ export default function StudioCanvas() {
                 Use this
               </Button>
             )}
+            <Button
+              size="icon"
+              variant="secondary"
+              className="h-8 w-8 bg-background/80 backdrop-blur-sm"
+              title="Send to Generate Videos"
+              disabled={videoBusy}
+              onClick={() => void sendToVideo(activeImageUrl)}
+            >
+              {videoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Film className="h-3.5 w-3.5" />}
+            </Button>
             <Button
               size="icon"
               variant="secondary"

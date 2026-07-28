@@ -305,15 +305,18 @@ export default function GenerationForm() {
     return () => { cancelled = true }
   }, [params.expertMode, samplerNames.length])
 
-  // Prefill from history strip "Regenerate"
+  // Prefill from history strip "Regenerate".
+  // Only claim prefills naming an image workflow, and only clear what we claimed:
+  // this form is mounted on /generate while "send to Generate Videos" sets a video
+  // prefill, so clearing one we can't apply would destroy the video tab's seed
+  // before that tab ever mounts.
   useEffect(() => {
     if (!prefill) return
     const found = workflows.find((w) => w.id === prefill.workflowId)
-    if (found) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing form from the prefill store
-      setWorkflowId(prefill.workflowId)
-      setParams((p) => ({ ...p, ...found.defaultParams, ...prefill.params }))
-    }
+    if (!found) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing form from the prefill store
+    setWorkflowId(prefill.workflowId)
+    setParams((p) => ({ ...p, ...found.defaultParams, ...prefill.params }))
     setPrefill(null)
   }, [prefill, setPrefill])
 

@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import { useState, useEffect } from 'react'
-import { Heart, X, Send, ChevronLeft, ChevronRight, FolderOpen, Maximize2, Download, Pencil, Trash2, Clapperboard, ImagePlus } from 'lucide-react'
+import { Heart, X, Send, ChevronLeft, ChevronRight, FolderOpen, Maximize2, Download, Pencil, Trash2, Clapperboard, ImagePlus, Film, Loader2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -11,11 +11,13 @@ import { Separator } from '@/components/ui/separator'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import MoviePickerDialog from './MoviePickerDialog'
 import { useGalleryStore } from '@/lib/gallery/store'
+import { useSendToVideo } from '@/lib/generation/useSendToVideo'
 import { useRouter } from 'next/navigation'
 import { serializeGalleryLoras } from '@/lib/gallery/lora-transfer'
 
 export default function GalleryInspector() {
   const { selected, images, setSelected, toggleFavorite, removeImages } = useGalleryStore()
+  const { sendToVideo, busy: videoBusy } = useSendToVideo()
   const router = useRouter()
   // Full-size lightbox shown in front of the gallery when the preview is clicked.
   const [lightbox, setLightbox] = useState(false)
@@ -238,6 +240,19 @@ export default function GalleryInspector() {
           {!isVideo && (
             <Button variant="outline" className="w-full h-11 text-sm font-semibold" onClick={handleSendAsBase}>
               <ImagePlus className="h-4 w-4 mr-2" /> Send as base image
+            </Button>
+          )}
+          {!isVideo && (
+            <Button
+              variant="outline"
+              className="w-full h-11 text-sm font-semibold"
+              disabled={videoBusy}
+              onClick={() => void sendToVideo(selected.url, selected.filename)}
+            >
+              {videoBusy
+                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                : <Film className="h-4 w-4 mr-2" />}
+              Send to Generate Videos
             </Button>
           )}
           {!isVideo && (

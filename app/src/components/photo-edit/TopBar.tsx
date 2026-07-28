@@ -1,11 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { Undo2, Redo2, RotateCcw, ChevronDown, Save, Wand2, Images } from 'lucide-react'
+import { Undo2, Redo2, RotateCcw, ChevronDown, Save, Wand2, Images, Film, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { usePhotoEditStore } from '@/lib/photo-edit/store'
 import { renderToCanvas } from '@/lib/photo-edit/pipeline'
 import { computeAutoAdjustments } from '@/lib/photo-edit/auto-enhance'
+import { useSendToVideo } from '@/lib/generation/useSendToVideo'
 import { Button } from '@/components/ui/button'
 import {
   Popover,
@@ -39,6 +40,7 @@ export default function TopBar() {
   const mergeAdjustments = usePhotoEditStore((s) => s.mergeAdjustments)
   const openPicker = usePhotoEditStore((s) => s.openPicker)
 
+  const { sendToVideo, busy: videoBusy } = useSendToVideo()
   const [format, setFormat] = useState<Format>('png')
   const [confirmOverwriteOpen, setConfirmOverwriteOpen] = useState(false)
   const [confirmSwitchOpen, setConfirmSwitchOpen] = useState(false)
@@ -49,21 +51,26 @@ export default function TopBar() {
   const isUpload = origin?.kind === 'upload'
   const filename = origin?.filename ?? 'Canvas'
 
+  /** Flatten the current edits into image bytes — shared by save and send-to-video. */
+  async function exportBlob(mimeType = 'image/png', quality?: number) {
+    const canvas = document.createElement('canvas')
+    renderToCanvas(source!, editState, canvas)
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, mimeType, quality)
+    })
+    if (!blob) throw new Error('Canvas export failed')
+    return blob
+  }
+
   async function performSave(mode: 'copy' | 'overwrite') {
     if (!source || !origin) return
     setSaving(true)
     setSavePopoverOpen(false)
     try {
-      const canvas = document.createElement('canvas')
-      renderToCanvas(source, editState, canvas)
-
-      const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png'
-      const quality = format === 'jpeg' ? 0.92 : undefined
-
-      const blob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, mimeType, quality)
-      })
-      if (!blob) throw new Error('Canvas export failed')
+      const blob = await exportBlob(
+        format === 'jpeg' ? 'image/jpeg' : 'image/png',
+        format === 'jpeg' ? 0.92 : undefined,
+      )
 
       const subfolder = origin.kind === 'gallery' ? origin.subfolder : ''
       const fd = new FormData()
@@ -102,6 +109,18 @@ export default function TopBar() {
       setConfirmSwitchOpen(true)
     } else {
       openPicker()
+    }
+  }
+
+  // Sends the edited canvas straight to the video tab — the edits ride along
+  // without having to save a copy to the gallery first.
+  const handleSendToVideo = async () => {
+    if (!source) return
+    try {
+      // exportBlob() defaults to PNG, so the name has to agree with the bytes.
+      await sendToVideo(await exportBlob(), `${filename.replace(/\.[a-z0-9]+$/i, '')}.png`)
+    } catch (err: unknown) {
+      toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -194,6 +213,18 @@ export default function TopBar() {
           <RotateCcw className="h-3.5 w-3.5" />
         </Button>
       </div>
+
+      {/* Send the edited image to the video tab as an image-to-video source */}
+      <Button
+        variant="ghost"
+        size="sm"
+        title="Send this image to Generate Videos as the source image"
+        disabled={!source || videoBusy}
+        onClick={() => void handleSendToVideo()}
+      >
+        {videoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Film className="h-3.5 w-3.5" />}
+        To video
+      </Button>
 
       {/* Save menu */}
       <Popover open={savePopoverOpen} onOpenChange={setSavePopoverOpen}>

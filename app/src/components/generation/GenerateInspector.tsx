@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { X, Download, Maximize2, ChevronLeft, ChevronRight, RotateCcw, Check, Pencil } from 'lucide-react'
+import { X, Download, Maximize2, ChevronLeft, ChevronRight, RotateCcw, Check, Pencil, Film, Loader2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import { useRecentImagesStore } from '@/lib/generation/recent-store'
+import { useSendToVideo } from '@/lib/generation/useSendToVideo'
 import { useDirectorStage } from '@/lib/director/director-stage'
 import { useRouter } from 'next/navigation'
 import { workflows } from '@/lib/workflows'
@@ -24,6 +25,7 @@ export default function GenerateInspector() {
   const setInspectImage = useStudioStore((s) => s.setInspectImage)
   const setPrefill = useStudioStore((s) => s.setPrefill)
   const [lightbox, setLightbox] = useState(false)
+  const { sendToVideo, busy: videoBusy } = useSendToVideo()
   const director = useDirectorStage('image')
   const router = useRouter()
 
@@ -155,6 +157,17 @@ export default function GenerateInspector() {
                 )}
                 <Button className="h-11 text-sm font-semibold col-span-3" onClick={handleReuse}>
                   <RotateCcw className="h-4 w-4 mr-2" /> Reuse settings
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-11 text-sm font-semibold col-span-3"
+                  disabled={videoBusy}
+                  onClick={() => { void sendToVideo(image.url, image.filename); setInspectImage(null) }}
+                >
+                  {videoBusy
+                    ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    : <Film className="h-4 w-4 mr-2" />}
+                  Send to Generate Videos
                 </Button>
                 <Button variant="outline" className="h-11 flex-col gap-1 text-xs col-span-3" onClick={handleEdit}>
                   <Pencil className="h-4 w-4" /> Edit image
