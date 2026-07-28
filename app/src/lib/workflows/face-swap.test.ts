@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { appendFaceSwap } from './face-swap'
+import { appendFaceSwap, FACE_SWAP_NODE, PIXEL_BOOST_NODE } from './face-swap'
 import type { ComfyUIPrompt } from '@/types/comfyui'
 
 function baseGraph(): ComfyUIPrompt {
@@ -7,6 +7,32 @@ function baseGraph(): ComfyUIPrompt {
     save: { class_type: 'SaveImage', inputs: { images: ['decode', 0] } },
   } as unknown as ComfyUIPrompt
 }
+
+describe('availability probe contract', () => {
+  // The form probes these two class names via /object_info to decide whether the
+  // Face swap and Pixel boost controls are usable. If the builder ever emits a
+  // different class, the probe would report a working feature that then fails at
+  // generate time with a bare "Generation failed" — the exact silent failure a
+  // broken RaccoonSwapNodes import caused in the field. Pin both to the graph.
+  it('emits the class the form probes for face swap', () => {
+    const wf = baseGraph()
+    appendFaceSwap(wf, { saveNodeId: 'save', faceFilename: 'f.png' })
+    expect(wf['swap:reactor'].class_type).toBe(FACE_SWAP_NODE)
+  })
+
+  it('emits the class the form probes for pixel boost', () => {
+    const wf = baseGraph()
+    appendFaceSwap(wf, { saveNodeId: 'save', faceFilename: 'f.png', pixelBoost: true })
+    expect(wf['swap:swap'].class_type).toBe(PIXEL_BOOST_NODE)
+  })
+
+  it('keeps the two probes distinct — they come from different node packs', () => {
+    // ReActor is upstream, RaccoonSwapNodes is ours and vendored, so either can
+    // be present without the other. Collapsing them into one check would hide
+    // exactly the case that was reported (ReActor fine, ours failed to import).
+    expect(FACE_SWAP_NODE).not.toBe(PIXEL_BOOST_NODE)
+  })
+})
 
 describe('appendFaceSwap', () => {
   it('wraps the SaveImage source with the swap → mask → color chain', () => {

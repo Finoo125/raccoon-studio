@@ -1,0 +1,96 @@
+{
+  "k:save": {
+    "inputs": {
+      "filename_prefix": "images/KREA2/%year%-%month%-%day%/%hour%%minute%%second%-KREA2_",
+      "images": ["k:decode", 0]
+    },
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save Image" }
+  },
+  "k:unet": {
+    "inputs": { "unet_name": "krea2_turbo_fp8_scaled.safetensors", "weight_dtype": "default" },
+    "class_type": "UNETLoader",
+    "_meta": { "title": "Load Diffusion Model" }
+  },
+  "k:clip": {
+    "inputs": { "clip_name": "qwen3vl_4b_fp8_scaled.safetensors", "type": "krea2", "device": "default" },
+    "class_type": "CLIPLoader",
+    "_meta": { "title": "Load CLIP" }
+  },
+  "k:vae": {
+    "inputs": { "vae_name": "qwen_image_vae.safetensors" },
+    "class_type": "VAELoader",
+    "_meta": { "title": "Load VAE" }
+  },
+  "k:loras": {
+    "inputs": {
+      "lora_01": "None",
+      "strength_01": 1,
+      "lora_02": "None",
+      "strength_02": 1,
+      "lora_03": "None",
+      "strength_03": 1,
+      "lora_04": "None",
+      "strength_04": 1,
+      "model": ["k:unet", 0],
+      "clip": ["k:clip", 0]
+    },
+    "class_type": "Lora Loader Stack (rgthree)",
+    "_meta": { "title": "Lora Loader Stack (rgthree)" }
+  },
+  "k:enhance": {
+    "inputs": {
+      "prompt": "",
+      "max_length": 512,
+      "sampling_mode": "on",
+      "sampling_mode.temperature": 0.7,
+      "sampling_mode.top_k": 64,
+      "sampling_mode.top_p": 0.95,
+      "sampling_mode.min_p": 0.05,
+      "sampling_mode.repetition_penalty": 1.05,
+      "sampling_mode.seed": 0,
+      "sampling_mode.presence_penalty": 0,
+      "thinking": false,
+      "use_default_template": true,
+      "clip": ["k:clip", 0]
+    },
+    "class_type": "TextGenerate",
+    "_meta": { "title": "Generate Text (Prompt Enhancer)" }
+  },
+  "k:pos": {
+    "inputs": { "text": ["k:enhance", 0], "clip": ["k:loras", 1] },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "CLIP Text Encode (Prompt)" }
+  },
+  "k:neg": {
+    "inputs": { "conditioning": ["k:pos", 0] },
+    "class_type": "ConditioningZeroOut",
+    "_meta": { "title": "ConditioningZeroOut" }
+  },
+  "k:latent": {
+    "inputs": { "width": 832, "height": 1216, "batch_size": 1 },
+    "class_type": "EmptyLatentImage",
+    "_meta": { "title": "Empty Latent Image" }
+  },
+  "k:sampler": {
+    "inputs": {
+      "seed": 0,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "er_sde",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": ["k:loras", 0],
+      "positive": ["k:pos", 0],
+      "negative": ["k:neg", 0],
+      "latent_image": ["k:latent", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": { "title": "KSampler" }
+  },
+  "k:decode": {
+    "inputs": { "samples": ["k:sampler", 0], "vae": ["k:vae", 0] },
+    "class_type": "VAEDecode",
+    "_meta": { "title": "VAE Decode" }
+  }
+}

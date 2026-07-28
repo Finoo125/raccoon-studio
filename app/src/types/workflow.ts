@@ -37,6 +37,23 @@ export interface GenerationParams {
    * Absent → keep the checkpoint VAE (so nothing breaks when it isn't present).
    */
   sdxlVae?: string
+  /**
+   * Krea2 family only: filename of the TextFusion refusal-reduction LoRA,
+   * applied at a fixed strength of 1. Injected by the form at submit time, and
+   * only once ComfyUI actually reports the file — an unknown `lora_name` is
+   * rejected with `value_not_in_list`, which surfaces as a bare "Generation
+   * failed". Absent ⇒ the loader node is never emitted.
+   */
+  krea2RefusalLora?: string
+  /** Krea2 family only: filename of the projector-scale LoRA. Same
+   *  form-confirms-then-injects rule as `krea2RefusalLora`. */
+  krea2ProjectorLora?: string
+  /**
+   * Krea2 family only: projector-scale strength — how hard the model is pushed
+   * to follow the prompt. Scales on a different axis than CFG: 0.01 = +1×,
+   * 0.05 (the default) = +5×, 0.1 = +10×. 0 omits the LoRA entirely.
+   */
+  krea2ProjectorStrength?: number
   promptEnhancer?: boolean
   inputImage?: string
   /** Enable ReActor face swap, using `inputImage` as the source face. */
@@ -69,6 +86,18 @@ export interface GenerationParams {
   upscale?: boolean
   /** Run the face detailer stage. On by default; absent counts as on. */
   detailer?: boolean
+  /**
+   * Decode the latent in tiles instead of all at once. VAE decode is the peak-VRAM
+   * moment of a render — it briefly needs more than sampling does, which is why a
+   * card that samples fine still OOMs on the last step, and why hi-res fix (which
+   * decodes at the *upscaled* size) is usually what tips it over. Tiling trades a
+   * few percent of speed, and a small seam risk, for a large cut in that peak.
+   * Off by default: it is a low-VRAM remedy, not a free win.
+   */
+  tiledVaeDecode?: boolean
+  /** Tile edge in px. 512 (default) suits ~8 GB cards; 384 for ~6 GB; 768 barely
+   *  helps. Below `overlap * 4` ComfyUI shrinks the overlap to match. */
+  tiledVaeTileSize?: 384 | 512 | 768
   // ── Base-image modes (img2img / inpaint / outpaint) ──────────────────────────
   /** ComfyUI input-dir filename of the source image. Absent ⇒ txt2img. Distinct
    *  from `inputImage` (the ReActor face-swap source). */

@@ -274,30 +274,95 @@ export async function stopComfyUIByPort(): Promise<boolean> {
 }
 
 /**
- * PIDs of ComfyUI server processes — serving *or* still booting.
+ * PIDs of ComfyUI server processes — serving *or* still booting — belonging to
+ * THIS install.
  *
  * Liveness must not be inferred from HTTP. ComfyUI spends a minute or more
  * loading custom nodes before it binds its port, so "not answering" covers both
  * "stopped" and "still starting". Conflating those is how a repair ended up
  * checking out revisions underneath a booting ComfyUI and then skipping the
  * restart because the thing it thought it had stopped came up mid-run.
+ *
+ * "This install" is not a detail: stopComfyUI() KILLS whatever this returns.
+ * The previous match ('*ComfyUI*main.py*' on Windows, `pgrep -f ComfyUI/main.py`
+ * on POSIX) was far too broad for that. It hit any ComfyUI on the box — a second
+ * install, ComfyUI Desktop — so Stop could kill a stranger's session, and Start
+ * refused because someone else's ComfyUI was up. Worse on POSIX, where pgrep -f
+ * matches ANY process: an editor or a grep holding that path on its command line
+ * was a kill target.
  */
-export function comfyUIServerPids(): number[] {
-  const [cmd, args]: [string, string[]] =
-    process.platform === 'win32'
-      ? ['powershell.exe', ['-NoProfile', '-Command',
-          `Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" | ` +
-          `Where-Object { $_.CommandLine -like '*ComfyUI*main.py*' } | ForEach-Object { $_.ProcessId }`]]
-      : ['pgrep', ['-f', 'ComfyUI/main.py']]
-  try {
-    const res = spawnSync(cmd, args, { encoding: 'utf8', timeout: 15_000 })
-    return String(res.stdout ?? '')
-      .split('\n')
-      .map((line) => Number(line.trim()))
-      .filter((n) => Number.isInteger(n) && n > 0)
-  } catch {
-    return []
+export function comfyUIMainPath(): string | null {
+  const dir = getComfyUIDir()
+  return dir ? path.join(dir, 'main.py') : null
+}
+
+/**
+ * Does this command line belong to THIS install's ComfyUI?
+ *
+ * Windows only ever hands us one command-line string (CIM has no argv), so the
+ * best available test is a substring — normalised, because Windows paths are
+ * case-insensitive and mix separators, and comparing them raw silently misses.
+ * POSIX gets the exact-argv treatment in the caller instead.
+ */
+export function matchesComfyUIMain(
+  cmdline: string,
+  mainPy: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (!cmdline || !mainPy) return false
+  const norm = (s: string) =>
+    platform === 'win32' ? s.toLowerCase().replace(/\//g, '\\') : s
+  return norm(cmdline).includes(norm(mainPy))
+}
+
+/** POSIX: read argv straight from /proc — no subprocess, and exact elements. */
+function procComfyUIPids(mainPy: string): number[] {
+  let entries: string[]
+  try { entries = fs.readdirSync('/proc') } catch { return [] }
+  const pids: number[] = []
+  for (const entry of entries) {
+    const pid = Number(entry)
+    if (!Number.isInteger(pid) || pid <= 0) continue
+    let raw: string
+    try { raw = fs.readFileSync(`/proc/${entry}/cmdline`, 'utf8') } catch { continue }
+    const argv = raw.split('\0').filter(Boolean)
+    // argv[0] must be a python, and main.py must be an argument in its own
+    // right — not merely a substring somewhere in the line.
+    if (!argv.length || !path.basename(argv[0]).toLowerCase().startsWith('python')) continue
+    if (argv.slice(1).includes(mainPy)) pids.push(pid)
   }
+  return pids
+}
+
+/** Windows: one CIM call, matched in JS so no path is interpolated into PowerShell. */
+function windowsComfyUIPids(mainPy: string): number[] {
+  const script =
+    `Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" | ` +
+    `ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }`
+  let stdout = ''
+  try {
+    stdout = String(
+      spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
+        encoding: 'utf8',
+        timeout: 15_000,
+      }).stdout ?? '',
+    )
+  } catch { return [] }
+  const pids: number[] = []
+  for (const line of stdout.split('\n')) {
+    const sep = line.indexOf('|')
+    if (sep < 0) continue
+    const pid = Number(line.slice(0, sep).trim())
+    if (!Number.isInteger(pid) || pid <= 0) continue
+    if (matchesComfyUIMain(line.slice(sep + 1), mainPy, 'win32')) pids.push(pid)
+  }
+  return pids
+}
+
+export function comfyUIServerPids(): number[] {
+  const mainPy = comfyUIMainPath()
+  if (!mainPy) return []
+  return process.platform === 'win32' ? windowsComfyUIPids(mainPy) : procComfyUIPids(mainPy)
 }
 
 function killPid(pid: number) {
@@ -324,6 +389,17 @@ function killPid(pid: number) {
  */
 export async function stopComfyUI(timeoutMs = 30_000): Promise<{ stopped: boolean; pid: number | null }> {
   const { pid } = await stopTrackedProcess()
+
+  // Without a known install path we cannot identify this install's processes, so
+  // an empty scan means "don't know", not "nothing is running". Do the two things
+  // that need no identification and say so, rather than reporting a stop we never
+  // verified — or spinning to the timeout waiting for a scan that always returns
+  // empty.
+  if (!comfyUIMainPath()) {
+    await stopComfyUIByPort()
+    return { stopped: true, pid }
+  }
+
   if (comfyUIServerPids().length === 0) return { stopped: true, pid }
 
   await stopComfyUIByPort()

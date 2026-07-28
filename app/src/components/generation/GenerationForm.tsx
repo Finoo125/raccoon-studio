@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus } from 'lucide-react'
+import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus, LayoutGrid } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -12,6 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { workflows } from '@/lib/workflows'
 import { FUN_MODEL } from '@/lib/workflows/zimage-controlnet'
 import { SDXL_FIX_VAE } from '@/lib/workflows/sdxl'
+import { KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA, KREA2_PROJECTOR_DEFAULT } from '@/lib/workflows/krea2'
+import { FACE_SWAP_NODE, PIXEL_BOOST_NODE } from '@/lib/workflows/face-swap'
+import { comboOptions } from '@/lib/models/installed'
 import { isAriaModel } from '@/lib/models/patreon'
 import { DEFAULT_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
@@ -98,6 +101,12 @@ export default function GenerationForm() {
   // Whether ComfyUI has the FaceDetailer node (Impact Pack installed).
   // null = still loading; false = unavailable; true = available.
   const [faceDetailerAvailable, setFaceDetailerAvailable] = useState<boolean | null>(null)
+  // Face swap and pixel boost come from two different node packs — ReActor
+  // (upstream) and RaccoonSwapNodes (ours, vendored) — so either can be missing
+  // on its own. Tracked separately: a broken RaccoonSwapNodes import must cost
+  // the user pixel boost, not the whole face-swap feature.
+  const [faceSwapAvailable, setFaceSwapAvailable] = useState<boolean | null>(null)
+  const [pixelBoostAvailable, setPixelBoostAvailable] = useState<boolean | null>(null)
   // Whether ComfyUI has the ControlNet Aux + IP-Adapter Plus nodes installed.
   const [controlNetAvailable, setControlNetAvailable] = useState<boolean | null>(null)
   const [ipAdapterAvailable, setIpAdapterAvailable] = useState<boolean | null>(null)
@@ -106,6 +115,11 @@ export default function GenerationForm() {
   // colors on SDXL checkpoints with a bad baked VAE, e.g. Illustrious). When
   // present, SDXL-family jobs decode through it instead of the checkpoint VAE.
   const [sdxlVaeAvailable, setSdxlVaeAvailable] = useState(false)
+  // Which of Krea2's two built-in LoRAs are actually on disk. They are patched
+  // in outside the user's LoRA slots — refusal reduction at a fixed strength 1,
+  // projector scale on the slider below — and ComfyUI rejects an unknown
+  // lora_name outright, so neither is ever passed until it has been seen here.
+  const [krea2Builtins, setKrea2Builtins] = useState({ refusal: false, projector: false })
   // Gate persistence until the saved session has been restored, so the first
   // render's defaults don't overwrite what we're about to load.
   const [restored, setRestored] = useState(false)
@@ -194,6 +208,24 @@ export default function GenerationForm() {
     void load('LoraLoader', 'lora_name', setAriaLoras)
     void load('UNETLoader', 'unet_name', setAriaUnets)
     void checkDetailer()
+    const checkFaceSwap = async () => {
+      // Probed independently: ReActor failing and RaccoonSwapNodes failing are
+      // different outcomes for the user. A pack whose import blew up is absent
+      // from /object_info exactly like one that was never installed, which is
+      // what makes this detectable at all.
+      const probe = async (nodeClass: string) => {
+        try {
+          const d = (await (await fetch(`/api/comfyui/object_info/${nodeClass}`)).json()) as Record<string, unknown>
+          return Boolean(d?.[nodeClass])
+        } catch {
+          return false
+        }
+      }
+      const [swap, boost] = await Promise.all([probe(FACE_SWAP_NODE), probe(PIXEL_BOOST_NODE)])
+      setFaceSwapAvailable(swap)
+      setPixelBoostAvailable(boost)
+    }
+    void checkFaceSwap()
     const checkSdxlVae = async () => {
       try {
         const d = await (await fetch('/api/comfyui/object_info/VAELoader')).json()
@@ -204,6 +236,19 @@ export default function GenerationForm() {
       }
     }
     void checkSdxlVae()
+    const checkKrea2Builtins = async () => {
+      try {
+        const d = await (await fetch('/api/comfyui/object_info/LoraLoader')).json()
+        const names = comboOptions(d, 'LoraLoader', 'lora_name')
+        // ComfyUI reports subfolders with OS separators; match on the leaf.
+        const has = (file: string) =>
+          names.some((n) => n === file || n.replace(/\\/g, '/').endsWith('/' + file))
+        setKrea2Builtins({ refusal: has(KREA2_REFUSAL_LORA), projector: has(KREA2_PROJECTOR_LORA) })
+      } catch {
+        setKrea2Builtins({ refusal: false, projector: false })
+      }
+    }
+    void checkKrea2Builtins()
     const checkReference = async () => {
       try {
         const [cn, ip, mp, qn] = await Promise.all([
@@ -354,6 +399,7 @@ export default function GenerationForm() {
     setIsGenerating(true)
     cancelledRef.current = false
     const count = params.jobCount ?? 1
+    const isKrea2 = workflow.loraFamily === 'krea2'
     let queued = 0
     try {
       // Reference-guidance modes need an uploaded reference: toggling the section
@@ -395,10 +441,21 @@ export default function GenerationForm() {
           // image and fights a localized edit), but stays user-overridable.
           upscale: params.upscale ?? (isMaskMode ? false : true),
           ...(faceDetailerAvailable !== true ? { detailer: false } : {}),
+          // Drop swap stages whose node pack isn't loaded, rather than letting
+          // ComfyUI reject the prompt with a bare "Generation failed". These are
+          // separate on purpose: losing the pixel-boost node must still leave a
+          // working ReActor swap, not silently cancel the swap as well.
+          ...(faceSwapAvailable !== true ? { faceSwap: false } : {}),
+          ...(pixelBoostAvailable !== true ? { faceSwapPixelBoost: false } : {}),
           // SDXL family: decode through the fp16-fix VAE when installed (fixes
           // washed-out colors). Gated on availability so it never references a
           // VAE that isn't there.
           ...(workflow.controlNetKind === 'sdxl-union' && sdxlVaeAvailable ? { sdxlVae: SDXL_FIX_VAE } : {}),
+          // Krea2 family: patch in the two built-in LoRAs, but only the ones
+          // ComfyUI actually reports — an unknown lora_name is rejected with
+          // value_not_in_list, which surfaces as a bare "Generation failed".
+          ...(isKrea2 && krea2Builtins.refusal ? { krea2RefusalLora: KREA2_REFUSAL_LORA } : {}),
+          ...(isKrea2 && krea2Builtins.projector ? { krea2ProjectorLora: KREA2_PROJECTOR_LORA } : {}),
         }
         // Expand wildcards per job so each job in a batch re-rolls independently,
         // and the resolved text (not the template) is what's built + recorded.
@@ -418,7 +475,8 @@ export default function GenerationForm() {
     } finally {
       setIsGenerating(false)
     }
-  }, [params, workflow, workflowId, clientId, addJob, faceDetailerAvailable, sdxlVaeAvailable, wildcardLists])
+  }, [params, workflow, workflowId, clientId, addJob, faceDetailerAvailable, faceSwapAvailable,
+      pixelBoostAvailable, sdxlVaeAvailable, krea2Builtins, wildcardLists])
 
   // Cancel the in-flight generation: stop the batch submit loop, interrupt the
   // running prompt, drop any still-queued prompts, and mark our active jobs
@@ -706,6 +764,12 @@ export default function GenerationForm() {
       {/* Face swap (ReActor) — only for workflows that take a source image */}
       {workflow.supportsInputImage && (
         <FaceSwapInput
+          // Same hydration guard as the detailer: availability is fetched from
+          // ComfyUI client-side, so gating on `restored` keeps the server HTML
+          // and the first client render identical (a `disabled` attribute that
+          // differs across the two is a hydration mismatch).
+          available={restored && faceSwapAvailable === true}
+          pixelBoostAvailable={restored && pixelBoostAvailable === true}
           enabled={params.faceSwap ?? false}
           source={params.faceSwapSource ?? 'upload'}
           value={params.inputImage}
@@ -760,6 +824,67 @@ export default function GenerationForm() {
         )
       })()}
 
+      {/* Tiled VAE decode — low-VRAM remedy for the peak-memory moment of a render.
+          Needs no availability gate: VAEDecodeTiled is a core ComfyUI node, not a
+          custom pack, so unlike the detailer it can never be missing. */}
+      {(() => {
+        const tiled = params.tiledVaeDecode ?? false
+        const tileSize = params.tiledVaeTileSize ?? 512
+        return (
+          <div className="space-y-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={tiled}
+              onClick={() => set('tiledVaeDecode', !tiled)}
+              className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
+                tiled ? 'border-primary/40 bg-primary/10' : 'border-border bg-muted/30 hover:bg-muted/50'
+              }`}
+            >
+              <span
+                className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${
+                  tiled ? 'bg-primary' : 'bg-input'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-sm transition-transform mt-0.5 ${
+                    tiled ? 'translate-x-[1.375rem]' : 'translate-x-0.5'
+                  }`}
+                />
+              </span>
+              <span className="min-w-0 flex items-center gap-2">
+                <LayoutGrid className="h-4 w-4 shrink-0 text-primary" />
+                <span>
+                  <span className="block text-sm font-semibold">Tiled VAE decode</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Cuts peak VRAM on the final decode — try this if generation dies at the last step
+                  </span>
+                </span>
+              </span>
+            </button>
+            {tiled && (
+              <div className="space-y-2 pl-3">
+                <div className="flex gap-1.5">
+                  {([384, 512, 768] as const).map((n) => (
+                    <Button
+                      key={n}
+                      variant={tileSize === n ? 'default' : 'outline'}
+                      className="h-9 flex-1 min-w-0 p-0 text-sm font-semibold"
+                      onClick={() => set('tiledVaeTileSize', n)}
+                    >
+                      {n}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Tile size — smaller saves more VRAM. 384 for ~6 GB cards, 512 for ~8 GB.
+                </p>
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Face detailer toggle — detect-crop-redraw-paste over faces (on by default) */}
       {workflow.supportsDetailer && (() => {
         const detailer = params.detailer ?? true
@@ -809,6 +934,48 @@ export default function GenerationForm() {
               </span>
             </span>
           </button>
+        )
+      })()}
+
+      {/* Krea2 built-ins: the refusal-reduction patch is fixed at strength 1 and
+          has no control; the projector-scale patch is a prompt-adherence knob
+          that works on a different axis than CFG, so it gets a slider. */}
+      {workflow.loraFamily === 'krea2' && (() => {
+        const strength = params.krea2ProjectorStrength ?? KREA2_PROJECTOR_DEFAULT
+        return (
+          <div className="space-y-2">
+            <SectionLabel>Prompt adherence</SectionLabel>
+            {krea2Builtins.projector ? (
+              <div className="space-y-1.5 rounded-xl border border-border bg-muted/30 p-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">Projector scale</span>
+                  <span className="font-mono tabular-nums text-muted-foreground">
+                    {strength === 0 ? 'off' : `${strength.toFixed(3)} · +${Math.round(strength * 100)}×`}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={0.3}
+                  step={0.005}
+                  value={strength}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    set('krea2ProjectorStrength', Number(e.target.value))
+                  }
+                  className="w-full accent-primary"
+                  aria-label="Krea2 projector scale"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Pushes the model to follow the prompt, on a different axis than CFG. 0 turns it off.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Install the Krea2 models on the Models page to unlock the prompt-adherence and
+                refusal-reduction patches.
+              </p>
+            )}
+          </div>
         )
       })()}
 

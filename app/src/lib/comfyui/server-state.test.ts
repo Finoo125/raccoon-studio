@@ -185,3 +185,69 @@ describe('phase state', () => {
     expect(state.getPhase()).toMatchObject({ phase: 'idle', message: null })
   })
 })
+
+describe('matchesComfyUIMain', () => {
+  // stopComfyUI() KILLS whatever the scan returns, so both directions matter:
+  // too loose kills a stranger's ComfyUI, too strict makes Stop a silent no-op.
+  const win = 'C:\\Raccoon Studio\\comfyui\\ComfyUI\\main.py'
+  const posix = '/opt/raccoon/comfyui/ComfyUI/main.py'
+
+  it('matches the real launch line on each platform', () => {
+    expect(state.matchesComfyUIMain(
+      `"C:\\Raccoon Studio\\comfyui\\ComfyUI\\.venv\\Scripts\\python.exe" -s ${win} --listen`, win, 'win32')).toBe(true)
+    expect(state.matchesComfyUIMain(
+      `/opt/raccoon/comfyui/ComfyUI/.venv/bin/python -s ${posix} --listen`, posix, 'linux')).toBe(true)
+  })
+
+  // Windows paths are case-insensitive and mix separators; a shortcut or an
+  // .env.local entry can spell the same install differently. Comparing raw
+  // makes Stop silently do nothing.
+  it('ignores case and separator style on Windows', () => {
+    expect(state.matchesComfyUIMain('python.exe -s c:/raccoon studio/comfyui/comfyui/MAIN.PY', win, 'win32')).toBe(true)
+  })
+
+  // ...but POSIX paths ARE case-sensitive, so folding there would be wrong.
+  it('stays exact on POSIX', () => {
+    expect(state.matchesComfyUIMain(`python -s ${posix.toUpperCase()}`, posix, 'linux')).toBe(false)
+  })
+
+  it('does not match another install on the same box', () => {
+    expect(state.matchesComfyUIMain('python.exe -s D:\\OtherComfy\\ComfyUI\\main.py', win, 'win32')).toBe(false)
+    expect(state.matchesComfyUIMain('python -s /home/bob/ComfyUI/main.py', posix, 'linux')).toBe(false)
+  })
+
+  it('is false for empty inputs rather than matching everything', () => {
+    expect(state.matchesComfyUIMain('', win, 'win32')).toBe(false)
+    expect(state.matchesComfyUIMain('python -s anything', '', 'win32')).toBe(false)
+  })
+})
+
+describe('comfyUIServerPids', () => {
+  it('finds nothing when the install path is unknown', () => {
+    // Must not fall back to a broad scan: that is what killed unrelated ComfyUIs.
+    const dir = process.env.COMFYUI_DIR, out = process.env.COMFYUI_OUTPUT_DIR, mod = process.env.COMFYUI_MODELS_DIR
+    delete process.env.COMFYUI_DIR; delete process.env.COMFYUI_OUTPUT_DIR; delete process.env.COMFYUI_MODELS_DIR
+    try {
+      expect(state.comfyUIMainPath()).toBeNull()
+      expect(state.comfyUIServerPids()).toEqual([])
+    } finally {
+      if (dir) process.env.COMFYUI_DIR = dir
+      if (out) process.env.COMFYUI_OUTPUT_DIR = out
+      if (mod) process.env.COMFYUI_MODELS_DIR = mod
+    }
+  })
+
+  it('derives main.py from the install dir', () => {
+    const dir = process.env.COMFYUI_DIR
+    process.env.COMFYUI_DIR = path.join(os.tmpdir(), 'fake-comfy')
+    try {
+      expect(state.comfyUIMainPath()).toBe(path.join(os.tmpdir(), 'fake-comfy', 'main.py'))
+    } finally {
+      if (dir) process.env.COMFYUI_DIR = dir; else delete process.env.COMFYUI_DIR
+    }
+  })
+
+  it('does not report this very test process, which holds no ComfyUI', () => {
+    expect(state.comfyUIServerPids()).toEqual([])
+  })
+})

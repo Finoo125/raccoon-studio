@@ -13,7 +13,10 @@ describe('ControlNet/IP-Adapter wiring per family', () => {
   it('controlNetKind partitions the families', () => {
     expect(sdxlFamily.map((w) => w.id).sort()).toEqual(['illustrious', 'pony', 'sdxl'])
     expect(zimage.map((w) => w.id).sort()).toEqual(['z-image-turbo'])
-    expect(others.map((w) => w.id).sort()).toEqual(['anima', 'anima-turbo', 'ernie-turbo'])
+    // Krea2 sits here because no Krea2 ControlNet model has been published.
+    expect(others.map((w) => w.id).sort()).toEqual([
+      'anima', 'anima-turbo', 'ernie-turbo', 'krea2-raw', 'krea2-turbo',
+    ])
   })
 
   for (const wf of sdxlFamily) {

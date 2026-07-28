@@ -3,6 +3,7 @@ import anima from '../../../workflows/image_anima_preview.json'
 import ernie from '../../../workflows/image_ernie_image_turbo.json'
 import sdxl from '../../../workflows/image_sdxl.json'
 import zImage from '../../../workflows/image_z_image_turbo.json'
+import krea2 from '../../../workflows/image_krea2.json'
 
 /**
  * One plain-text file a user can attach in Discord when something breaks.
@@ -72,13 +73,32 @@ const HELPER_NODES = [
 type Graph = Record<string, { class_type?: string }>
 
 /**
+ * Every shipped template, keyed by filename.
+ *
+ * Keyed rather than a bare list so a test can compare it against what is
+ * actually on disk. Krea2 shipped without being added here and went unchecked
+ * for a release; nothing caught it, because an unscanned family is silent —
+ * and checking the *union of class names* does not catch it either, since a
+ * family built from core nodes contributes nothing the others lack. Only
+ * comparing filenames finds it.
+ */
+export const SCANNED_TEMPLATES: Record<string, unknown> = {
+  'LTX23.json': ltx23,
+  'image_anima_preview.json': anima,
+  'image_ernie_image_turbo.json': ernie,
+  'image_sdxl.json': sdxl,
+  'image_z_image_turbo.json': zImage,
+  'image_krea2.json': krea2,
+}
+
+/**
  * Every node class the shipped workflows submit. A class missing from ComfyUI's
  * `/object_info` is the `missing_node_type` error the user will hit, named
  * before they hit it.
  */
 export function requiredNodeClasses(): string[] {
   const found = new Set<string>(HELPER_NODES)
-  for (const graph of [ltx23, anima, ernie, sdxl, zImage] as unknown as Graph[]) {
+  for (const graph of Object.values(SCANNED_TEMPLATES) as Graph[]) {
     for (const node of Object.values(graph)) {
       if (node?.class_type) found.add(node.class_type)
     }

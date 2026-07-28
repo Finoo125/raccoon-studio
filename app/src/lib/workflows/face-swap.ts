@@ -20,6 +20,23 @@ export interface FaceSwapRefs {
 }
 
 /**
+ * The two node classes the form probes via `/object_info` to decide whether the
+ * Face swap and Pixel boost controls are usable at all.
+ *
+ * They live here, next to the code that emits them, because a probe for a class
+ * the builder no longer produces would report a working feature and then fail at
+ * generate time with a bare "Generation failed" — which is exactly how a broken
+ * `RaccoonSwapNodes` import cost a user their face swap without any visible
+ * error (field-reported 2026-07-27). `face-swap.test.ts` asserts the builder
+ * really emits both, so the probe can't drift from reality.
+ *
+ * They are independent: ReActor is an upstream pack, RaccoonSwapNodes is ours
+ * and vendored, so either can be present without the other.
+ */
+export const FACE_SWAP_NODE = 'ReActorFaceSwap'
+export const PIXEL_BOOST_NODE = 'RaccoonPixelBoostSwap'
+
+/**
  * Inserts a FaceFusion-grade ReActor face-swap chain into wf, wrapping whatever
  * currently feeds SaveImage so the swap runs LAST (latent resamples upstream
  * would otherwise erode the swapped identity).
@@ -73,7 +90,7 @@ export function appendFaceSwap(wf: ComfyUIPrompt, refs: FaceSwapRefs): void {
     // RaccoonPixelBoostSwap node, then a light GPEN pass instead of the heavy
     // in-swap restore — the swap itself now carries the detail.
     wf['swap:swap'] = {
-      class_type: 'RaccoonPixelBoostSwap',
+      class_type: PIXEL_BOOST_NODE,
       inputs: {
         image: preSwap,
         swap_model: model,
@@ -114,7 +131,7 @@ export function appendFaceSwap(wf: ComfyUIPrompt, refs: FaceSwapRefs): void {
   }
 
   wf['swap:reactor'] = {
-    class_type: 'ReActorFaceSwap',
+    class_type: FACE_SWAP_NODE,
     inputs: {
       enabled: true,
       swap_model: model,

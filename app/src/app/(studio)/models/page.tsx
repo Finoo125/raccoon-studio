@@ -14,6 +14,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { PATREON_PATTERNS, isPatreonModel, patreonSubfolder, matchesPatreonPreset } from '@/lib/models/patreon'
 import { LTX23_ASSETS, ltxAssetInstalled, type Ltx23Asset } from '@/lib/models/ltx23-assets'
 import { comboOptions } from '@/lib/models/installed'
+import { KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA } from '@/lib/workflows/krea2'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,6 +80,46 @@ const ANIMA_SHARED_FILES: ModelFile[] = [
   },
 ]
 
+// Krea2 Turbo and RAW run on the same Qwen3-VL text encoder, VAE and pair of
+// built-in LoRAs, so those four files appear in both presets — the download
+// de-dupes on disk, so whichever preset is grabbed second only fetches its
+// 13 GB checkpoint. The VAE de-dupes with Anima's copy of the same file too.
+// Both LoRA filenames come from lib/workflows/krea2.ts: the builder asks ComfyUI
+// for exactly these names, so renaming one here is a silent generation failure.
+const KREA2_SHARED_FILES: ModelFile[] = [
+  {
+    name: 'qwen3vl_4b_fp8_scaled.safetensors',
+    path: 'text_encoders',
+    url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors',
+    sizeMb: 5000,
+  },
+  {
+    name: 'qwen_image_vae.safetensors',
+    path: 'vae',
+    url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors',
+    sizeMb: 242,
+  },
+  {
+    // TextFusion refusal-reduction patch, applied at strength 1. Hosted on a
+    // third-party mirror because the canonical Civitai listing (model 2775340)
+    // requires an API token; verified public and unauthenticated 2026-07-27.
+    name: KREA2_REFUSAL_LORA,
+    path: 'loras',
+    url: 'https://huggingface.co/Kutches/Kr3a/resolve/main/Krea2_TextFusion_Refusal_Reduction.safetensors',
+    sizeMb: 27,
+  },
+  {
+    // Projector-scale patch (the prompt-adherence slider in Generate). Upstream
+    // ships it under the generic name `pytorch_lora_weights.safetensors`, which
+    // is meaningless in a shared loras/ folder, so it is renamed on the way in.
+    // All of 268 bytes — two rank-1 tensors on the text-fusion projector.
+    name: KREA2_PROJECTOR_LORA,
+    path: 'loras',
+    url: 'https://huggingface.co/Beinsezii/Krea-2-Turbo-Projector-Scale-LoRA-Diffusers/resolve/main/pytorch_lora_weights.safetensors',
+    sizeMb: 1,
+  },
+]
+
 const PRESETS: PresetDefinition[] = [
   {
     id: 'anima',
@@ -137,6 +178,34 @@ const PRESETS: PresetDefinition[] = [
         url: 'https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/vae/flux2-vae.safetensors',
         sizeMb: 335,
       },
+    ],
+  },
+  {
+    id: 'krea2-turbo',
+    name: 'Krea2 Turbo',
+    description: 'Fast 8-step Krea2 — the everyday model',
+    files: [
+      {
+        name: 'krea2_turbo_fp8_scaled.safetensors',
+        path: 'diffusion_models',
+        url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_fp8_scaled.safetensors',
+        sizeMb: 12533,
+      },
+      ...KREA2_SHARED_FILES,
+    ],
+  },
+  {
+    id: 'krea2-raw',
+    name: 'Krea2 RAW',
+    description: 'Full 52-step Krea2 base — slower, highest fidelity',
+    files: [
+      {
+        name: 'krea2_raw_fp8_scaled.safetensors',
+        path: 'diffusion_models',
+        url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_raw_fp8_scaled.safetensors',
+        sizeMb: 12533,
+      },
+      ...KREA2_SHARED_FILES,
     ],
   },
   {
@@ -297,6 +366,38 @@ const FACESWAP_PRESET: PresetDefinition = {
   id: 'faceswap',
   name: 'Face Swap',
   description: 'Hyperswap swap models + GPEN-BFR-1024 face restorer (requires ReActor)',
+  files: [],
+}
+
+// Krea2's official style LoRAs. Purely optional flavour — none is needed to
+// generate — so they are individual rows rather than part of a preset, and each
+// user grabs only the looks they want. Presence is detected through LoraLoader's
+// own file list, the same node/field probe the detailer and face-swap assets use.
+const KREA2_STYLE_LORAS: DetailerAsset[] = [
+  'darkbrush', 'dotmatrix', 'kidsdrawing', 'neondrip', 'rainywindow',
+  'retroanime', 'softwatercolor', 'sunsetblur', 'vintagetarot',
+].map((style) => ({
+  name: `krea2_${style}.safetensors`,
+  path: 'loras',
+  url: `https://huggingface.co/Comfy-Org/Krea-2/resolve/main/loras/krea2_${style}.safetensors`,
+  sizeMb: 448,
+  nodeClass: 'LoraLoader',
+  fieldName: 'lora_name',
+})).concat([
+  {
+    name: 'krea2_style_reference.safetensors',
+    path: 'loras',
+    url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/loras/krea2_style_reference.safetensors',
+    sizeMb: 436,
+    nodeClass: 'LoraLoader',
+    fieldName: 'lora_name',
+  },
+])
+
+const KREA2_STYLE_PRESET: PresetDefinition = {
+  id: 'krea2-styles',
+  name: 'Krea2 Style LoRAs',
+  description: 'Optional looks for the Krea2 models',
   files: [],
 }
 
@@ -463,6 +564,33 @@ export default function ModelsPage() {
       }
     }
     void checkDetailer()
+  }, [])
+
+  // Krea2 style LoRAs: one LoraLoader probe covers all eleven, rather than the
+  // per-asset probe above repeating the same fetch.
+  useEffect(() => {
+    const checkKrea2Styles = async () => {
+      let names: string[]
+      try {
+        names = comboOptions(
+          await (await fetch('/api/comfyui/object_info/LoraLoader')).json(),
+          'LoraLoader',
+          'lora_name',
+        )
+      } catch {
+        // ComfyUI down — leave every row in its initial state rather than
+        // claiming the files are missing.
+        return
+      }
+      for (const asset of KREA2_STYLE_LORAS) {
+        const installed = names.some((n) => n === asset.name || n.endsWith('/' + asset.name))
+        patchState(`krea2-styles::${asset.name}`, {
+          status: installed ? 'present' : 'missing',
+          progress: 0,
+        })
+      }
+    }
+    void checkKrea2Styles()
   }, [])
 
   // ControlNet / IP-Adapter reference models + face-swap models: same
@@ -671,6 +799,24 @@ export default function ModelsPage() {
           })
         }
         onCancel={(asset) => cancelDownload(`${FACESWAP_PRESET.id}::${asset.name}`)}
+      />
+
+      {/* Krea2 style LoRAs — optional looks, pick any */}
+      <AssetSection
+        assets={KREA2_STYLE_LORAS}
+        keyPrefix="krea2-styles"
+        title={KREA2_STYLE_PRESET.name}
+        description="Optional style LoRAs for the Krea2 models. None is required to generate — grab only the looks you want. They show up in the LoRA picker in Generate once installed."
+        states={states}
+        onDownload={(asset) =>
+          void handleDownload(KREA2_STYLE_PRESET, {
+            name: asset.name,
+            path: asset.path,
+            url: asset.url,
+            sizeMb: asset.sizeMb,
+          })
+        }
+        onCancel={(asset) => cancelDownload(`${KREA2_STYLE_PRESET.id}::${asset.name}`)}
       />
 
       {/* ponytail: local-import section hidden (LocalImportSection below); re-render this when it's wanted back */}

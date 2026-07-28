@@ -104,6 +104,43 @@ amd_adapter_name() {
   printf '%s' "${names[0]}"   # unsupported, but naming it makes the refusal useful
 }
 
+# 0 (true) when a ComfyUI for this install is already running OR still booting.
+#
+# Deliberately NOT a port check. ComfyUI takes ~45 s from launch to binding 8188 —
+# it imports every custom node first — so a second start inside that window finds
+# the port free and proceeds. Both instances then run ComfyUI-Manager's prestartup
+# pip against the SAME venv, and a pack that imports onnxruntime mid-reinstall
+# gets a directory with no __init__.py: Python imports it as a PEP 420 namespace
+# package with no attributes, RaccoonSwapNodes dies on `get_available_providers`,
+# and face swap is silently gone for the whole session. Field-reported 2026-07-27
+# with the port guard already in place — the guard ran at 17:09:09 and the other
+# instance did not bind until 17:09:54, so it saw nothing.
+#
+# The process exists from t=0, which is what closes that 45 s window. Stateless on
+# purpose: a pidfile survives a crash and then refuses a legitimate start, and a
+# recycled PID refuses one for no reason at all. PROC_ROOT is injectable so this
+# can be tested against a fabricated tree without spawning anything.
+# Matches on the venv python AND main.py, and anchors the python at argv[0],
+# rather than searching for main.py alone. Any process that merely MENTIONS the
+# path would otherwise count — an editor, a grep, or a `bash -c` whose script
+# text contains it — and a false positive here is worse than the bug being fixed:
+# it refuses to start ComfyUI at all, with a message blaming a duplicate that
+# does not exist. The real instance is exec'd as `<venv python> -s <main.py> …`,
+# so the anchored form matches it and little else. Mirrors the PowerShell side,
+# which filters to python.exe for the same reason.
+comfyui_running() { # venv-python-path main-py-path
+  local python="$1" main_py="$2" cmdline_file cmdline
+  [ -n "$python" ] && [ -n "$main_py" ] || return 1
+  for cmdline_file in "${PROC_ROOT:-/proc}"/[0-9]*/cmdline; do
+    [ -r "$cmdline_file" ] || continue          # also skips the unmatched glob
+    # cmdline is NUL-separated; tr makes it matchable. A PID can die mid-scan,
+    # hence the guard rather than a bare read.
+    cmdline=$(tr '\0' ' ' <"$cmdline_file" 2>/dev/null) || continue
+    case "$cmdline" in "$python"*"$main_py"*) return 0;; esac
+  done
+  return 1
+}
+
 # start-comfyui.* is generated and gitignored, so `git pull` can never update a
 # user's copy. Bump this whenever the generated launcher's *shape* changes (new
 # flag, new helper call) and the launcher regenerates itself on next start.

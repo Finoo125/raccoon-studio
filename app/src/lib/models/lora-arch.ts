@@ -69,6 +69,13 @@ const KEY_RULES: { family: LoraFamily; prefixes: string[] }[] = [
   { family: 'ltx', prefixes: ['diffusion_model.transformer_blocks.', 'diffusion_model.audio_'] },
   // verified: ZIT_muscgi_1.safetensors (dim 3840)
   { family: 'zimage', prefixes: ['diffusion_model.layers.'] },
+  // verified: Krea2_TextFusion_Refusal_Reduction (ComfyUI keys), the Beinsezii
+  // projector-scale LoRA (diffusers keys) and Comfy-Org's official
+  // krea2_darkbrush style LoRA (diffusers keys, *empty* metadata — the key rule
+  // is the only thing that can classify it). The bare `transformer.` prefix is
+  // deliberately not used: QwenImage and SimpleTuner LoRAs share it. TextFusion
+  // is unique to Krea2.
+  { family: 'krea2', prefixes: ['diffusion_model.txtfusion.', 'transformer.text_fusion.'] },
   // verified: ANIMA_muscgi_2.safetensors (DiT adaLN blocks, dim 2048)
   { family: 'anima', prefixes: ['lora_unet_blocks_'] },
   { family: 'flux', prefixes: ['diffusion_model.double_blocks.', 'diffusion_model.single_blocks.', 'lora_unet_double_blocks_', 'lora_unet_single_blocks_'] },
@@ -92,6 +99,7 @@ const UNET_BLOCK_PREFIXES = [
 const META_RULES: { family: LoraFamily; needles: string[] }[] = [
   { family: 'zimage', needles: ['zimage', 'z-image'] },
   { family: 'anima', needles: ['anima'] },
+  { family: 'krea2', needles: ['krea2', 'krea-2'] },
   { family: 'ernie', needles: ['ernie'] },
   { family: 'ltx', needles: ['ltx'] },
   { family: 'flux', needles: ['flux'] },

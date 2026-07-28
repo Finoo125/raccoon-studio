@@ -13,6 +13,18 @@ type Source = 'upload' | 'model'
 const BOOST_SIZES: PixelBoostSize[] = ['512x512', '768x768', '1024x1024']
 
 interface Props {
+  /**
+   * Whether ComfyUI actually reports the ReActor swap node. False disables the
+   * toggle outright: without the pack the prompt fails validation and the user
+   * only sees a bare "Generation failed".
+   */
+  available: boolean
+  /**
+   * Whether the vendored pixel-boost node is loaded. Tracked apart from
+   * `available` because it ships in a different pack — ours — so it can be the
+   * only missing piece while the plain ReActor swap still works.
+   */
+  pixelBoostAvailable: boolean
   enabled: boolean
   /** Whether the source face is an uploaded photo or a saved face model. */
   source: Source
@@ -49,10 +61,15 @@ const SWAP_MODELS: { id: SwapModel; label: string; hint: string }[] = [
  * the workflow can wire either a `LoadImage` or a `ReActorLoadFaceModel` node.
  */
 export default function FaceSwapInput({
-  enabled, source, value, faceModel, model, pixelBoost, pixelBoostSize,
+  available, pixelBoostAvailable, enabled, source, value, faceModel, model, pixelBoost, pixelBoostSize,
   onToggle, onSourceChange, onChange, onFaceModelChange, onModelChange, onPixelBoostChange, onPixelBoostSizeChange,
 }: Props) {
   const activeModel: SwapModel = model ?? 'inswapper_128.onnx'
+  // A stale `enabled` (restored from a previous session, or from a gallery
+  // deep-link) must not render as on once the pack has gone missing — the
+  // submitted params drop it either way, so the switch has to agree.
+  const active = available && enabled
+  const boostOn = pixelBoostAvailable && (pixelBoost ?? false)
   const inputRef = useRef<HTMLInputElement>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -107,20 +124,25 @@ export default function FaceSwapInput({
       <button
         type="button"
         role="switch"
-        aria-checked={enabled}
-        onClick={() => onToggle(!enabled)}
+        aria-checked={active}
+        disabled={!available}
+        onClick={() => available && onToggle(!enabled)}
         className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
-          enabled ? 'border-primary/40 bg-primary/10' : 'border-border bg-muted/30 hover:bg-muted/50'
+          !available
+            ? 'border-border bg-muted/20 opacity-60 cursor-not-allowed'
+            : active
+            ? 'border-primary/40 bg-primary/10'
+            : 'border-border bg-muted/30 hover:bg-muted/50'
         }`}
       >
         <span
           className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${
-            enabled ? 'bg-primary' : 'bg-input'
+            active ? 'bg-primary' : 'bg-input'
           }`}
         >
           <span
             className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-sm transition-transform mt-0.5 ${
-              enabled ? 'translate-x-[1.375rem]' : 'translate-x-0.5'
+              active ? 'translate-x-[1.375rem]' : 'translate-x-0.5'
             }`}
           />
         </span>
@@ -128,12 +150,16 @@ export default function FaceSwapInput({
           <ScanFace className="h-4 w-4 shrink-0 text-primary" />
           <span>
             <span className="block text-sm font-semibold">Face swap</span>
-            <span className="block text-xs text-muted-foreground">Swap the generated face onto a reference photo or face model</span>
+            <span className="block text-xs text-muted-foreground">
+              {available
+                ? 'Swap the generated face onto a reference photo or face model'
+                : 'Requires the ReActor node — check the ComfyUI log for an import error'}
+            </span>
           </span>
         </span>
       </button>
 
-      {enabled && (
+      {active && (
         <>
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -283,18 +309,23 @@ export default function FaceSwapInput({
         </div>
 
         {/* Pixel boost: swap at 512-1024px effective resolution (FaceFusion technique). */}
-        <div className="rounded-xl border border-border bg-muted/20 p-3 space-y-2">
-          <label className="flex items-center gap-2 text-sm">
+        <div className={`rounded-xl border border-border bg-muted/20 p-3 space-y-2 ${pixelBoostAvailable ? '' : 'opacity-60'}`}>
+          <label className={`flex items-center gap-2 text-sm ${pixelBoostAvailable ? '' : 'cursor-not-allowed'}`}>
             <input
               type="checkbox"
-              checked={pixelBoost ?? false}
+              checked={boostOn}
+              disabled={!pixelBoostAvailable}
               onChange={(e) => onPixelBoostChange(e.target.checked)}
-              className="h-4 w-4 accent-primary"
+              className="h-4 w-4 accent-primary disabled:cursor-not-allowed"
             />
             <span className="font-medium">Pixel boost</span>
-            <span className="text-xs text-muted-foreground">sharper swap detail (experimental)</span>
+            <span className="text-xs text-muted-foreground">
+              {pixelBoostAvailable
+                ? 'sharper swap detail (experimental)'
+                : 'unavailable — RaccoonSwapNodes did not load'}
+            </span>
           </label>
-          {pixelBoost && (
+          {boostOn && (
             <>
             <div className="grid grid-cols-3 gap-2">
               {BOOST_SIZES.map((size) => {

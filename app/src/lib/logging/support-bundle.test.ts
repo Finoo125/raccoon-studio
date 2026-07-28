@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'fs'
+import path from 'path'
 import {
   buildSupportBundle,
   formatServerLog,
   redactSecrets,
   requiredNodeClasses,
+  SCANNED_TEMPLATES,
   stripAnsi,
   tailLines,
   type BundleInput,
@@ -21,6 +24,20 @@ const input = (over: Partial<BundleInput> = {}): BundleInput => ({
   },
   logs: { 'comfyui.err': 'all good' },
   ...over,
+})
+
+describe('every shipped template is actually scanned', () => {
+  // Krea2 shipped without being added to the scan list and went unchecked for a
+  // release. Comparing the union of class NAMES does not catch that — a family
+  // built from core nodes contributes nothing the other templates lack, so the
+  // union is identical either way (verified: that form of the test passed with
+  // Krea2 removed). Comparing filenames against the directory is what catches it.
+  it('scans exactly the workflow JSONs that exist on disk', () => {
+    const dir = path.join(process.cwd(), 'workflows')
+    const onDisk = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
+    expect(onDisk.length).toBeGreaterThan(0)
+    expect(Object.keys(SCANNED_TEMPLATES).sort()).toEqual(onDisk)
+  })
 })
 
 describe('requiredNodeClasses', () => {

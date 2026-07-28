@@ -41,6 +41,43 @@ describe('classifyLoraHeader — tensor-key fingerprints', () => {
     expect(classifyLoraHeader(h(['lora_unet_input_blocks_4_1_transformer_blocks_0_attn1_to_q.lora_down.weight'])))
       .toBe('sdxl')
   })
+
+  it('identifies Krea2 in ComfyUI key format (diffusion_model.txtfusion.*)', () => {
+    // verified: Krea2_TextFusion_Refusal_Reduction.safetensors — 64 rank-64
+    // tensors, all under diffusion_model.txtfusion.
+    expect(classifyLoraHeader(h([
+      'diffusion_model.txtfusion.layerwise_blocks.0.attn.wq.lora_A.weight',
+      'diffusion_model.txtfusion.refiner_blocks.1.mlp.down.lora_B.weight',
+    ]))).toBe('krea2')
+  })
+
+  it('identifies Krea2 in diffusers key format (transformer.text_fusion.*)', () => {
+    // verified: the Beinsezii projector-scale LoRA — a 268-byte, two-tensor file.
+    expect(classifyLoraHeader(h([
+      'transformer.text_fusion.projector.lora_A.weight',
+      'transformer.text_fusion.projector.lora_B.weight',
+    ]))).toBe('krea2')
+  })
+
+  it('identifies an official Krea2 style LoRA, which carries no metadata at all', () => {
+    // verified: Comfy-Org/Krea-2 loras/krea2_darkbrush.safetensors — 528 tensors,
+    // empty __metadata__, so the key rule is the only thing that can classify it.
+    expect(classifyLoraHeader({
+      ...h([
+        'transformer.img_in.lora_A.weight',
+        'transformer.final_layer.linear.lora_B.weight',
+        'transformer.text_fusion.layerwise_blocks.0.attn.to_gate.lora_A.weight',
+      ]),
+      __metadata__: {},
+    })).toBe('krea2')
+  })
+
+  it('does not mistake a QwenImage-style transformer LoRA for Krea2', () => {
+    // Bare 'transformer.' is shared with QwenImage/SimpleTuner, which is why the
+    // rule matches 'transformer.text_fusion.' and not the bare prefix.
+    expect(classifyLoraHeader(h(['transformer.transformer_blocks.0.attn.to_q.lora_A.weight'])))
+      .not.toBe('krea2')
+  })
 })
 
 describe('classifyLoraHeader — SDXL vs SD1.5', () => {

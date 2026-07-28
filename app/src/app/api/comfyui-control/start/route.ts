@@ -3,6 +3,7 @@ import {
   appendLog,
   clearLogs,
   clearPid,
+  comfyUIServerPids,
   readPid,
   readAlivePid,
   getStartScriptPath,
@@ -19,6 +20,23 @@ export async function POST() {
   }
   if (readAlivePid() !== null) {
     return NextResponse.json({ error: 'A tracked ComfyUI process is already running' }, { status: 409 })
+  }
+  // Process check, not just the tracked PID: the launcher is how ComfyUI
+  // normally starts, so on an ordinary install there is no tracked PID at all
+  // and the check above waves a second instance straight through. That costs a
+  // ~45s boot that dies on "Port 8188 is already in use" — and worse, the
+  // duplicate's ComfyUI-Manager prestartup pip-installs into the same venv as
+  // the live instance. Catch onnxruntime mid-reinstall and its directory has no
+  // __init__.py, so Python imports it as a PEP 420 namespace package with no
+  // attributes; RaccoonSwapNodes then dies on `get_available_providers` and face
+  // swap is silently gone for the whole session. Same guard the update route's
+  // restart already uses. (Field-reported 2026-07-27.)
+  const running = comfyUIServerPids()
+  if (running.length > 0) {
+    return NextResponse.json(
+      { error: `ComfyUI is already running (PID ${running.join(', ')})` },
+      { status: 409 },
+    )
   }
 
   clearLogs()
