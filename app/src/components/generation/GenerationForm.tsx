@@ -938,19 +938,21 @@ export default function GenerationForm() {
       })()}
 
       {/* Krea2 built-ins: the refusal-reduction patch is fixed at strength 1 and
-          has no control; the projector-scale patch is a prompt-adherence knob
-          that works on a different axis than CFG, so it gets a slider. */}
+          has no control; the projector-scale patch gets a slider. Mechanically
+          it is a prompt-adherence knob on a different axis than CFG — it is
+          surfaced as "NSFW filter" because pushing the model back onto the
+          literal prompt is what gets a censored or dodged render to come out. */}
       {workflow.loraFamily === 'krea2' && (() => {
         const strength = params.krea2ProjectorStrength ?? KREA2_PROJECTOR_DEFAULT
         return (
           <div className="space-y-2">
-            <SectionLabel>Prompt adherence</SectionLabel>
+            <SectionLabel>NSFW filter</SectionLabel>
             {krea2Builtins.projector ? (
               <div className="space-y-1.5 rounded-xl border border-border bg-muted/30 p-3">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">Projector scale</span>
+                  <span className="font-medium">Filter bypass</span>
                   <span className="font-mono tabular-nums text-muted-foreground">
-                    {strength === 0 ? 'off' : `${strength.toFixed(3)} · +${Math.round(strength * 100)}×`}
+                    {strength === 0 ? 'off' : strength.toFixed(3)}
                   </span>
                 </div>
                 <input
@@ -963,15 +965,17 @@ export default function GenerationForm() {
                     set('krea2ProjectorStrength', Number(e.target.value))
                   }
                   className="w-full accent-primary"
-                  aria-label="Krea2 projector scale"
+                  aria-label="Krea2 NSFW filter bypass"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Pushes the model to follow the prompt, on a different axis than CFG. 0 turns it off.
+                  Off by default. If a render comes out censored, covered up or simply not what you
+                  asked for, raise this a little — a nudge is usually enough. Push it too far and the
+                  image starts to overcook.
                 </p>
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Install the Krea2 models on the Models page to unlock the prompt-adherence and
+                Install the Krea2 models on the Models page to unlock the NSFW filter and
                 refusal-reduction patches.
               </p>
             )}

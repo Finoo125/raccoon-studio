@@ -60,12 +60,17 @@ if ($Listening) {
 
 Write-Host '[Raccoon Studio] Starting ComfyUI on 127.0.0.1:8188...' -ForegroundColor Cyan
 
-# All hardware-derived tuning in ONE call: how much VRAM to hold back for the OS,
-# whether to let ComfyUI lock host RAM into non-pageable pages (on <=32 GB it pins
-# memory the OS can never reclaim and the whole machine hits ~100%), and how big a
-# live preview this card can afford to decode every sampling step. See
-# reserve-vram.py for the tiers. Overrides: RACCOON_RESERVE_VRAM (0 = ComfyUI's
-# own default), RACCOON_PINNED_MEMORY (1 = keep pinning, 0 = disable).
+# All hardware-derived tuning in ONE call: whether to let ComfyUI lock host RAM
+# into non-pageable pages (on <=32 GB it pins memory the OS can never reclaim and
+# the whole machine hits ~100%), and how big a live preview this card can afford
+# to decode every sampling step. See reserve-vram.py for the tiers. Overrides:
+# RACCOON_RESERVE_VRAM (0 = ComfyUI's own default), RACCOON_PINNED_MEMORY (1 =
+# keep pinning, 0 = disable).
+#
+# NOT in that list any more: --reserve-vram. Its meaning depends on which loader
+# is running, and the tier was measured against the other one - reserve-vram.py's
+# DYNAMIC_VRAM_DISABLED has the whole story. It comes back automatically if the
+# flag below ever goes away.
 #
 # One call, not two, because each one imports torch to probe the card - a measured
 # ~1.3 s of pure duplicate work on every start. One flag per line, so a value that
@@ -76,6 +81,20 @@ if ($TuneArgs.Count) {
     Write-Host "[Raccoon Studio] Hardware tuning: $($TuneArgs -join ' ')" -ForegroundColor DarkGray
 }
 
+# The correctness flag, and the one way to turn it off. Decided HERE and not in
+# reserve-vram.py on purpose: that call is wrapped in 2>$null, so a torch import
+# failure would silently drop the flag and bring the corruption back. Reading a
+# plain environment variable cannot fail that way, and anything other than
+# exactly "1" leaves the flag on. reserve-vram.py reads the same variable, so the
+# reserve tier and this flag can never disagree.
+$SafetyArgs = @()
+if ($env:RACCOON_DYNAMIC_VRAM -and $env:RACCOON_DYNAMIC_VRAM.Trim() -eq '0') {
+    $SafetyArgs = @('--disable-dynamic-vram')
+    Write-Host '[Raccoon Studio] RACCOON_DYNAMIC_VRAM=0 - DynamicVRAM OFF. Krea2 renders correctly; video will run host RAM to ~100%.' -ForegroundColor DarkGray
+} else {
+    Write-Host '[Raccoon Studio] DynamicVRAM ON (video-optimised). Krea2 can render corrupted - set RACCOON_DYNAMIC_VRAM=0 if you need it.' -ForegroundColor Yellow
+}
+
 Set-Location (Split-Path $MainScript)
 # --enable-cors-header lets the studio UI (different port) reach ComfyUI; without
 # it ComfyUI 403s the browser WebSocket handshake.
@@ -83,14 +102,34 @@ Set-Location (Split-Path $MainScript)
 # studio canvas shows the image building up live (taesd if present, else latent2rgb).
 # --preview-size is NOT hardcoded: that per-step decode is real GPU work, so the
 # size comes from the card's VRAM tier above (768 on 16 GB+, ComfyUI's 512 below).
-# --disable-dynamic-vram is a CORRECTNESS fix, not a tuning knob. ComfyUI's
-# DynamicVRAM weight streaming corrupts an fp8_scaled model already resident in
-# VRAM as soon as a job changes the model-patch topology (adding/removing a LoRA
-# or the hires pass). The corruption persists until the model is reloaded, so
-# every later job renders saturated tiled garbage too - which reads as a broken
-# VAE or a bad checkpoint rather than a backend bug. Reproduced deterministically
-# on Krea2 fp8_scaled 2026-07-27: plain run clean, same graph + LoRA stack
-# destroyed, next plain run destroyed. bf16 models (Z-Image) are unaffected.
-# Without it ComfyUI uses estimate-based loading, the path it shipped with for
-# years; on a 32 GB card the model simply stays fully resident (no speed cost).
-& $Python -s $MainScript --listen 127.0.0.1 --port 8188 --enable-cors-header "*" --preview-method auto --disable-dynamic-vram @TuneArgs
+# DynamicVRAM is ON by default (no --disable-dynamic-vram above) because video is
+# the priority here. One process gets one memory policy and the two models we
+# care about want opposite ones, so this is a product decision, not a tuning one.
+#
+# What it costs: ComfyUI's DynamicVRAM corrupts an fp8_scaled model resident in
+# VRAM, rendering saturated tiled garbage that reads as a broken VAE or a bad
+# checkpoint rather than a backend bug. Krea2 is the only fp8_scaled model we
+# ship; bf16 models (Z-Image, Anima) and fp16 (SDXL) cannot hit it at all.
+# Verified 2026-07-28 by replaying the exact graph out of a corrupted PNG's own
+# embedded metadata: 5 of 8 renders corrupted with DynamicVRAM on, 0 of ~20 with
+# it off. Two things that first look true are NOT:
+#   - It is not the LoRA/hires topology change. That was the 07-27 guess; the
+#     07-28 replay corrupted the FIRST render after POST /free, no transition
+#     involved. So no amount of unloading between jobs can dodge it.
+#   - It is not deterministic. Same graph, same seed, clean at 47.7 saturation
+#     one run and garbage at 107.0 the next. Any A/B here needs several runs.
+# Reproducing it also needs real VRAM pressure - the ONNX face-swap stack
+# resident alongside. Minimal graphs never corrupted, which is why the first
+# attempt at a repro came up empty.
+#
+# What it buys, measured on one LTX 2.3 job (RTX 5090 / 64 GB), host RAM at the
+# steady state during sampling: 49-51% with DynamicVRAM on, 100% with it off. The
+# legacy ModelPatcher keeps a full CPU-side copy of every model it loads, and
+# nothing else reaches that - --disable-pinned-memory was tested first and
+# changed nothing, and there was never any weight streaming to fix (no log on
+# that box has ever contained "loaded partially").
+#
+# RACCOON_DYNAMIC_VRAM=0 restores the safe mode for anyone who needs Krea2 more
+# than video. The real way out is a bf16 Krea2 build, which dodges the corruption
+# without costing video anything - untested as of this writing.
+& $Python -s $MainScript --listen 127.0.0.1 --port 8188 --enable-cors-header "*" --preview-method auto @SafetyArgs @TuneArgs

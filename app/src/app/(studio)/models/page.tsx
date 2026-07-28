@@ -109,7 +109,7 @@ const KREA2_SHARED_FILES: ModelFile[] = [
     sizeMb: 27,
   },
   {
-    // Projector-scale patch (the prompt-adherence slider in Generate). Upstream
+    // Projector-scale patch (the "NSFW filter" slider in Generate). Upstream
     // ships it under the generic name `pytorch_lora_weights.safetensors`, which
     // is meaningless in a shared loras/ folder, so it is renamed on the way in.
     // All of 268 bytes — two rank-1 tensors on the text-fusion projector.

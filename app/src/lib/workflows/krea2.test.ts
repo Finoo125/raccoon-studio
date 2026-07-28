@@ -211,9 +211,11 @@ describe('krea2 built-in LoRAs', () => {
     expect(wf['krea2:builtin:1'].inputs.strength_model).toBe(0.2)
   })
 
-  it('falls back to the 0.05 default when no strength was passed', () => {
+  it('leaves the projector off when no strength was passed', () => {
+    // Default is 0 — the knob is opt-in, so an unset slider must not silently
+    // patch the model.
     const wf = krea2TurboWorkflow.buildPrompt({ ...withBoth, krea2ProjectorStrength: undefined })
-    expect(wf['krea2:builtin:1'].inputs.strength_model).toBe(0.05)
+    expect(wf['krea2:builtin:1']).toBeUndefined()
   })
 
   it('omits the projector at strength 0, keeping the refusal LoRA', () => {

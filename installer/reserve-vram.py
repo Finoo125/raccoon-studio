@@ -41,6 +41,60 @@ def reserve_gb(total_gib):
     return None
 
 
+# ── the tier above applies only under DynamicVRAM, and this is why ───────────
+# --reserve-vram means two different things depending on which loader is running,
+# and the tier above was measured against one of them. So it follows
+# dynamic_vram_disabled() rather than being emitted unconditionally:
+#
+#   DynamicVRAM ON  -> aimdo's headroom hint (main.py:59). This is what the 8 GB
+#                      row was measured against on 2026-07-18.
+#   DynamicVRAM OFF -> EXTRA_RESERVED_VRAM (model_management.py:795), charged
+#                      TWICE in load_models_gpu (lines 854-858) and subtracted
+#                      straight from the weights allowed to stay resident.
+#
+# Double-charging the reserve against the legacy loader is real, but do NOT infer
+# a speed story from it that nobody has measured. It was first written up here as
+# "LTX streams ~9 GiB per sampling step", derived from the lowvram_model_memory
+# formula rather than observed - and a later sweep of every log on the box found
+# no "loaded partially" line, ever, before or after. LTX 2.3 fully loads under
+# both settings on a 32 GB card. What actually differs between the two loaders is
+# host RAM, and that is in dynamic_vram_disabled() below, where it was measured.
+#
+# The tier still tracks the loader, because emitting a number that means the
+# wrong thing is wrong regardless of how much it costs.
+#
+# An explicit RACCOON_RESERVE_VRAM still wins either way: somebody holding VRAM
+# back for another application on the box means it, and ComfyUI's own ~700 MB
+# default (model_management.py:789-793) covers everyone who says nothing.
+def dynamic_vram_disabled():
+    """True while the launcher is passing --disable-dynamic-vram. NOT the default.
+
+    DynamicVRAM is ON by default as of 2026-07-28: video is the priority, and the
+    two cannot both be served by one process. RACCOON_DYNAMIC_VRAM=0 opts into
+    the safe mode. The launchers read the SAME variable, so this decision and the
+    reserve tier below cannot disagree.
+
+    What ON buys, measured on one LTX 2.3 job (RTX 5090 / 64 GB box), host RAM at
+    the steady state during sampling:
+
+        DynamicVRAM on   49-51% (~31 GiB used, ~30 GiB free)
+        DynamicVRAM off  100%   (61.5 GiB used, 0 GiB free)
+
+    The legacy ModelPatcher keeps a full CPU-side copy of every model it loads,
+    and nothing else reaches that: --disable-pinned-memory was tested first and
+    changed nothing, and there was never any weight streaming to fix either - no
+    log on the box, before or after, has ever contained "loaded partially".
+
+    What ON costs, and it is not small: Krea2 (our only fp8_scaled model) renders
+    saturated tiled rainbow garbage, intermittently - 5 of 8 in the 2026-07-28
+    A/B, and it can hit the first render after a fresh load. Anyone who needs
+    Krea2 more than video wants RACCOON_DYNAMIC_VRAM=0. A bf16 Krea2 build would
+    dodge the corruption entirely (bf16 weights are unaffected) and is the way
+    out that does not cost video anything.
+    """
+    return os.environ.get('RACCOON_DYNAMIC_VRAM', '').strip() == '0'
+
+
 # ── system RAM tier ───────────────────────────────────────────────────────────
 # ComfyUI locks host memory into non-pageable pages so weights can DMA to the
 # card, capped at 40% of system RAM on Windows and 90% on Linux, for NVIDIA and
@@ -171,6 +225,32 @@ def resolve_reserve_gb(total_gib):
     return None if total_gib is None else reserve_gb(total_gib)
 
 
+def tuning_flags(ram_gib, vram_gib, keep_pinned=None):
+    """Every hardware-derived launch flag for a box with this RAM and VRAM.
+
+    `keep_pinned` is None to use the RAM tier, or True/False for an explicit
+    RACCOON_PINNED_MEMORY. Split out of tuning_main so the self-check can assert
+    the assembled command line without needing a GPU to probe.
+    """
+    if keep_pinned is None:
+        flags = pinned_memory_flags(ram_gib)
+    else:
+        flags = [] if keep_pinned else ['--disable-pinned-memory']
+
+    # Passing None as the VRAM total is what suppresses the reserve tier - see
+    # dynamic_vram_disabled(). resolve_reserve_gb still returns an explicit
+    # override, so the escape hatch survives the suppression. When DynamicVRAM is
+    # back on, the tier applies again automatically - that is the mode it was
+    # measured in.
+    gb = resolve_reserve_gb(None if dynamic_vram_disabled() else vram_gib)
+    if gb:
+        flags += ['--reserve-vram', '%g' % gb]
+
+    # The preview tier reads the REAL total either way: it sizes a per-step TAESD
+    # decode and has nothing to do with which loader is in use.
+    return flags + preview_flags(vram_gib)
+
+
 def tuning_main():
     """--tuning-flags: every hardware-derived launch flag, ONE PER LINE.
 
@@ -185,10 +265,8 @@ def tuning_main():
         sys.stderr.write(
             'RACCOON_PINNED_MEMORY=%r is not a number - using the RAM tier instead\n' % raw)
         keep = None
-    if keep is None:
-        flags = pinned_memory_flags(total_ram_gib())
-    else:
-        flags = [] if keep else ['--disable-pinned-memory']
+    # Only probe RAM when the tier is actually going to decide it.
+    ram = total_ram_gib() if keep is None else None
 
     # One VRAM probe feeds both the reserve tier and the preview tier. Best
     # effort: a driver problem here must not cost the box its RAM tuning, which
@@ -198,10 +276,7 @@ def tuning_main():
         total = total_vram_gib()
     except Exception as exc:
         sys.stderr.write('reserve-vram: could not probe VRAM (%s)\n' % exc)
-    gb = resolve_reserve_gb(total)
-    if gb:
-        flags += ['--reserve-vram', '%g' % gb]
-    flags += preview_flags(total)
+    flags = tuning_flags(ram, total, keep)
 
     # Force LF. On Windows, text-mode stdout translates \n to \r\n, and the shell
     # reader then hands ComfyUI "--reserve-vram\r" — an unrecognised argument that
@@ -214,13 +289,19 @@ def tuning_main():
 
 def main():
     """Bare mode: just the reserve GB. Kept for the installers' summary line —
-    the launcher gets this via --tuning-flags instead, in one process."""
+    the launcher gets this via --tuning-flags instead, in one process.
+
+    Suppressed by DYNAMIC_VRAM_DISABLED exactly as --tuning-flags is: this feeds
+    the AMD diagnostics dump, and a report claiming "reserve-vram: 8 GB" on a box
+    that reserves nothing would send the next person reading it down the wrong
+    hole entirely.
+    """
     total = None
     try:
         total = total_vram_gib()
     except Exception as exc:  # no torch, no driver, CPU-only box
         sys.stderr.write('reserve-vram: could not probe VRAM (%s)\n' % exc)
-    gb = resolve_reserve_gb(total)
+    gb = resolve_reserve_gb(None if dynamic_vram_disabled() else total)
     if gb:
         # No trailing newline: callers interpolate this straight into an arg list.
         sys.stdout.write('%g' % gb)
@@ -298,6 +379,50 @@ def _self_check():
             pass
         else:
             raise AssertionError('parse_pin_override(%r) should raise ValueError' % bad)
+    # The assembled command line. The reserve tier must NOT reach it while the
+    # legacy loader is in use: there it is charged twice and it cost LTX 2.3 ~9
+    # GiB of resident weights on a 32 GB card. Everything else must survive that
+    # suppression - the point is to drop one flag, not to stop tuning.
+    _saved = os.environ.pop('RACCOON_RESERVE_VRAM', None)
+    _saved_dyn = os.environ.pop('RACCOON_DYNAMIC_VRAM', None)
+    try:
+        # Default: DynamicVRAM on, so the measured reserve tier applies with it.
+        # The two must move together or a video session gets the untuned half.
+        assert not dynamic_vram_disabled(), 'unset means DynamicVRAM is ON'
+        assert tuning_flags(63.7, 31.8) == ['--reserve-vram', '8', '--preview-size', '768'], \
+            'the measured 8 GB tier applies under DynamicVRAM'
+        assert tuning_flags(31.7, 15.7) == \
+            ['--disable-pinned-memory', '--reserve-vram', '1', '--preview-size', '768'], \
+            'a 16 GB card on a 32 GB box gets all three tiers'
+        assert tuning_flags(63.7, 11.6) == [], '12 GB card: no reserve, ComfyUI preview default'
+        # Safe mode: the reserve tier was measured against aimdo's headroom, so it
+        # must NOT reach the legacy loader, where it is charged twice.
+        os.environ['RACCOON_DYNAMIC_VRAM'] = '0'
+        assert dynamic_vram_disabled()
+        assert tuning_flags(63.7, 31.8) == ['--preview-size', '768'], \
+            'no reserve while the legacy loader is in use'
+        assert tuning_flags(31.7, 31.8) == ['--disable-pinned-memory', '--preview-size', '768'], \
+            'the RAM tier still fires, and the preview tier with it'
+        # An explicit reserve is a decision, not a tier, so it survives even there.
+        os.environ['RACCOON_RESERVE_VRAM'] = '4'
+        assert tuning_flags(63.7, 31.8) == ['--reserve-vram', '4', '--preview-size', '768'], \
+            'an explicit RACCOON_RESERVE_VRAM still wins'
+        os.environ.pop('RACCOON_RESERVE_VRAM', None)
+        # Only an exact "0" selects safe mode. Anything else falls back to the
+        # default rather than guessing - "false"/"no" must not read as "0", or a
+        # user who meant to keep DynamicVRAM would silently lose their video fix.
+        for on in ('1', '', 'false', 'no', 'off', '00', ' '):
+            os.environ['RACCOON_DYNAMIC_VRAM'] = on
+            assert not dynamic_vram_disabled(), 'RACCOON_DYNAMIC_VRAM=%r must not disable' % on
+        os.environ['RACCOON_DYNAMIC_VRAM'] = ' 0 '
+        assert dynamic_vram_disabled(), 'surrounding whitespace is still a zero'
+        assert tuning_flags(63.7, 31.8, keep_pinned=False) == \
+            ['--disable-pinned-memory', '--preview-size', '768'], 'pin override still honoured'
+    finally:
+        for var, val in (('RACCOON_RESERVE_VRAM', _saved), ('RACCOON_DYNAMIC_VRAM', _saved_dyn)):
+            os.environ.pop(var, None)
+            if val is not None:
+                os.environ[var] = val
     print('reserve-vram OK')
 
 

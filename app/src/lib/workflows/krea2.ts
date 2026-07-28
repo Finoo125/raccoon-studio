@@ -38,8 +38,15 @@ export const KREA2_REFUSAL_LORA = 'Krea2_TextFusion_Refusal_Reduction.safetensor
  */
 export const KREA2_PROJECTOR_LORA = 'krea2_projector_scale.safetensors'
 
-/** Projector strength the slider starts at. 0.01 = +1× prompt adherence. */
-export const KREA2_PROJECTOR_DEFAULT = 0.05
+/**
+ * Projector strength the slider starts at. 0.01 = +1× prompt adherence, and 0
+ * means the LoRA is never emitted at all.
+ *
+ * Off by default: it is surfaced as the "NSFW filter" knob, so it only earns its
+ * place when a render actually came out censored — every other job pays nothing
+ * for it, and the stock model stays the baseline people compare against.
+ */
+export const KREA2_PROJECTOR_DEFAULT = 0
 
 /**
  * System prompt for the built-in enhancer, from ComfyUI's official Krea2
