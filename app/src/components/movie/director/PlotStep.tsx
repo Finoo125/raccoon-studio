@@ -169,9 +169,10 @@ export default function PlotStep({
 
           <div className="grid gap-1.5">
             <span className="text-sm font-medium">Resolution</span>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {([
                 { id: 'high', label: 'Full HD' },
+                { id: 'medium', label: '900p' },
                 { id: 'low', label: '720p' },
               ] as const).map((r) => (
                 <button
@@ -191,7 +192,9 @@ export default function PlotStep({
             <span className="text-xs text-muted-foreground">
               {videoResolution === 'low'
                 ? `720p across all ${beatCount} clips — well under half the pixels, much faster.`
-                : `Full HD across all ${beatCount} clips — best quality, slowest.`}
+                : videoResolution === 'medium'
+                  ? `900p across all ${beatCount} clips — a third fewer pixels than Full HD.`
+                  : `Full HD across all ${beatCount} clips — best quality, slowest.`}
             </span>
           </div>
 

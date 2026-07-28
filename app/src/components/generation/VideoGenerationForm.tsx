@@ -25,6 +25,13 @@ import { useFileDrop } from '@/lib/generation/useFileDrop'
 // v2: the RaccoonVideoNodes control set — old saved shapes are ignored.
 const FORM_STORAGE_KEY = 'raccoon-studio:generate-videos-form:v2'
 
+/** Pixel-budget tiers — dims live in `lib/workflows/ltx23.ts` (they vary by orientation). */
+const RESOLUTION_TIERS = [
+  { id: 'high', label: 'Full HD', hint: '~2 MP — full-size render. Slowest setting; wants 24 GB+.' },
+  { id: 'medium', label: '900p', hint: '~1.4 MP — a third fewer pixels than Full HD, most of the detail.' },
+  { id: 'low', label: '720p', hint: '~0.9 MP — less than half the pixels. Much faster, and keeps 16 GB cards out of shared GPU memory.' },
+] as const
+
 /** Enhance settings that also feed the render graph (same key on both shapes). */
 const RENDER_SETTING_KEYS = new Set<keyof EnhanceSettingsValues>([
   'pov', 'povGender', 'music', 'environment', 'scenario', 'camera', 'dialogueTier', 'energy',
@@ -380,31 +387,25 @@ export default function VideoGenerationForm() {
 
       <GroupHeader>Render</GroupHeader>
 
-      {/* Halving the pixel budget is the biggest speed lever there is; it also
-          keeps 16 GB cards on-card. Labelled by resolution, not by VRAM — the
-          speed is why most people reach for it. */}
+      {/* Dropping the pixel budget is the biggest speed lever there is; the low
+          tier also keeps 16 GB cards on-card. Labelled by resolution, not by
+          VRAM — the speed is why most people reach for it. */}
       <div className="space-y-2">
         <SectionLabel>Resolution</SectionLabel>
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            variant={params.vramMode !== 'low' ? 'default' : 'outline'}
-            className="h-9 text-sm"
-            onClick={() => set('vramMode', 'high')}
-          >
-            Full HD — ~2 MP
-          </Button>
-          <Button
-            variant={params.vramMode === 'low' ? 'default' : 'outline'}
-            className="h-9 text-sm"
-            onClick={() => set('vramMode', 'low')}
-          >
-            720p — ~0.9 MP
-          </Button>
+        <div className="grid grid-cols-3 gap-2">
+          {RESOLUTION_TIERS.map((t) => (
+            <Button
+              key={t.id}
+              variant={(params.vramMode ?? 'high') === t.id ? 'default' : 'outline'}
+              className="h-9 text-sm"
+              onClick={() => set('vramMode', t.id)}
+            >
+              {t.label}
+            </Button>
+          ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          {params.vramMode === 'low'
-            ? 'Less than half the pixels — much faster, and keeps 16 GB cards out of shared GPU memory.'
-            : 'Full-size render. Slowest setting; wants 24 GB+.'}
+          {RESOLUTION_TIERS.find((t) => t.id === (params.vramMode ?? 'high'))?.hint}
         </p>
       </div>
 

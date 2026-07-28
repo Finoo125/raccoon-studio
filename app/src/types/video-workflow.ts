@@ -27,8 +27,11 @@ export interface VideoGenerationParams {
   energy?: number
   /** RIFE frame interpolation on the final clip; false splices it out. Default: on (baked). */
   rife?: boolean
-  /** VRAM profile: 'high' (24 GB+, ~2MP render) or 'low' (16 GB, ~1MP render). Default: high. */
-  vramMode?: 'high' | 'low'
+  /**
+   * Pixel-budget profile: 'high' (~2MP, 24 GB+), 'medium' (~1.4MP) or 'low'
+   * (~1MP, fits 16 GB). Default: high.
+   */
+  vramMode?: 'high' | 'medium' | 'low'
   /**
    * Up to 4 user LoRA slots appended to the stack after the built-in DMD row.
    * Empty/undefined slot = unused. One strength per slot (video + audio alike).

@@ -25,19 +25,41 @@ const SAVE_ID = Object.keys(BASE).filter(
   (k) => BASE[k].class_type === 'VHS_VideoCombine' && BASE[k].inputs.save_output === true,
 )[0]
 
+type Tier = NonNullable<VideoGenerationParams['vramMode']>
+
+/** Legacy/unknown stored values render full-size, exactly as they always did. */
+const tierOf = (m?: string): Tier => (m === 'low' || m === 'medium' ? m : 'high')
+
+/** Pixel budget per tier, used for the i2v dims fitted to the source aspect. */
+const BUDGET_MP: Record<Tier, number> = { high: 2, medium: 1.4, low: 1 }
+
 /**
  * t2v framings — the final size, i.e. after the x2 spatial upscaler.
- * w/h are the ~2MP Full-HD targets; lw/lh the ~0.9MP 720p ones.
  *
  * Both sides must be divisible by **64**, not 32: the graph renders the first
  * pass at half this size (LTX23.json node 532, multiplier 0.5) and
  * EmptyLTXVLatentVideo floors `// 32`, so an odd multiple of 32 loses up to
- * 32 px per axis and silently renders smaller than advertised.
+ * 32 px per axis and silently renders smaller than advertised. That also rules
+ * out a true 16:9 middle tier — 900 is not /64, hence 896.
+ *
+ * Square is the same at every tier: 1024² is already ~1MP.
  */
-const ORIENTATIONS = [
-  { label: 'Portrait 9:16', value: 'portrait', w: 1088, h: 1920, lw: 704, lh: 1280 },
-  { label: 'Landscape 16:9', value: 'landscape', w: 1920, h: 1088, lw: 1280, lh: 704 },
-  { label: 'Square 1:1', value: 'square', w: 1024, h: 1024, lw: 1024, lh: 1024 },
+const ORIENTATIONS: { label: string; value: string; dims: Record<Tier, [number, number]> }[] = [
+  {
+    label: 'Portrait 9:16',
+    value: 'portrait',
+    dims: { high: [1088, 1920], medium: [896, 1600], low: [704, 1280] },
+  },
+  {
+    label: 'Landscape 16:9',
+    value: 'landscape',
+    dims: { high: [1920, 1088], medium: [1600, 896], low: [1280, 704] },
+  },
+  {
+    label: 'Square 1:1',
+    value: 'square',
+    dims: { high: [1024, 1024], medium: [1024, 1024], low: [1024, 1024] },
+  },
 ]
 
 /** Fit an image's aspect into ~budgetMp megapixels, both sides snapped to /64 (see ORIENTATIONS). */
@@ -79,20 +101,20 @@ export const ltx23Workflow: VideoWorkflowDefinition = {
     p.model_file = 'None'
     p.mmproj_file = 'None (text-only)'
 
-    // Low-VRAM (16 GB) profile halves the pixel budget (~1MP instead of ~2MP) so
-    // the upscale pass and decode stay on-card instead of spilling to shared memory.
-    const low = params.vramMode === 'low'
+    // Dropping the pixel budget is the biggest speed lever there is; the low
+    // (16 GB) tier also keeps the upscale pass and decode on-card instead of
+    // spilling to shared memory.
+    const tier = tierOf(params.vramMode)
     if (params.mode === 't2v') {
       const o = ORIENTATIONS.find((x) => x.value === params.orientation) ?? ORIENTATIONS[1]
       p.image_filename = ''
-      p.rm_w = low ? o.lw : o.w
-      p.rm_h = low ? o.lh : o.h
+      ;[p.rm_w, p.rm_h] = o.dims[tier]
     } else {
       p.image_filename = params.inputImage ?? ''
       // Without recorded dims (legacy rerun) keep the baked defaults — the node
       // resizes to rm_w×rm_h, so matching the image's aspect avoids distortion.
       if (params.inputImageWidth && params.inputImageHeight) {
-        const d = ltxDimsForImage(params.inputImageWidth, params.inputImageHeight, low ? 1 : 2)
+        const d = ltxDimsForImage(params.inputImageWidth, params.inputImageHeight, BUDGET_MP[tier])
         p.rm_w = d.w
         p.rm_h = d.h
       }

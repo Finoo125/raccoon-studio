@@ -64,6 +64,28 @@ describe('ltx23Workflow.buildPrompt', () => {
     expect(n.inputs.rm_h).toBe(1920)
   })
 
+  it('drops to the middle 900p budget on the medium tier', () => {
+    const dims = (o: string) => {
+      const n = byClass(
+        ltx23Workflow.buildPrompt({ ...base, orientation: o, vramMode: 'medium' }),
+        'RaccoonVideoPrompt',
+      )
+      return [n.inputs.rm_w, n.inputs.rm_h]
+    }
+    expect(dims('portrait')).toEqual([896, 1600])
+    expect(dims('landscape')).toEqual([1600, 896])
+    expect(dims('square')).toEqual([1024, 1024]) // already ~1MP
+  })
+
+  // Anything not in the union (a rerun of a job stored before this setting, or a
+  // hand-edited param) must keep rendering full-size rather than crash.
+  it('falls back to full size for a missing or unknown tier', () => {
+    for (const vramMode of [undefined, 'ultra' as unknown as undefined]) {
+      const n = byClass(ltx23Workflow.buildPrompt({ ...base, vramMode }), 'RaccoonVideoPrompt')
+      expect([n.inputs.rm_w, n.inputs.rm_h]).toEqual([1920, 1088])
+    }
+  })
+
   it('halves the pixel budget in low VRAM mode', () => {
     const dims = (o: string) => {
       const n = byClass(
@@ -94,7 +116,8 @@ describe('ltx23Workflow.buildPrompt', () => {
   // The graph halves before building the latent and EmptyLTXVLatentVideo floors
   // `// 32`, so anything not divisible by 64 silently renders smaller than asked.
   it('emits /64 dimensions for every orientation, mode and VRAM profile', () => {
-    for (const vramMode of ['high', 'low'] as const) {
+    const budget = { high: 2, medium: 1.4, low: 1 }
+    for (const vramMode of ['high', 'medium', 'low'] as const) {
       for (const orientation of ['portrait', 'landscape', 'square']) {
         const n = byClass(
           ltx23Workflow.buildPrompt({ ...base, orientation, vramMode }),
@@ -109,7 +132,7 @@ describe('ltx23Workflow.buildPrompt', () => {
         [900, 1600],
         [1911, 733],
       ]) {
-        const d = ltxDimsForImage(iw, ih, vramMode === 'low' ? 1 : 2)
+        const d = ltxDimsForImage(iw, ih, budget[vramMode])
         expect(d.w % 64).toBe(0)
         expect(d.h % 64).toBe(0)
       }
