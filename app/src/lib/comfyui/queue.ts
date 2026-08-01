@@ -26,6 +26,8 @@ export interface GenerationJob {
   outputImages: string[]
   /** Video view URLs for video jobs (VHS `gifs` outputs). */
   outputVideos?: string[]
+  /** LTX first-pass clip, shown while the upscale pass runs. Cleared on finish. */
+  previewVideo?: string
   error?: string
   createdAt: number
   startedAt?: number

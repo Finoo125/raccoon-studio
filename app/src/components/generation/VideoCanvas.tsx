@@ -45,6 +45,10 @@ export default function VideoCanvas() {
 
   // During sampling, show the live preview frame; once done, the finished video.
   const previewUrl = runningJob?.livePreview ?? null
+  // Once the first pass lands there is a real clip to watch, which beats latent
+  // frames for judging motion — and motion is the thing the upscale pass will
+  // not fix, so this is the moment to cancel if it looks wrong.
+  const firstPassUrl = runningJob?.previewVideo ?? null
 
   const handleDownload = () => {
     if (!activeVideoUrl) return
@@ -61,7 +65,7 @@ export default function VideoCanvas() {
       onMouseLeave={() => setIsHovered(false)}
     >
       {/* Ambient surface — only when idle/empty */}
-      {!previewUrl && !activeVideoUrl && (
+      {!previewUrl && !firstPassUrl && !activeVideoUrl && (
         <>
           <div className="pointer-events-none absolute inset-0 canvas-board opacity-60" />
           <div className="pointer-events-none absolute inset-0 canvas-ambient animate-ambient" />
@@ -70,7 +74,30 @@ export default function VideoCanvas() {
       )}
 
       <AnimatePresence mode="wait">
-        {previewUrl ? (
+        {firstPassUrl ? (
+          <motion.div
+            // Stable key — the url is a /view link, but keying on media that can
+            // change mid-render thrashes the element (see the latent-preview rule).
+            key="firstpass"
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            className="relative flex items-center justify-center w-full h-full p-6"
+          >
+            <video
+              src={firstPassUrl}
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="max-w-full max-h-full object-contain rounded-xl canvas-artifact"
+              style={{ maxHeight: 'calc(100vh - 11rem)' }}
+            />
+            <span className="absolute top-4 left-4 rounded-md bg-background/85 px-2 py-1 text-xs font-medium text-action backdrop-blur-sm ring-1 ring-action/25">
+              First pass · motion preview
+            </span>
+          </motion.div>
+        ) : previewUrl ? (
           <motion.div
             key="preview"
             initial={{ opacity: 0, scale: 0.96 }}

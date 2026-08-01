@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveOutputMedia } from './output-media'
+import { resolveOutputMedia, resolveInterimVideo } from './output-media'
 
 describe('resolveOutputMedia', () => {
   it('builds view URLs from image outputs and reports them as images', () => {
@@ -54,5 +54,37 @@ describe('resolveOutputMedia', () => {
     expect(
       resolveOutputMedia({ images: [{ filename: 'p.png', subfolder: '', type: 'temp' }] }),
     ).toEqual({ urls: [], isVideo: false })
+  })
+})
+
+describe('resolveInterimVideo', () => {
+  // Shape taken from a real /history entry: node 889:549 (save_output false).
+  it('returns the temp first-pass clip', () => {
+    expect(
+      resolveInterimVideo({
+        gifs: [{ filename: '10E_firstpass_00014-audio.mp4', subfolder: '', type: 'temp' }],
+      }),
+    ).toBe('/api/comfyui/view?filename=10E_firstpass_00014-audio.mp4&subfolder=&type=temp')
+  })
+
+  it('ignores the finished clip — that is the result, not a preview', () => {
+    expect(
+      resolveInterimVideo({
+        gifs: [{ filename: 'final.mp4', subfolder: 'video/LTX23', type: 'output' }],
+      }),
+    ).toBeNull()
+  })
+
+  // A video job also emits a temp PNG (the PreviewImage of the i2v source).
+  // Matching it would put a still image in the video element.
+  it('ignores temp images', () => {
+    expect(
+      resolveInterimVideo({ images: [{ filename: 'src.png', subfolder: '', type: 'temp' }] }),
+    ).toBeNull()
+  })
+
+  it('returns null for empty or absent output', () => {
+    expect(resolveInterimVideo(undefined)).toBeNull()
+    expect(resolveInterimVideo({})).toBeNull()
   })
 })

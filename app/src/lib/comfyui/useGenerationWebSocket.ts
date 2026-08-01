@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react'
 import { useQueueStore } from './queue'
 import { useConnectionStore } from './connection'
 import { ComfyUIWebSocket } from './websocket'
-import { resolveOutputMedia } from './output-media'
+import { resolveOutputMedia, resolveInterimVideo } from './output-media'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import type { WSMessage } from '@/types/comfyui'
 import type { JobRecord } from '@/lib/queue/history'
@@ -69,7 +69,14 @@ export function useGenerationWebSocket() {
         // A workflow has several output nodes; only the one that produced media
         // for this job's kind matters. Ignore unrelated `executed` frames so a
         // video job's first-pass image preview node doesn't clobber the result.
-        if (urls.length === 0) return
+        if (urls.length === 0) {
+          // …except LTX's first-pass clip, which arrives here as a temp mp4
+          // while the upscale pass still has minutes to run. Surface it so the
+          // motion can be judged and the job cancelled before paying for it.
+          const interim = job.kind === 'video' ? resolveInterimVideo(msg.data.output) : null
+          if (interim) updateJob(job.id, { previewVideo: interim })
+          return
+        }
         if (job.kind === 'video' && !isVideo) return
         if (job.kind === 'image' && isVideo) return
 
@@ -81,6 +88,7 @@ export function useGenerationWebSocket() {
           progress: job.maxProgress,
           endedAt: Date.now(),
           livePreview: undefined,
+          previewVideo: undefined,
         })
         if (isVideo) {
           useStudioStore.getState().setActiveVideo(urls[0])
@@ -97,6 +105,7 @@ export function useGenerationWebSocket() {
           error: msg.data.exception_message,
           endedAt: Date.now(),
           livePreview: undefined,
+          previewVideo: undefined,
         })
         const erroredJob = useQueueStore.getState().jobs.find((j) => j.id === job.id)
         if (erroredJob) persistHistory(toRecord(erroredJob))

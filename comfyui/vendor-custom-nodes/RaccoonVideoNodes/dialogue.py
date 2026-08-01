@@ -1,8 +1,8 @@
 """
-dialogue_ld.py — Dialogue register bank for Raccoon Video Prompt
+dialogue.py — Dialogue register bank for Raccoon Video Prompt
 ==========================================================
 A BACKGROUND ACTIVATION LAYER for spoken lines, built the same way as
-scenarios_ld / environments_ld: the user's phrasing (plus the active scenario)
+scenarios / environments: the user's phrasing (plus the active scenario)
 is scanned for cues, matching REGISTERS are activated, and a verbatim line pool
 is injected into the system prompt so the LLM stops defaulting to the same
 "don't look away" cliché.

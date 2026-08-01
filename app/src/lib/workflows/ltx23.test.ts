@@ -158,6 +158,40 @@ describe('ltx23Workflow.buildPrompt', () => {
     expect(stack).toHaveLength(1)
   })
 
+  // Opt-in at the builder level even though the form defaults it on: any caller
+  // that does not know to check the file is installed must not inject it.
+  it('omits the VBVR motion LoRA unless asked for', () => {
+    const stack = JSON.parse(
+      byClass(ltx23Workflow.buildPrompt(base), 'RaccoonLoraStack').inputs.stack_data as string,
+    )
+    expect(stack.some((r: { lora: string }) => r.lora.includes('VBVR'))).toBe(false)
+  })
+
+  it('puts the VBVR motion LoRA directly after DMD, before the user slots', () => {
+    const stack = JSON.parse(
+      byClass(
+        ltx23Workflow.buildPrompt({
+          ...base,
+          mode: 'i2v',
+          inputImage: 'seed.png',
+          motionLora: true,
+          lora1: 'style.safetensors',
+          faceId: true,
+        }),
+        'RaccoonLoraStack',
+      ).inputs.stack_data as string,
+    )
+    // The measured configuration: DMD, VBVR at full strength on both branches,
+    // then user style, with FaceID still last.
+    expect(stack[1]).toEqual({ on: true, lora: 'VBVR-I2V-390K-R32.safetensors', str: 1, vs: 1, as: 1 })
+    expect(stack.map((r: { lora: string }) => r.lora)).toEqual([
+      'LTX2.3_DMD_reshaped_r256.safetensors',
+      'VBVR-I2V-390K-R32.safetensors',
+      'style.safetensors',
+      'Best_FaceID_v1.0_LoRA.safetensors',
+    ])
+  })
+
   it('appends user LoRA rows with their strength', () => {
     const stack = JSON.parse(
       byClass(
@@ -239,6 +273,190 @@ describe('ltx23Workflow.buildPrompt', () => {
     )!
     expect(saver.inputs.images).toEqual(rifeNode.inputs.images)
     expect(saver.inputs.frame_rate).toEqual(rifeNode.inputs.source_fps)
+  })
+
+  // t2v has no source image — RaccoonVideoPrompt hands the graph a black frame.
+  // Conditioning on it opens every clip on black and references black throughout.
+  it('drops the i2v conditioning path in t2v', () => {
+    const wf = ltx23Workflow.buildPrompt(base) as unknown as Wf
+    const present = (cls: string) => Object.values(wf).filter((n) => n.class_type === cls)
+    expect(present('LTXVImgToVideoInplaceKJ')).toHaveLength(0)
+    expect(present('RaccoonLTXReferenceConditioning')).toHaveLength(0)
+    // The resize chain stays: it is how rm_w/rm_h reach EmptyLTXVLatentVideo.
+    expect(present('GetImageSize')).toHaveLength(1)
+  })
+
+  it('keeps both conditioning pairs for i2v', () => {
+    const wf = ltx23Workflow.buildPrompt({
+      ...base,
+      mode: 'i2v',
+      inputImage: 'seed.png',
+    }) as unknown as Wf
+    expect(Object.values(wf).filter((n) => n.class_type === 'LTXVImgToVideoInplaceKJ')).toHaveLength(2)
+    expect(
+      Object.values(wf).filter((n) => n.class_type === 'RaccoonLTXReferenceConditioning'),
+    ).toHaveLength(2)
+  })
+
+  // The splices (t2v conditioning, RIFE) rewire consumers onto the removed node's
+  // own input. Miss one and ComfyUI rejects the whole prompt at validation.
+  it('leaves no dangling links in any mode', () => {
+    const dangling = (wf: Wf) =>
+      Object.entries(wf).flatMap(([id, node]) =>
+        Object.entries(node.inputs)
+          .filter(([, v]) => Array.isArray(v) && typeof v[0] === 'string' && !(v[0] in wf))
+          .map(([name, v]) => `${id}.${name} -> ${(v as [string, number])[0]}`),
+      )
+    expect(dangling(ltx23Workflow.buildPrompt(base) as unknown as Wf)).toEqual([])
+    expect(
+      dangling(
+        ltx23Workflow.buildPrompt({ ...base, mode: 'i2v', inputImage: 'seed.png' }) as unknown as Wf,
+      ),
+    ).toEqual([])
+    expect(dangling(ltx23Workflow.buildPrompt({ ...base, rife: false }) as unknown as Wf)).toEqual([])
+  })
+
+  // img_compression is the CRF of a one-frame H.264 re-encode. At 0 the reference
+  // frame is lossless, does not look like video, and the model clings to it —
+  // that is the stiff-i2v failure.
+  //
+  // 25 (not the 33-35 both reference builders ship) is measured: across 3 seeds,
+  // 25 beat 35 on every axis — more motion, less jerk, sharper, and sharper than
+  // the old lossless baseline by clip end. We degrade the reference in more
+  // places than they do (i2v node + reference conditioning, then again at 30 on
+  // the upscale pass), so it compounds. Don't "fix" this back to 35.
+  it('degrades the conditioning frame and pins frame 0 at full strength', () => {
+    const wf = ltx23Workflow.buildPrompt({
+      ...base,
+      mode: 'i2v',
+      inputImage: 'seed.png',
+    }) as unknown as Wf
+    const pre = Object.values(wf).filter((n) => n.class_type === 'LTXVPreprocess')
+    expect(pre.map((n) => n.inputs.img_compression).sort()).toEqual([25, 30])
+
+    // The first pass must compress AFTER the 0.5 downscale, at conditioning
+    // resolution — compressing first and shrinking after resamples it away.
+    const first = pre.find((n) => n.inputs.img_compression === 25)!
+    const src = wf[(first.inputs.image as [string, number])[0]]
+    expect(src.class_type).toBe('ResizeImageMaskNode')
+    expect(src.inputs['resize_type.multiplier']).toBe(0.5)
+
+    const strengthRef = Object.values(wf)
+      .filter((n) => n.class_type === 'LTXVImgToVideoInplaceKJ')
+      .map((n) => n.inputs['num_images.strength_1'])
+      .find(Array.isArray) as [string, number]
+    expect(wf[strengthRef[0]].inputs.Xf).toBe(1)
+  })
+
+  // chunks=1 short-circuits to a passthrough inside the node, so it is free off
+  // the low tier — which is what keeps an experimental node out of the way.
+  it('chunks the feedforward only on the low-VRAM tier', () => {
+    const chunks = (vramMode?: 'high' | 'medium' | 'low') =>
+      byClass(ltx23Workflow.buildPrompt({ ...base, vramMode }), 'LTXVChunkFeedForward').inputs.chunks
+    expect(chunks('low')).toBe(3)
+    expect(chunks('medium')).toBe(1)
+    expect(chunks('high')).toBe(1)
+    expect(chunks(undefined)).toBe(1)
+  })
+
+  // FaceID swaps in for reference conditioning rather than stacking with it —
+  // both inject reference tokens, and both upstream workflows drop the
+  // conditioning node wherever the reinforcer appears.
+  it('swaps reference conditioning for the face reinforcer, keeping the wiring', () => {
+    const off = ltx23Workflow.buildPrompt({
+      ...base,
+      mode: 'i2v',
+      inputImage: 'seed.png',
+    }) as unknown as Wf
+    const on = ltx23Workflow.buildPrompt({
+      ...base,
+      mode: 'i2v',
+      inputImage: 'seed.png',
+      faceId: true,
+    }) as unknown as Wf
+
+    const refs = Object.values(on).filter((n) => n.class_type === 'RaccoonLTXReferenceConditioning')
+    const faces = Object.values(on).filter((n) => n.class_type === 'RaccoonLTXFaceIdentity')
+    expect(refs).toHaveLength(0)
+    expect(faces).toHaveLength(2) // one per sampling pass
+
+    // Same slot, same upstream links — only the class and inputs change.
+    for (const [id, node] of Object.entries(on)) {
+      if (node.class_type !== 'RaccoonLTXFaceIdentity') continue
+      const was = off[id]
+      expect(was.class_type).toBe('RaccoonLTXReferenceConditioning')
+      expect(node.inputs.model).toEqual(was.inputs.model)
+      expect(node.inputs.vae).toEqual(was.inputs.vae)
+      expect(node.inputs.reference_image).toEqual(was.inputs.image)
+      expect(node.inputs.target_latent).toEqual(was.inputs.target_latent)
+      // What the Best-FaceID LoRA was trained against — not free knobs.
+      expect(node.inputs.source_id).toBe(2)
+      expect(node.inputs.phase_scale).toBe(1)
+      expect(node.inputs.placement_mode).toBe('i2v_safe')
+    }
+  })
+
+  it('adds the FaceID LoRA last, with audio strength 0', () => {
+    const stack = JSON.parse(
+      byClass(
+        ltx23Workflow.buildPrompt({
+          ...base,
+          mode: 'i2v',
+          inputImage: 'seed.png',
+          faceId: true,
+          lora1: 'style.safetensors',
+        }),
+        'RaccoonLoraStack',
+      ).inputs.stack_data as string,
+    )
+    expect(stack.at(-1)).toEqual({
+      on: true,
+      lora: 'Best_FaceID_v1.0_LoRA.safetensors',
+      str: 1,
+      vs: 1,
+      as: 0, // video-identity LoRA — must not touch the audio branch
+    })
+    expect(stack).toHaveLength(3) // DMD, the user slot, then FaceID
+  })
+
+  it('honours identity strength and the whole-subject (no face crop) mode', () => {
+    const wf = ltx23Workflow.buildPrompt({
+      ...base,
+      mode: 'i2v',
+      inputImage: 'seed.png',
+      faceId: true,
+      faceIdStrength: 0.6,
+      faceIdWholeSubject: true,
+    }) as unknown as Wf
+    const face = Object.values(wf).find((n) => n.class_type === 'RaccoonLTXFaceIdentity')!
+    expect(face.inputs.identity_strength).toBe(0.6)
+    expect(face.inputs.auto_face_crop).toBe(false)
+  })
+
+  // t2v has no source face, and its conditioning path is spliced out entirely —
+  // asking for FaceID there must not resurrect it or add the LoRA.
+  it('ignores faceId in t2v', () => {
+    const wf = ltx23Workflow.buildPrompt({ ...base, faceId: true }) as unknown as Wf
+    expect(Object.values(wf).some((n) => n.class_type === 'RaccoonLTXFaceIdentity')).toBe(false)
+    const stack = JSON.parse(
+      byClass(wf as unknown as ComfyUIPrompt, 'RaccoonLoraStack').inputs.stack_data as string,
+    )
+    expect(stack).toHaveLength(1) // DMD only
+  })
+
+  it('leaves no dangling links with FaceID on', () => {
+    const wf = ltx23Workflow.buildPrompt({
+      ...base,
+      mode: 'i2v',
+      inputImage: 'seed.png',
+      faceId: true,
+    }) as unknown as Wf
+    const dangling = Object.entries(wf).flatMap(([id, node]) =>
+      Object.entries(node.inputs)
+        .filter(([, v]) => Array.isArray(v) && typeof v[0] === 'string' && !(v[0] in wf))
+        .map(([name]) => `${id}.${name}`),
+    )
+    expect(dangling).toEqual([])
   })
 
   it('tolerates legacy stored params (rerun of pre-v2 jobs)', () => {

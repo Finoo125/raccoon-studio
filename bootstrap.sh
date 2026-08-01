@@ -40,6 +40,10 @@ if [ -f install-linux.sh ]; then
 elif [ -d raccoon-studio/.git ]; then
   ROOT="$PWD/raccoon-studio"
   printf '  Repo already cloned — pulling latest...\n'
+  # `npm install` rewrites the tracked app/package-lock.json when it disagrees with
+  # package.json, so the pull would abort on a file nobody edited (and set -e would
+  # kill the bootstrap). It is generated - the installer below rebuilds it.
+  git -C "$ROOT" checkout -- app/package-lock.json 2>/dev/null || true
   git -C "$ROOT" pull --ff-only
 else
   ROOT="$PWD/raccoon-studio"

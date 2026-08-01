@@ -1,5 +1,5 @@
 """
-inject_ld.py — turns the scenario/environment picklists into SHORT nudge blocks.
+inject.py — turns the scenario/environment picklists into SHORT nudge blocks.
 
 Deliberately light. The old node's env/scenario injection barked "beat 1 MUST /
 every beat / RULES:" — that heaviness is exactly what over-cluttered the box.
@@ -9,11 +9,11 @@ and arrangement so a vague box still renders well.
 """
 
 try:
-    from .scenarios_ld import resolve_scenario, scenario_is_explicit
-    from .environments_ld import ENVIRONMENT_PRESETS, _ENV_RANDOM_POOL
+    from .scenarios import resolve_scenario, scenario_is_explicit
+    from .environments import ENVIRONMENT_PRESETS, _ENV_RANDOM_POOL
 except ImportError:
-    from scenarios_ld import resolve_scenario, scenario_is_explicit
-    from environments_ld import ENVIRONMENT_PRESETS, _ENV_RANDOM_POOL
+    from scenarios import resolve_scenario, scenario_is_explicit
+    from environments import ENVIRONMENT_PRESETS, _ENV_RANDOM_POOL
 
 
 def _resolve_env(env_key, seed=0):

@@ -9,6 +9,10 @@ from .tiled_vae_decode import NODE_CLASS_MAPPINGS as _DECODE_NODES, NODE_DISPLAY
 from .latent_upsampler_tiled import NODE_CLASS_MAPPINGS as _UPSAMPLER_NODES, NODE_DISPLAY_NAME_MAPPINGS as _UPSAMPLER_NAMES
 from .ltx_reference_conditioning import NODE_CLASS_MAPPINGS as _REFCOND_NODES, NODE_DISPLAY_NAME_MAPPINGS as _REFCOND_NAMES
 from .ltx_reference_enable import NODE_CLASS_MAPPINGS as _REFEN_NODES, NODE_DISPLAY_NAME_MAPPINGS as _REFEN_NAMES
+# Identity lock for i2v. Swaps in for reference conditioning (both inject
+# reference tokens — see ltx_face_identity.py) and needs ltx_reference_enable at
+# >= v1.9.6, which is why that file was bumped to v1.9.7 alongside it.
+from .ltx_face_identity import NODE_CLASS_MAPPINGS as _FACEID_NODES, NODE_DISPLAY_NAME_MAPPINGS as _FACEID_NAMES
 
 NODE_CLASS_MAPPINGS = {
     **_PROMPT_NODES,
@@ -17,6 +21,7 @@ NODE_CLASS_MAPPINGS = {
     **_UPSAMPLER_NODES,
     **_REFCOND_NODES,
     **_REFEN_NODES,
+    **_FACEID_NODES,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     **_PROMPT_NAMES,
@@ -25,6 +30,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **_UPSAMPLER_NAMES,
     **_REFCOND_NAMES,
     **_REFEN_NAMES,
+    **_FACEID_NAMES,
 }
 
 # ASCII only, deliberately. This runs at import, and ComfyUI is launched with

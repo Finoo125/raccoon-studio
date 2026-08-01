@@ -65,6 +65,15 @@ function Invoke-Update {
   # (see install-windows.ps1 header note).
   $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
   $before = (& git -C $env:RACCOON_ROOT rev-parse HEAD 2>&1 | Select-Object -First 1)
+  # app/package-lock.json is tracked, but `npm install` rewrites it whenever it
+  # disagrees with package.json - so it is dirty in installs that never touched a
+  # file (v1.0.18-34 shipped `engines` in package.json alone, and every install of
+  # those wrote it back into the lock). Any release that also changes the lock then
+  # aborts the pull with "your local changes would be overwritten by merge" and the
+  # Update button is dead for good. Discard ours: it is generated, and the
+  # Invoke-Install below regenerates it minutes later. Guarded by the sync test in
+  # app/src/lib/package-lock.test.ts, which stops the desync recurring.
+  & git -C $env:RACCOON_ROOT checkout -- app/package-lock.json 2>&1 | ForEach-Object { Write-RsLog "[git] $_" }
   & git -C $env:RACCOON_ROOT pull --ff-only $PublicRepo main 2>&1 | ForEach-Object { Write-RsLog "[git] $_" }
   $pullExit = $LASTEXITCODE
   $after = (& git -C $env:RACCOON_ROOT rev-parse HEAD 2>&1 | Select-Object -First 1)

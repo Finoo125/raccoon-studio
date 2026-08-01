@@ -1,6 +1,9 @@
 export interface ComfyUIPromptNode {
   class_type: string
   inputs: Record<string, unknown>
+  /** Cosmetic node title. Every node in the exported workflows carries one;
+   *  ComfyUI ignores it when executing, but it shows up in logs and the queue. */
+  _meta?: { title?: string }
 }
 
 export type ComfyUIPrompt = Record<string, ComfyUIPromptNode>

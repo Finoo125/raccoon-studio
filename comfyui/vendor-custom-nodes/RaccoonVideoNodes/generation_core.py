@@ -11,33 +11,41 @@ import random
 import time
 
 try:
-    from . import brain_ld as brain
+    from . import brain as brain
     from . import llama_manager as llm
-    from .inject_ld import env_block, scenario_block as scn_block, scenario_forces_explicit
-    from .camera_ld import bolt as camera_bolt
-    from .music_ld import music_block
+    from .inject import env_block, scenario_block as scn_block, scenario_forces_explicit
+    from .camera import bolt as camera_bolt
+    from .music import music_block
     from .llm_boot import ThinkFilter, boot_llama
     from .vram import flush_vram
 except ImportError:
-    import brain_ld as brain
+    import brain as brain
     import llama_manager as llm
-    from inject_ld import env_block, scenario_block as scn_block, scenario_forces_explicit
-    from camera_ld import bolt as camera_bolt
-    from music_ld import music_block
+    from inject import env_block, scenario_block as scn_block, scenario_forces_explicit
+    from camera import bolt as camera_bolt
+    from music import music_block
     from llm_boot import ThinkFilter, boot_llama
     from vram import flush_vram
 
 
+# word_hit() covers regular inflections (+s/es/ed/d/ing/ion), so "thrust" reaches
+# "thrusting" and "penetrat" reaches "penetration". Doubled-consonant and
+# silent-e forms it cannot derive ("cum"->"cumming", "ride"->"riding") are
+# listed outright — dropping them would trade the false-positive bug for a
+# false-negative one.
 _EXPLICIT_WORDS = (
-    "fuck", "cock", "dick", "pussy", "cunt", "cum", "suck", "blowjob", "handjob",
-    "tit", "boob", "ass", "anal", "penetrat", "thrust", "ride", "orgasm", "nipple",
-    "nude", "naked", "nsfw", "sex", "erotic", "slut", "whore", "breed", "daddy",
+    "fuck", "cock", "dick", "pussy", "cunt", "cum", "cumming", "suck", "blowjob",
+    "handjob", "tit", "boob", "ass", "anal", "penetrat", "thrust", "ride", "riding",
+    "orgasm", "nipple", "nude", "naked", "nsfw", "sex", "sexy", "erotic", "slut",
+    "slutty", "whore", "breed", "daddy",
 )
 
 
 def _infer_explicit(text):
-    t = (text or "").lower()
-    return any(w in t for w in _EXPLICIT_WORDS)
+    # word_hit, not `w in t` — see brain.word_hit. Substring matching made
+    # "petite"/"grass"/"assistant" read as explicit and injected the explicit
+    # clause into briefs that never asked for one.
+    return brain.word_hit(_EXPLICIT_WORDS, (text or "").lower())
 
 
 def _skip_flush(body):

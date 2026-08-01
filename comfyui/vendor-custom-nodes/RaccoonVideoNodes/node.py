@@ -5,12 +5,12 @@ your 3-backend llama_manager. LTX video only — i2v / t2v.
 """
 
 from .api import register_routes, _scan_gguf, _models_dir, resolve_input_image
-from .environments_ld import ENV_KEYS
-from .scenarios_ld import SCENARIO_KEYS as SCN_KEYS
-from .camera_ld import KEYS as CAM_KEYS
-from .music_ld import MUSIC_KEYS
+from .environments import ENV_KEYS
+from .scenarios import SCENARIO_KEYS as SCN_KEYS
+from .camera import KEYS as CAM_KEYS
+from .music import MUSIC_KEYS
 from .negatives import build as build_negative
-from .pack_ld import RVN_PACK, make_pack, unpack
+from .pack import RVN_PACK, make_pack, unpack
 from .tensors import b64_to_tensor, load_path, make_black, resize
 
 try:
@@ -78,7 +78,8 @@ class RaccoonVideoPrompt:
         # Only text committed in the UI (▶ Generate) reaches the positive pin.
         positive = (confirmed_prompt or "").strip()
         negative = build_negative(pov=bool(pov),
-                                  music=bool(music) and not str(music).startswith("None"))
+                                  music=bool(music) and not str(music).startswith("None"),
+                                  silent=str(dialogue_tier).lower() in ("none", "silent", "off"))
 
         if video_mode == "i2v":
             t = load_path(resolve_input_image(image_filename) or "")

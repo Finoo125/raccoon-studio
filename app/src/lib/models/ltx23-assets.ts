@@ -57,6 +57,28 @@ export const LTX23_ASSETS: Ltx23Asset[] = [
     source: 'TenStrip/LTX2.3_DMD_Lora (required distillation LoRA)',
   },
   {
+    // Motion/camera reinforcement, on by default in the video form when present.
+    // Optional: without it the form turns the toggle off rather than injecting a
+    // LoRA that is not there. Source file is
+    // Ltx2.3-Licon-VBVR-I2V-390K-R32.safetensors — the download route saves under
+    // `name`, so the rename happens automatically.
+    name: 'VBVR-I2V-390K-R32.safetensors',
+    folder: 'loras',
+    sizeMb: 554,
+    url: 'https://huggingface.co/LiconStudio/Ltx2.3-VBVR-lora-I2V/resolve/main/Ltx2.3-Licon-VBVR-I2V-390K-R32.safetensors',
+    source: 'LiconStudio/Ltx2.3-VBVR-lora-I2V (stage 3 — camera + motion stability)',
+  },
+  {
+    // Optional — only pulled in when the Face identity toggle is on, and the
+    // workflow builder omits the whole FaceID path when it is missing, so a
+    // 2.4 GB download is never forced on someone who does not want it.
+    name: 'Best_FaceID_v1.0_LoRA.safetensors',
+    folder: 'loras',
+    sizeMb: 2470,
+    url: 'https://huggingface.co/Alissonerdx/LTX-Best-Face-ID/resolve/main/Best_FaceID_v1.0_LoRA.safetensors',
+    source: 'Alissonerdx/LTX-Best-Face-ID (optional — identity lock for i2v)',
+  },
+  {
     name: '[LTX 2.3] Mystic XXX_v1.0.safetensors',
     folder: 'loras',
     sizeMb: 400,

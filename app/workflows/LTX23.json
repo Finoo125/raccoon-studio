@@ -34,7 +34,7 @@
    "resize_type.multiplier": 0.5,
    "scale_method": "area",
    "input": [
-    "1213",
+    "531",
     0
    ]
   },
@@ -71,7 +71,7 @@
  "797": {
   "inputs": {
    "Xi": 0,
-   "Xf": 0.8,
+   "Xf": 1,
    "isfloatX": 1
   },
   "class_type": "mxSlider",
@@ -355,7 +355,7 @@
    "zero_ref_timesteps": false,
    "verbose": false,
    "model": [
-    "1110",
+    "1301",
     0
    ]
   },
@@ -422,9 +422,9 @@
  },
  "1213": {
   "inputs": {
-   "img_compression": 0,
+   "img_compression": 25,
    "image": [
-    "531",
+    "532",
     0
    ]
   },
@@ -435,7 +435,7 @@
  },
  "1214": {
   "inputs": {
-   "img_compression": 0,
+   "img_compression": 30,
    "image": [
     "531",
     0
@@ -719,7 +719,7 @@
     0
    ],
    "num_images.image_1": [
-    "532",
+    "1213",
     0
    ]
   },
@@ -845,7 +845,7 @@
     3
    ],
    "image": [
-    "532",
+    "1213",
     0
    ],
    "target_latent": [
@@ -1243,6 +1243,20 @@
   "class_type": "easy cleanGpuUsed",
   "_meta": {
    "title": "Clean VRAM After Text Encode"
+  }
+ },
+ "1301": {
+  "inputs": {
+   "chunks": 1,
+   "dim_threshold": 4096,
+   "model": [
+    "1110",
+    0
+   ]
+  },
+  "class_type": "LTXVChunkFeedForward",
+  "_meta": {
+   "title": "LTXV Chunk FeedForward"
   }
  }
 }

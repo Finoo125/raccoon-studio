@@ -89,6 +89,11 @@ if (Test-Path (Join-Path (Get-Location) 'install-windows.ps1')) {
     $Root = Join-Path (Get-Location) 'raccoon-studio'
     if (Test-Path (Join-Path $Root '.git')) {
         Write-Host '  Repo already cloned — pulling latest...' -ForegroundColor Cyan
+        # `npm install` rewrites the tracked app/package-lock.json when it disagrees
+        # with package.json, so the pull would abort on a file nobody edited. It is
+        # generated - the installer below rebuilds it. No 2>&1 here: under EAP=Stop
+        # a redirected native stderr is a fatal NativeCommandError in WinPS 5.1.
+        git -C $Root checkout -- app/package-lock.json
         git -C $Root pull --ff-only
     } else {
         Write-Host '  Cloning Raccoon Studio...' -ForegroundColor Cyan

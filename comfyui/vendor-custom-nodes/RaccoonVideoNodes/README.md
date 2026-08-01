@@ -27,7 +27,7 @@ the bundled llama manager — see `llama_manager.py` / `llm_boot.py`;
 
 ## Layer files
 
-The `*_ld.py` modules (`brain`, `camera`, `dialogue`, `environments`,
+The `*.py` modules (`brain`, `camera`, `dialogue`, `environments`,
 `inject`, `music`, `pack`, `scenarios`) each own one slice of the prompt
 assembly; `generation_core.py` orchestrates them; `negatives.py` holds the
 negative-prompt sets; `tensors.py`/`vram.py` are small helpers.

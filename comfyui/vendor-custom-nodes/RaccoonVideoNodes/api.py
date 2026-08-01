@@ -7,12 +7,12 @@ import json
 import os
 
 from . import llama_manager as llm
-from .camera_ld import KEYS as CAM_KEYS
-from .environments_ld import ENV_KEYS
+from .camera import KEYS as CAM_KEYS
+from .environments import ENV_KEYS
 from .generation_core import generate_prompt
 from .generation_core import assemble_preview
-from .music_ld import MUSIC_KEYS
-from .scenarios_ld import SCENARIO_KEYS
+from .music import MUSIC_KEYS
+from .scenarios import SCENARIO_KEYS
 from .tensors import (
     IMAGE_EXTS,
     VIDEO_EXTS,
@@ -393,12 +393,12 @@ def register_routes():
             return web.json_response({"loras": ["None"], "error": str(e)})
 
     # ── Live scenario editing (edit button next to dropdown) ─────────────────────
-    from . import scenarios_ld
+    from . import scenarios
 
     @inst.routes.get("/rvn/get_scenario")
     async def get_scenario(request):
         key = request.rel_url.query.get("key", "")
-        data = scenarios_ld.get_scenario_data(key)
+        data = scenarios.get_scenario_data(key)
         if not data:
             return web.json_response({"ok": False, "error": "not found"}, status=404)
         return web.json_response({"ok": True, **data})
@@ -413,7 +413,7 @@ def register_routes():
             if not key:
                 return web.json_response({"ok": False, "error": "missing key"}, status=400)
 
-            success = scenarios_ld.update_scenario_in_source(key, setup, choreography)
+            success = scenarios.update_scenario_in_source(key, setup, choreography)
             return web.json_response({"ok": bool(success)})
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=500)

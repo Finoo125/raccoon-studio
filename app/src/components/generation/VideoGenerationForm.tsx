@@ -21,6 +21,12 @@ import PromptReview from './PromptReview'
 import type { VideoGenerationParams } from '@/types/video-workflow'
 import { downscaleFileToB64 } from '@/lib/generation/image-b64'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
+import { ltxAssetInstalled } from '@/lib/models/ltx23-assets'
+
+/** Optional 2.4 GB download; the Face identity control stays disabled without it. */
+const FACE_ID_LORA = 'Best_FaceID_v1.0_LoRA.safetensors'
+/** Optional 554 MB download; on by default once it is installed. */
+const MOTION_LORA = 'VBVR-I2V-390K-R32.safetensors'
 
 // v2: the RaccoonVideoNodes control set — old saved shapes are ignored.
 const FORM_STORAGE_KEY = 'raccoon-studio:generate-videos-form:v2'
@@ -90,6 +96,8 @@ export default function VideoGenerationForm() {
   const [options, setOptions] = useState<VideoPromptOptions>(FALLBACK_OPTIONS)
   const [collapsed, setCollapsed] = useState(true)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [faceIdReady, setFaceIdReady] = useState(false)
+  const [motionReady, setMotionReady] = useState(false)
   const [imageB64, setImageB64] = useState('')
   const [seedPreview, setSeedPreview] = useState<string | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -129,6 +137,39 @@ export default function VideoGenerationForm() {
         return next
       })
     })
+    // Both the FaceID and the motion LoRA are optional downloads. The stack skips
+    // a missing LoRA silently, so nothing would break outright — but FaceID's
+    // reinforcer would then inject reference tokens the model was never patched to
+    // read, and the motion toggle would claim an effect it is not having. Gate
+    // both controls on the files actually being there.
+    fetch('/api/comfyui/object_info/LoraLoader')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return
+        const names = d?.LoraLoader?.input?.required?.lora_name?.[0] as string[] | undefined
+        const installed = new Set(names ?? [])
+        const ready = Array.isArray(names) && ltxAssetInstalled(FACE_ID_LORA, installed)
+        setFaceIdReady(ready)
+        // `faceId` is persisted with the rest of the form, so a session that had
+        // the LoRA installed would restore it on a machine that no longer does —
+        // leaving the control disabled while the param quietly stayed on.
+        if (!ready) setParams((p) => (p.faceId ? { ...p, faceId: false } : p))
+
+        // Motion LoRA is default-ON, which is only safe once the file is known to
+        // exist — hence "turn on when undefined" rather than an initial `true`.
+        // `undefined` means the user has never touched the toggle; an explicit
+        // `false` they chose earlier is restored before this resolves and is left
+        // alone. Restoring from localStorage is synchronous on mount, so it always
+        // wins the race against this fetch.
+        const motion = Array.isArray(names) && ltxAssetInstalled(MOTION_LORA, installed)
+        setMotionReady(motion)
+        setParams((p) =>
+          motion
+            ? (p.motionLora === undefined ? { ...p, motionLora: true } : p)
+            : (p.motionLora ? { ...p, motionLora: false } : p),
+        )
+      })
+      .catch(() => {})
     return () => { alive = false }
   }, [])
 
@@ -293,7 +334,12 @@ export default function VideoGenerationForm() {
     } finally {
       for (const j of active) {
         if (j.livePreview) URL.revokeObjectURL(j.livePreview)
-        updateJob(j.id, { status: 'cancelled', endedAt: Date.now(), livePreview: undefined })
+        updateJob(j.id, {
+          status: 'cancelled',
+          endedAt: Date.now(),
+          livePreview: undefined,
+          previewVideo: undefined,
+        })
       }
       toast('Render cancelled')
     }
@@ -429,6 +475,30 @@ export default function VideoGenerationForm() {
         <p className="text-xs text-muted-foreground">Longer clips take proportionally longer to render.</p>
       </div>
 
+      {/* Stabilised motion — deliberately outside Advanced: it is on by default, so
+          it has to be visible enough that someone can find it and turn it off. A
+          plain LoRA row, hence offered in both modes. */}
+      <div className={`rounded-xl border border-border bg-muted/20 p-3 space-y-2 ${motionReady ? '' : 'opacity-60'}`}>
+        <label className={`flex items-center gap-2 text-sm ${motionReady ? '' : 'cursor-not-allowed'}`}>
+          <input
+            type="checkbox"
+            checked={params.motionLora === true}
+            disabled={!motionReady}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('motionLora', e.target.checked)}
+            className="h-4 w-4 accent-primary disabled:cursor-not-allowed"
+          />
+          <span className="font-medium">Stabilised motion</span>
+          <span className="text-xs text-muted-foreground">
+            {motionReady ? 'VBVR LoRA' : 'unavailable — not installed'}
+          </span>
+        </label>
+        <p className="text-xs text-muted-foreground">
+          {motionReady
+            ? 'Holds the camera to whatever the prompt asks for — static when you ask for static, moving when you ask for a move — and steadies motion between frames. Measured on image-to-video: 92% less camera drift and 17% less flicker, at no extra render time. Uncheck it to let the model move the camera on its own.'
+            : 'Adds the VBVR motion LoRA (554 MB) for a steadier camera and less flicker — install it on the Models page to enable this.'}
+        </p>
+      </div>
+
       {/* Advanced — LoRAs + Seed + RIFE, collapsed by default to keep the panel calm. */}
       <div className="rounded-xl border border-border bg-muted/20">
         <button
@@ -502,6 +572,60 @@ export default function VideoGenerationForm() {
               </div>
               <p className="text-xs text-muted-foreground">-1 = random each time</p>
             </div>
+
+            {/* Face identity — i2v only: t2v has no source face to lock onto, and
+                the builder strips the whole conditioning path there anyway. */}
+            {params.mode === 'i2v' && (
+              <div className="space-y-2">
+                <SectionLabel>Face identity</SectionLabel>
+                <Button
+                  variant={params.faceId ? 'default' : 'outline'}
+                  className="h-9 w-full text-sm"
+                  disabled={!faceIdReady}
+                  onClick={() => set('faceId', !params.faceId)}
+                >
+                  {params.faceId ? 'Identity lock on' : 'Identity lock off'}
+                </Button>
+                {!faceIdReady ? (
+                  // Without the LoRA the reinforcer would inject reference tokens
+                  // the model was never trained to read — worse than leaving it off.
+                  <p className="text-xs text-muted-foreground">
+                    Needs the Best-FaceID LoRA (2.4 GB) — install it on the Models page.
+                  </p>
+                ) : params.faceId ? (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">Strength</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        value={params.faceIdStrength ?? 1}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                          set('faceIdStrength', Number(e.target.value))
+                        }
+                        className="h-8 flex-1 min-w-0 font-mono text-sm"
+                      />
+                    </div>
+                    <Button
+                      variant={params.faceIdWholeSubject ? 'default' : 'outline'}
+                      className="h-8 w-full text-xs"
+                      onClick={() => set('faceIdWholeSubject', !params.faceIdWholeSubject)}
+                    >
+                      {params.faceIdWholeSubject ? 'Whole subject' : 'Face only'}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Best when the subject is <strong>far from camera</strong> — measured
+                      +12% identity hold on a wide shot, and it prevents the face drifting
+                      away by the end. On a tight close-up it adds nothing, and “Face only”
+                      makes it slightly worse; use “Whole subject” there. 1.0 is what the
+                      LoRA was trained for.
+                    </p>
+                  </>
+                ) : null}
+              </div>
+            )}
 
             {/* RIFE frame interpolation */}
             <div className="space-y-2">

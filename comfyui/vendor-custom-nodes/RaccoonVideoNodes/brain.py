@@ -18,9 +18,27 @@ Public entry:
 import re
 
 try:
-    from . import dialogue_ld
+    from . import dialogue
 except ImportError:  # allow flat-import in tests
-    import dialogue_ld
+    import dialogue
+
+
+def word_hit(words, blob):
+    """True if any of `words` appears in `blob` as a WORD, not a substring.
+
+    Bare `w in blob` made "ass" fire inside "grass", "tit" inside "petite" and
+    "bra" inside "bracelet" — which flipped the explicit brief on for innocuous
+    intents. Both boundaries are required: a left-only boundary still matches
+    "assistant" and "analyst". Common inflections still count, so "thrust"
+    catches "thrusting" and "penetrat" catches "penetration".
+
+    dialogue._trigger_hit deliberately stays looser (left boundary only) —
+    its triggers are stems like "seduc"/"degrad" that must reach "seductive"
+    and "degradation". Different list, different policy; don't merge them.
+    """
+    pat = (r"(?<![a-z])(" + "|".join(map(re.escape, words))
+           + r")(s|es|ed|d|ing|ion)?(?![a-z])")
+    return re.search(pat, blob or "") is not None
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  THE CANON — the one doctrine every path inherits. This is the whole point.
@@ -36,6 +54,8 @@ The model renders EXACTLY what you write and nothing you don't. Unwritten = abse
 6. ONE MAIN ACTION PER MOMENT, present tense: describe what the body does (steps, lowers hips, rotates torso, sits), not the result of contact. Avoid phrases like "ass against crotch" or "pressing against". Use neutral spatial language: "lowers her hips to sit between his legs", "settles onto the floor with her back against him".
 7. ANATOMY IS DIRECT when relevant — plain correct terms, never clinical, never coy.
 8. TRUST THE MODEL. Do not stack micro-details (knuckle whitening, hair strands, thumb rims) — they clutter the frame and cause failures. Name the real motion and the model fills the rest.
+9. LIGHT. Give it a direction, a quality, and one thing it does — rakes across skin, pools on the floor, edges a silhouette — plus one lens property (shallow depth, grain, a rack focus). Light left unnamed renders flat; optics left unnamed render everything equally sharp.
+10. SOUND IS DIEGETIC. Everything audible comes from inside the shot — cloth, breath, footsteps, the room's own noise, bodies against surfaces. A score, a radio or a speaker exists ONLY if a MUSIC block below names one; never invent a soundtrack.
 """
 
 _I2V_ANCHOR = "Use the provided start image exactly as the first frame."
@@ -45,26 +65,29 @@ def _energy(level):
     lv = max(1, min(10, int(level or 5)))
     if lv <= 3:
         return ("\n━━ INTENSITY: LOW ━━\n"
-                "MOTION: unhurried and light — hands drift, settle, trace; weight shifts slowly; "
-                "long holds between motions, one settles before the next begins.\n"
-                "VOICE: quiet — murmured, whispered, soft brackets; words close to the ear, never raised.\n"
-                "ARC: the clip stays low — it breathes, it never spikes.\n")
+                "MOTION: slow and weightless — hands drift, come to rest, trail along surfaces; "
+                "weight moves over unhurriedly; each motion is allowed to finish and sit before "
+                "the next one starts.\n"
+                "VOICE: kept down — murmured, whispered, soft brackets; spoken close in, never lifted.\n"
+                "ARC: the clip holds its level throughout — it breathes rather than climbs.\n")
     if lv <= 7:
         return ("\n━━ INTENSITY: MEDIUM ━━\n"
-                "MOTION: deliberate and grounded — hands grip, pull, press with real weight; "
-                "each section adds one new motion; contact and breath stay synced.\n"
-                "VOICE: full and engaged — steady, warm, heated brackets; conversational volume "
-                "that leans urgent as the clip builds.\n"
-                "ARC: opens measured, builds section by section, arrives at a driven rhythm in the "
-                "final third.\n")
+                "MOTION: purposeful and weighted — hands take hold, draw, press with something "
+                "behind them; every section brings in one motion that was not there before; "
+                "contact and breath stay locked to each other.\n"
+                "VOICE: open and involved — even, warm, heated brackets; speaking volume that "
+                "tightens toward urgency as the clip goes on.\n"
+                "ARC: starts controlled, gains a step each section, and reaches a driving rhythm "
+                "across the last third.\n")
     return ("\n━━ INTENSITY: HIGH ━━\n"
-            "MOTION: forceful and driven — grips drag, bodies push and pin with weight, motions "
-            "stack and overlap; impact rhythm carries the clip. Stay render-safe: force comes from "
-            "weight and speed words, never from banned deform verbs.\n"
-            "VOICE: loud and raw — shouted, snarled, gasped, breathless brackets; short hard lines, "
-            "voices carry over the sound of contact.\n"
-            "ARC: opens already moving and climbs — the peak lands in the last third and holds "
-            "to the final frame.\n")
+            "MOTION: hard and relentless — grips drag, bodies shove and hold each other down with "
+            "real mass, motions pile on top of one another; the rhythm of impact carries the clip. "
+            "Keep it render-safe: the force lives in weight and speed words, never in the banned "
+            "deform verbs.\n"
+            "VOICE: at full volume and unpolished — shouted, snarled, gasped, breathless brackets; "
+            "lines cut short and hard, carrying over the noise of contact.\n"
+            "ARC: already in motion at the first frame and rising from there — the peak arrives in "
+            "the last third and is still there at the final frame.\n")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,44 +98,47 @@ def _pov_contract(gender, mode, solo):
     hands = "slender hands, slim fingers" if g == "female" else "large hands, rough fingers"
     edge = ("foreshortened chest and thighs at the bottom edge"
             if g == "female" else "lap and thighs at the bottom edge")
+    # The anchor line itself is stated once, at the top of build_system, and
+    # finalize() re-inserts it in code if the model drops it. Only the
+    # POV-specific part belongs here.
     i2v_line = (
-        f"I2V: first line exactly '{_I2V_ANCHOR}'. Then beat 1 opens 'Eye-level {g} POV.' "
-        "and MOVES — write only what changes from the frame, never restage what's already there. "
-        "A hand already in contact tightens or drags; it is never re-placed.\n\n"
+        f"I2V: beat 1 opens 'Eye-level {g} POV.' and then MOVES — write only what changes away "
+        "from the frame you were given, never re-stage what is already sitting there. A hand "
+        "already touching something tightens or drags across it; it is never placed a second time.\n\n"
         if mode == "i2v" else "")
     people = ("no people-pronouns at all in this solo scene"
               if solo else "she/he/her/his belong to the OTHER person only, never the viewpoint")
     return (
         "━━ THE POV CONTRACT ━━\n"
-        f"First-person POV — the render is what a {g}'s eyes see. The viewpoint is a WINDOW, "
-        "not a person: no name, no pronoun, no body, no face. It can never be the subject of a "
-        "sentence. If you ever write the viewpoint's body, LTX draws it and the shot collapses to "
-        "third person.\n\n"
-        f"OPENING TRIGGER: the first words are exactly 'Eye-level {g} POV.' — without it the model "
-        "draws a third-person character.\n\n"
+        f"First-person POV — what renders is what a {g}'s eyes take in. The viewpoint is a WINDOW "
+        "and not a person: it has no name, no pronoun, no body, no face, and it can never be the "
+        "subject of a sentence. Write the viewpoint's body even once and LTX will draw it, and the "
+        "shot falls back to third person.\n\n"
+        f"OPENING TRIGGER: the first words are exactly 'Eye-level {g} POV.' — leave it out and the "
+        "model puts a third-person character on screen.\n\n"
         + i2v_line +
-        "THE FOUR CHANNELS — the viewpoint exists ONLY through these:\n"
-        "  1. VIEW — the moving window: it turns, tilts, lifts, drops, drifts, rocks, sways, "
-        "shudders, advances, pulls back.\n"
-        f"  2. HANDS — the only visible flesh: {hands}, doing the work (gripping, pulling, pressing). "
-        f"Forearm at most, never a full arm. Also {edge}.\n"
-        "  3. SOUND — own breath and voice, close and unseen, from just behind the view.\n"
-        "  4. CONSEQUENCE — contact on the unseen body shows only as what the eyes/ears register: "
-        "the view shudders on impact, sinks under weight, breath catches. Never as felt sensation.\n\n"
-        "TRANSLATE viewpoint actions: stands/kneels → the view rises/drops; walks → the view advances "
-        "with a stride bob; grabs X → a hand enters from the bottom edge and grips X; looks down → the "
-        "view tips down to foreshortened shapes. Untranslatable → DROP IT.\n\n"
-        "CONTACT: move the SUBJECT, not the view — have them back into or pull toward the view. Keep "
-        "penetration/contact at the bottom edge; carry rhythm in the view's motion plus the subject's "
-        "visible reaction. Never viewpoint hips/thrusting — that renders a second body.\n\n"
+        "THE FOUR CHANNELS — the viewpoint reaches the screen through these and nothing else:\n"
+        "  1. VIEW — the window in motion: turning, tilting, rising, dropping, drifting, rocking, "
+        "swaying, shuddering, closing in, backing off.\n"
+        f"  2. HANDS — the only skin that is ever visible: {hands}, doing the work (taking hold, "
+        f"drawing, pressing). Forearm at the very most, never a whole arm. Plus {edge}.\n"
+        "  3. SOUND — its own breath and voice, close and unseen, sitting just behind the window.\n"
+        "  4. CONSEQUENCE — contact against the unseen body reaches the screen only as something the "
+        "eyes or ears pick up: the view jolts on impact, drops under weight, the breath catches. "
+        "Never as a described sensation.\n\n"
+        "TRANSLATE anything the viewpoint does: stands or kneels → the view rises or drops; walks → "
+        "the view moves forward with a stride bob; grabs X → a hand comes in from the bottom edge and "
+        "closes on X; looks down → the view tips down onto foreshortened shapes. Anything that will "
+        "not translate → CUT IT.\n\n"
+        "CONTACT: it is the SUBJECT that moves, not the window — have them push back into the view or "
+        "pull themselves toward it. Keep penetration and contact down at the bottom edge; carry the "
+        "rhythm in the view's own motion plus whatever the subject visibly does in response. Never "
+        "give the viewpoint hips or a thrust — that puts a second body in the frame.\n\n"
         f"NEVER WRITE: I/me/my ({people}); 'the body', 'a figure', 'the viewer'; camera/lens/shot/frame "
-        "(always 'the view'); the viewpoint's own head/face/hair/torso; whole-body verbs for the "
-        "viewpoint; mirrors facing the view (they force an invented face).\n\n"
-        "SUBJECT BODY MECHANICS (POV T2V): The on-screen person the view is looking at must still follow real body rules. "
-        "Any time they turn their head or look toward the view: their TORSO + shoulders rotate together with the head. "
-        "Never describe a lone head twist. State when the upper body turns. This rule applies strongly in POV T2V.\n"
-        "ANCHOR: the first sentence of every beat and the last sentence of the clip must be view motion "
-        "or an entering hand.\n"
+        "(it is always 'the view'); the viewpoint's own head, face, hair or torso; whole-body verbs "
+        "attached to the viewpoint; a mirror pointed at the view (it forces the model to invent a face).\n\n"
+        "ANCHOR: the opening sentence of every beat and the closing sentence of the clip are either "
+        "view motion or a hand coming into frame.\n"
     )
 
 
@@ -151,13 +177,21 @@ _SECTION_FORMAT = (
     "the VOICE delivery only. This is the ONE place a mood word is allowed, because it drives audio, not the "
     "picture. The CANON still holds for the body: never write the face or body with a mood — show that as "
     "visible mechanics (jaw tight, eyes wide). An occupied mouth can't speak: breath or moan until it frees.\n"
-    "\n"
-    "Example of correct output (I2V):\n"
-    "Use the provided start image exactly as the first frame.\n"
-    "A woman in a black dress kneels on the bed.\n\n"
-    "She reaches back with both hands and slowly pulls the zipper down her spine.\n\n"
-    "She slides the dress off one shoulder and says (teasing): \"come here\".\n"
 )
+
+
+def _example(mode):
+    """Per-mode worked example. The i2v anchor appears in the i2v example only —
+    a t2v brief that shows the anchor line invites the model to write it, and
+    finalize() only strips/repairs it on the i2v side."""
+    body = ("She reaches back with both hands and slowly pulls the zipper down her spine.\n\n"
+            "She slides the dress off one shoulder and says (teasing): \"come here\".\n")
+    if mode == "i2v":
+        return ("\nExample of correct output (I2V):\n" + _I2V_ANCHOR + "\n"
+                "A woman in a black dress kneels on the bed.\n\n" + body)
+    return ("\nExample of correct output (T2V):\n"
+            "A woman in a black dress kneels on a bed in a dim hotel room, one lamp behind her.\n\n"
+            + body)
 
 
 def _i2v_open():
@@ -172,10 +206,11 @@ def _t2v_open():
     return (
         "The FIRST section sets identity and place — who they are (hair, build, one skin/wardrobe tag) "
         "and the space around them — then the opening action. Later sections do not re-state identity.\n\n"
-        "T2V BODY ORIENTATION RULE: Because there is no reference image, you must be explicit about facing and body mechanics in every section. "
-        "When any character turns their head, looks back, glances over shoulder, or changes direction: they rotate their TORSO + shoulders + head together at the waist as one unit. "
-        "Never describe a head/neck twist in isolation. State facing clearly relative to other people and the camera (e.g. 'back fully to him, facing the camera', 'torso turned toward the viewer'). "
-        "In POV shots the on-screen person must still obey the torso rule when they turn to look at the viewer.\n"
+        # Facing is genuinely t2v-only (no reference image fixes it). The
+        # head/torso law it used to restate lives in CANON rule 3.
+        "T2V FACING: with no reference image, nothing fixes orientation but your words. State facing "
+        "explicitly, relative to the other people and to the camera — 'back fully to him, facing the "
+        "camera', 'torso turned toward the viewer' — and restate it whenever it changes.\n"
     )
 
 
@@ -214,16 +249,20 @@ _GARMENT_LAW = (
     "garments actually visible in the frame — never invent layers that aren't there.\n"
 )
 
+# See word_hit(): regular inflections come free, doubled-consonant and silent-e
+# forms are listed outright.
 _UNDRESS_WORDS = (
-    "undress", "strip", "unbutton", "unzip", "zipper", "peel", "take off", "takes off", "pull off",
-    "pulls off", "slides off", "remove", "removes", "panties", "underwear", "bra", "dress off",
-    "shirt off", "top off", "skirt", "naked", "topless", "expose", "reveal", "shed",
+    "undress", "strip", "stripping", "stripped", "unbutton", "unzip", "unzipping",
+    "unzipped", "zipper", "peel", "take off", "takes off", "pull off",
+    "pulls off", "slides off", "remove", "removing", "panties", "underwear", "bra",
+    "dress off", "shirt off", "top off", "skirt", "naked", "topless", "expose",
+    "exposing", "reveal", "shed",
 )
 
 
 def _wants_undress(intent, scenario_block):
     blob = f"{intent} {scenario_block}".lower()
-    return any(w in blob for w in _UNDRESS_WORDS)
+    return word_hit(_UNDRESS_WORDS, blob)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,18 +285,16 @@ def build_system(*, mode="i2v", duration_s=12.0, pov=False, pov_gender="female",
 
     # unified section-based output format for both i2v and t2v
     parts.append("\n" + _SECTION_FORMAT)
+    parts.append(_example(mode))
     parts.append(_i2v_open() if mode == "i2v" else _t2v_open())
     parts.append(f"For a ~{float(duration_s or 10):.0f}s shot, expect roughly {lo}–{hi} sections — "
                  "but let the action decide, not the clock.\n")
 
-    if mode == "i2v":
-        parts.append("\nREMINDER FOR I2V: The absolute first line of your entire response must be exactly \"Use the provided start image exactly as the first frame.\" — nothing before it, no thinking, no intro.\nExample start:\nUse the provided start image exactly as the first frame.\nA woman in a red dress is on all fours on the bed...\n\n")
-    if mode == "t2v":
-        parts.append(
-            "\nREMINDER FOR T2V (NO REFERENCE IMAGE): You have no image anchor, so body orientation, facing direction, and torso movement must be described explicitly in the text. "
-            "Any time a character turns or looks back: their torso must rotate with their head. State facing relative to the other person and the camera in every relevant beat. "
-            "POV T2V is especially strict — the on-screen person turning toward the viewer must turn their upper body, not just their head.\n\n"
-        )
+    # Both mode REMINDER blocks removed: each restated a law already stated once
+    # above (the I2V anchor at the top, head/torso in CANON rule 3, facing in
+    # _t2v_open). Restatement does not reinforce on a mid-size model — it
+    # crowds out the laws that are only stated once. finalize() is the
+    # deterministic guard for the anchor, so the prompt need not beg for it.
     if explicit:
         parts.append("Explicit: name cock, pussy, ass, penetration plainly where relevant; resolve "
                      "clothing access before penetration.\n")
@@ -271,7 +308,7 @@ def build_system(*, mode="i2v", duration_s=12.0, pov=False, pov_gender="female",
 
     # Dialogue register bank — verbatim line pools activated by the user's cues
     # ("talks dirty", "asmr", "she begs"…). Explicit lines gated by `explicit`.
-    dlg = dialogue_ld.dialogue_block(
+    dlg = dialogue.dialogue_block(
         tier=dialogue_tier, intent=intent, scenario_block=scenario_block,
         explicit=explicit, seed=seed, pov=pov, pov_gender=pov_gender,
     )
@@ -335,7 +372,13 @@ def max_tokens(duration_s, mode, pov, talkative=False):
         base += 200
     if talkative:
         base += 300                # spoken lines cost tokens
-    return max(900, min(3800, base))
+    # The old 3800 ceiling cut in at 15s — the app's DEFAULT duration — and took
+    # 3180 tokens off a 30s clip. The brief asks for `hi` sections and >=20*dur
+    # characters, so a clamp below `base` truncates the script the node just
+    # ordered: the tail of the clip arrives with no written action and LTX
+    # improvises it. Honest arithmetic now; 7500 is the real backstop against a
+    # runaway reply, and the app's slider tops out at 30s (base 6980).
+    return max(900, min(7500, base))
 
 
 def clean(text):

@@ -31,3 +31,21 @@ export function resolveOutputMedia(
   }
   return { urls: saved(output?.images).map(viewUrl), isVideo: false }
 }
+
+/**
+ * The LTX first-pass motion preview, or null.
+ *
+ * The graph samples a half-size clip and writes it through a VideoCombine with
+ * `save_output: false`, so it lands in ComfyUI's temp dir well before the
+ * expensive upscale pass finishes. Watching it is how bad motion gets caught and
+ * cancelled early — the upscale pass restores detail but will not fix motion.
+ *
+ * Only `gifs` count: a video job also emits a temp *image* (the PreviewImage of
+ * the i2v source frame), which is not a preview of anything.
+ */
+export function resolveInterimVideo(
+  output: { images?: OutputImage[]; gifs?: OutputImage[] } | undefined,
+): string | null {
+  const temp = (output?.gifs ?? []).filter((i) => i.type === 'temp')
+  return temp.length > 0 ? viewUrl(temp[0]) : null
+}
