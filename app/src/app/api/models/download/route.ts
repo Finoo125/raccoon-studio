@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import https from 'https'
 import http from 'http'
+import { describeDownloadError } from '@/lib/models/download-error'
 
 const MODELS_DIR = process.env.COMFYUI_MODELS_DIR ?? ''
 
@@ -110,8 +111,13 @@ export async function POST(req: NextRequest) {
                 resolve()
               })
               out.on('error', reject)
-              res.on('error', reject)
-            }).on('error', reject)
+              // Both network paths report which host failed: a bare
+              // "connect ETIMEDOUT <ip>" cannot tell a blocked HuggingFace from a
+              // dead link in our own catalogue. `targetUrl` is the hop that
+              // failed, so a blocked CDN is distinguishable from a blocked
+              // huggingface.co.
+              res.on('error', (err) => reject(new Error(describeDownloadError(err, targetUrl))))
+            }).on('error', (err) => reject(new Error(describeDownloadError(err, targetUrl))))
           }
 
           doRequest(url)
