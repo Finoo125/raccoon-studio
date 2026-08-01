@@ -34,6 +34,9 @@ stop.sh
 stop.bat
 stop.ps1
 raccoon-studio.ico
+# The commit the installer last applied, so `update` knows whether the install
+# is behind the checkout rather than guessing from its own pull. Machine state.
+/.installed-rev
 # Anchored: unanchored "logs/" also swallowed app/src/app/(studio)/logs/ and api/logs/.
 /logs/
 

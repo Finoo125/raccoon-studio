@@ -26,6 +26,16 @@ function Get-UpdateState {
   try {
     $local = @(& git -C $env:RACCOON_ROOT rev-parse HEAD 2>$null)[0]
     if ($LASTEXITCODE -ne 0 -or -not $local) { Write-RsLog '[check-update] not a git checkout'; return 'unknown' }
+    # An install behind its own checkout answers the question with no network
+    # call at all. Without this the button sits dimmed on exactly the install
+    # that needs pressing: one a hand-run `git pull` brought to the newest
+    # commit while leaving the install untouched, where local already equals
+    # remote and the old comparison reads 'up-to-date'.
+    $applied = Get-InstalledRev $env:RACCOON_ROOT
+    if ($applied -and $applied -ne "$local".Trim()) {
+      Write-RsLog '[check-update] installed revision is behind the checkout'
+      return 'update-available'
+    }
     $remote = @(& git ls-remote $PublicRepo main 2>$null)[0]
     if ($LASTEXITCODE -ne 0 -or -not $remote) { Write-RsLog '[check-update] could not reach the public repo'; return 'unknown' }
   } finally { $ErrorActionPreference = $eap }
@@ -79,8 +89,24 @@ function Invoke-Update {
   $after = (& git -C $env:RACCOON_ROOT rev-parse HEAD 2>&1 | Select-Object -First 1)
   $ErrorActionPreference = $eap
   if ($pullExit -ne 0) { Emit-Fail 'update' "git pull from the public repo failed - see $script:LogFile"; exit 1 }
-  if ("$before" -eq "$after") { Emit-Progress 3 3 'Already up to date'; Emit-Done 'update'; return }
-  Emit-Progress 2 3 'Update downloaded - applying (this can take a few minutes)'
+  # Apply when the *install* is behind the checked-out code - not when this
+  # particular pull happened to move HEAD. Those differ exactly when HEAD moved
+  # some other way: a hand-run `git pull` (what we tell users to do when their
+  # security software blocks the one-liner), a bootstrap re-run, a manual
+  # checkout. The old test answered "already up to date" for all of them, and
+  # the install stayed half-applied - new code, old vendored node packs and
+  # dependencies - with no way left to converge it from this button.
+  # No marker means an install predating it, and we cannot know whether it
+  # matches; re-run rather than assume, since the installer is idempotent and
+  # this only happens once.
+  $applied = Get-InstalledRev $env:RACCOON_ROOT
+  if ($applied -and $applied -eq "$after".Trim()) {
+    Emit-Progress 3 3 'Already up to date'; Emit-Done 'update'; return
+  }
+  # Do not claim a download that did not happen: the pull can be a no-op while
+  # the install is still behind.
+  Emit-Progress 2 3 $(if ("$before" -eq "$after") { 'Applying this version to your installation (this can take a few minutes)' }
+                      else { 'Update downloaded - applying (this can take a few minutes)' })
   Invoke-Install
 }
 function Invoke-Install {

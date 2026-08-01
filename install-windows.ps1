@@ -1854,6 +1854,12 @@ Test-CudaAcceleration
 Write-AmdDiagnostics $AmdAdapter
 
 # ── Done ──────────────────────────────────────────────────────────────────────
+# Record what was just applied, so `update` can tell "new code is checked out"
+# from "the checked-out code is installed" instead of guessing from whether its
+# own pull moved HEAD. Every install path lands here - bootstrap, a double-
+# clicked install-windows.bat, the launcher's Reinstall, and update itself.
+if (-not $DryRun) { Set-InstalledRev $RootDir }
+
 Write-Host ''
 Write-Host '  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' -ForegroundColor Green
 Write-Host '  ✓  Installation complete!' -ForegroundColor Green

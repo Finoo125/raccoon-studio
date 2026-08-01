@@ -97,6 +97,48 @@ function Test-StartScriptStale([string]$Path) {
     return [int]$m.Matches[0].Groups[1].Value -lt $script:StartScriptVersion
 }
 
+# ── Which commit the installer last applied ───────────────────────────────────
+# `update` has to answer "is the installed state behind the checked-out code?",
+# and it used to approximate that with "did my own `git pull` move HEAD". That
+# proxy is wrong the moment HEAD moves by any other route - a hand-run
+# `git pull` (the documented fallback when a blocked one-liner leaves the button
+# unusable), a bootstrap re-run, a manual checkout. The pull then finds nothing
+# new, `update` reports "already up to date" forever, and the install is left
+# permanently half-applied: new code on disk, old vendored node packs and
+# dependencies in ComfyUI.
+#
+# So record the answer instead of inferring it. Every path that applies an
+# install runs install-windows.ps1, which writes this on success, so the file
+# means exactly "the tree at this commit has been installed".
+$script:InstalledRevFile = '.installed-rev'
+
+# The recorded commit, or '' when there is none (an install predating this file,
+# or one whose marker could not be written).
+function Get-InstalledRev([string]$Root) {
+    if (-not $Root) { return '' }
+    $f = Join-Path $Root $script:InstalledRevFile
+    if (-not (Test-Path $f)) { return '' }
+    try { return ((Get-Content $f -TotalCount 1) -as [string]).Trim() } catch { return '' }
+}
+
+# Record HEAD as applied. Best-effort on purpose: failing to write must never
+# fail an install that otherwise worked, and the cost of a missing marker is
+# only that the next `update` re-runs the installer - safe, since it is
+# idempotent. Not written for a dry run, which installed nothing.
+function Set-InstalledRev([string]$Root) {
+    if (-not $Root) { return }
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $head = @(& git -C $Root rev-parse HEAD 2>$null)[0]
+        if ($LASTEXITCODE -eq 0 -and $head) {
+            Set-Content -Path (Join-Path $Root $script:InstalledRevFile) `
+                        -Value "$head".Trim() -Encoding ASCII -ErrorAction Stop
+        }
+    } catch {
+        Write-RsLog "[install] could not record the installed revision: $_"
+    } finally { $ErrorActionPreference = $eap }
+}
+
 # Write the generated launcher. Deliberately a stub: it holds no flags and no
 # tuning, so a shape bump should never be needed again. `&` runs the core script
 # in this same process, keeping the python child in the same process tree that
