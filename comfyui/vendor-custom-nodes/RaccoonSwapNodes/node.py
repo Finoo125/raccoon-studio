@@ -11,9 +11,14 @@ import torch
 
 import folder_paths
 
-try:
+# Keyed on __package__ rather than `except ImportError`, which also swallowed a
+# genuine missing dependency: `swapper` imports onnx, so an absent onnx made the
+# relative import raise and the fallback then failed with "No module named
+# 'analyzer'" — pointing every reader at the wrong file. `__package__` is falsy
+# only when this really is being run outside the package (the tests do that).
+if __package__:
     from . import analyzer, swap_math, swapper
-except ImportError:  # direct execution outside the package
+else:  # direct execution outside the package
     import analyzer
     import swap_math
     import swapper

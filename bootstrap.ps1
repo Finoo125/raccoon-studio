@@ -85,6 +85,18 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 if (Test-Path (Join-Path (Get-Location) 'install-windows.ps1')) {
     $Root = (Get-Location).Path
     Write-Host "  Using the repo in the current folder: $Root" -ForegroundColor Gray
+    # Pull here too. This is the documented "already have the repo cloned" path,
+    # and it used to run the installer against the existing checkout without
+    # fetching anything - so an install whose own Update button was stuck (the
+    # dirty package-lock in v1.0.18-34) had no route left to new code at all.
+    # Guarded on .git: this branch also matches an unzipped copy with no history.
+    if (Test-Path (Join-Path $Root '.git')) {
+        Write-Host '  Pulling latest...' -ForegroundColor Cyan
+        # No 2>&1 here: under EAP=Stop a redirected native stderr is a fatal
+        # NativeCommandError in WinPS 5.1 (same note as the branch below).
+        git -C $Root checkout -- app/package-lock.json
+        git -C $Root pull --ff-only
+    }
 } else {
     $Root = Join-Path (Get-Location) 'raccoon-studio'
     if (Test-Path (Join-Path $Root '.git')) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hasBaseModel, comboOptions } from './installed'
+import { hasBaseModel, comboOptions, selectionIsStale } from './installed'
 
 const ckpt = (names: string[]) => ({ CheckpointLoaderSimple: { input: { required: { ckpt_name: [names] } } } })
 const unet = (names: string[]) => ({ UNETLoader: { input: { required: { unet_name: [names] } } } })
@@ -53,5 +53,32 @@ describe('comboOptions', () => {
   it('is an empty list when the new shape carries no options', () => {
     const data = { UpscaleModelLoader: { input: { required: { model_name: ['COMBO', {}] } } } }
     expect(comboOptions(data, 'UpscaleModelLoader', 'model_name')).toEqual([])
+  })
+})
+
+describe('selectionIsStale', () => {
+  it('is false for a name still on offer', () => {
+    expect(selectionIsStale('here.safetensors', ['here.safetensors'], true)).toBe(false)
+  })
+
+  it('is true for a name the list no longer has', () => {
+    expect(selectionIsStale('gone.safetensors', ['here.safetensors'], true)).toBe(true)
+  })
+
+  it('is true when the list loaded genuinely empty — the reinstall case', () => {
+    // The trap: an install with zero LoRAs / zero face models reports [], and a
+    // name remembered from a previous install would otherwise sail through and
+    // take the whole prompt down with value_not_in_list.
+    expect(selectionIsStale('gone.safetensors', [], true)).toBe(true)
+  })
+
+  it('is false while the list has not loaded, so an offline ComfyUI wipes nothing', () => {
+    expect(selectionIsStale('here.safetensors', [], false)).toBe(false)
+    expect(selectionIsStale('here.safetensors', ['here.safetensors'], false)).toBe(false)
+  })
+
+  it('is false when nothing is selected', () => {
+    expect(selectionIsStale(undefined, ['here.safetensors'], true)).toBe(false)
+    expect(selectionIsStale('', [], true)).toBe(false)
   })
 })

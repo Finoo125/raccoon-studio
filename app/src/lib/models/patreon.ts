@@ -1,3 +1,5 @@
+import { selectionIsStale } from './installed'
+
 // Patreon-exclusive model naming. Imported models whose filename contains one
 // of these tokens are surfaced as selectable "Aria / Patreon" models.
 export const PATREON_PATTERNS = ['muscgi', 'muscgro', 'aria'] as const
@@ -38,6 +40,30 @@ export function isPatreonModel(name: string): boolean {
 export function isAriaModel(name: string): boolean {
   const base = (name.split('/').pop() ?? name).toLowerCase()
   return base.includes('aria')
+}
+
+/**
+ * The Aria model to actually generate with, given what ComfyUI offers for the
+ * *current* family's loader (`available`).
+ *
+ * `ariaModel` is one persisted field shared by every family, so a selection
+ * outlives both the preset switch that made it wrong and the install that made
+ * it exist. Either way ComfyUI rejects the entire prompt with
+ * "Value not in list", which surfaces as a bare "Generation failed" — and when
+ * the file is gone the Model dropdown is hidden too (it only renders when the
+ * family has Aria models), leaving no UI to clear the stale value with.
+ *
+ * Membership in `available` subsumes the family check: a checkpoint Aria model
+ * is never in the UNET list. Until `loaded`, the selection is kept as-is — the
+ * lists start empty and fill from /object_info, so clearing eagerly would wipe a
+ * valid choice on every reload and whenever ComfyUI is offline.
+ */
+export function effectiveAriaModel(
+  selected: string | undefined,
+  available: string[],
+  loaded: boolean,
+): string | undefined {
+  return selectionIsStale(selected, available, loaded) ? undefined : selected
 }
 
 /** True when a filename contains one of the preset family's keywords. */

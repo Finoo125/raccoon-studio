@@ -5,6 +5,7 @@ import { Upload, Loader2, X, ScanFace, Boxes, RefreshCw, AlertTriangle } from 'l
 import { toast } from 'sonner'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
 import { listFaceModels } from '@/lib/generation/face-models'
+import { selectionIsStale } from '@/lib/models/installed'
 
 type SwapModel = 'inswapper_128.onnx' | 'hyperswap_1a_256.onnx' | 'hyperswap_1b_256.onnx' | 'hyperswap_1c_256.onnx'
 type PixelBoostSize = '512x512' | '768x768' | '1024x1024'
@@ -77,11 +78,16 @@ export default function FaceSwapInput({
 
   // Saved face models, loaded when the model source is shown (and refreshable).
   const [faceModels, setFaceModels] = useState<string[]>([])
+  const [faceModelsLoaded, setFaceModelsLoaded] = useState(false)
   const [loadingModels, setLoadingModels] = useState(false)
   const refreshModels = async () => {
     setLoadingModels(true)
     try {
-      setFaceModels(await listFaceModels())
+      const list = await listFaceModels()
+      if (list) {
+        setFaceModels(list)
+        setFaceModelsLoaded(true)
+      }
     } finally {
       setLoadingModels(false)
     }
@@ -91,6 +97,16 @@ export default function FaceSwapInput({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- lazy load when the model source is shown
     void refreshModels()
   }, [enabled, source])
+
+  // A saved face model is remembered by name, so it outlives the file — a
+  // reinstall re-creates `models/reactor/faces/` empty while localStorage keeps
+  // the name. ComfyUI then rejects the whole prompt, and the chips below only
+  // render when the list is non-empty, so there would be nothing left to click.
+  // Clearing degrades to "no face model": every builder skips the swap when this
+  // is falsy rather than failing the job.
+  useEffect(() => {
+    if (selectionIsStale(faceModel, faceModels, faceModelsLoaded)) onFaceModelChange('')
+  }, [faceModel, faceModels, faceModelsLoaded, onFaceModelChange])
 
   async function handleFile(file: File) {
     setUploading(true)

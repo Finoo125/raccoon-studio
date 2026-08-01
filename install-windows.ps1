@@ -1693,6 +1693,23 @@ Invoke-WithSpinner 'Running npm install' {
 }
 Write-Ok 'Node.js dependencies installed'
 
+# npm rewrites the tracked app/package-lock.json whenever it disagrees with
+# package.json, which leaves the working tree dirty in an install nobody edited -
+# and the next `git pull` (the Update button) then aborts with "your local changes
+# would be overwritten by merge". v1.0.18-34 shipped exactly that disagreement, so
+# those installs are stuck on a dead Update button; restoring the file here means
+# a plain Reinstall - a button they can already press - revives it, with no
+# console and no re-download.
+#
+# Safe to discard: the lockfile is generated, node_modules is already installed
+# above, and app/src/lib/package-lock.test.ts keeps the two files in sync so the
+# committed lock is the authoritative one. No 2>&1: under EAP=Stop a redirected
+# native stderr is a fatal NativeCommandError in WinPS 5.1 (see header note).
+if (-not $DryRun -and (Test-Path (Join-Path $RootDir '.git'))) {
+    & git -C $RootDir checkout -- app/package-lock.json
+    Add-Log '[git] restored app/package-lock.json (keeps the Update button working)'
+}
+
 # ── Step 14: Start scripts, .env.local, icon, desktop shortcut ───────────────
 Write-Step 'Creating start scripts, configuration, and desktop shortcut'
 
@@ -1766,17 +1783,31 @@ $envFile = Join-Path $AppDir '.env.local'
 $outDir  = ($ComfyDir + '\output').Replace('\','/')
 $modDir  = ($ComfyDir + '\models').Replace('\','/')
 $startSc = $startComfyPS1.Replace('\','/')
+# The four keys below are ours and always rewritten; every other line is the
+# user's (OLLAMA_BASE_URL, FFMPEG_PATH, RACCOON_DATA_DIR, a changed port, their
+# comments) and is carried across. Until 2026-08-01 the whole file was replaced,
+# so every install and every update silently dropped those - the .bak beside it
+# made them recoverable, but only for someone who knew to look, and a lost
+# OLLAMA_BASE_URL just looks like the video prompt enhancer breaking.
+$managedEnvKeys = @('COMFYUI_BASE_URL','COMFYUI_OUTPUT_DIR','COMFYUI_MODELS_DIR','COMFYUI_START_SCRIPT')
 if (-not $DryRun) {
+$preservedEnv = @()
 if (Test-Path $envFile) {
     Copy-Item $envFile "$envFile.bak" -Force
     Write-Info '.env.local backed up'
+    # Drop only the managed assignments; comments and blanks ride along. Split on
+    # the first '=' so a commented-out managed key ('#COMFYUI_BASE_URL=...') is
+    # kept as the comment it is.
+    $preservedEnv = @(Get-Content $envFile | Where-Object {
+        $managedEnvKeys -notcontains ($_ -split '=', 2)[0].Trim()
+    })
 }
-Set-Content $envFile -Encoding UTF8 -Value @"
-COMFYUI_BASE_URL=http://127.0.0.1:8188
-COMFYUI_OUTPUT_DIR=$outDir
-COMFYUI_MODELS_DIR=$modDir
-COMFYUI_START_SCRIPT=$startSc
-"@
+Set-Content $envFile -Encoding UTF8 -Value (@(
+    "COMFYUI_BASE_URL=http://127.0.0.1:8188"
+    "COMFYUI_OUTPUT_DIR=$outDir"
+    "COMFYUI_MODELS_DIR=$modDir"
+    "COMFYUI_START_SCRIPT=$startSc"
+) + $preservedEnv)
 }
 Write-Ok '.env.local written'
 

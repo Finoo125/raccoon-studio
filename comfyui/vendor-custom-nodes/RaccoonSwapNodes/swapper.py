@@ -4,10 +4,10 @@ import numpy as np
 import onnx
 import onnxruntime
 
-try:
+if __package__:
     from . import swap_math
     from .providers import pick_providers
-except ImportError:  # tests run this file outside the package
+else:  # tests run this file outside the package
     import swap_math
     from providers import pick_providers
 

@@ -13,9 +13,9 @@ import cv2
 import numpy as np
 import onnxruntime
 
-try:
+if __package__:
     from .providers import pick_providers
-except ImportError:  # tests run this file outside the package
+else:  # tests run this file outside the package
     from providers import pick_providers
 
 # Resolved once at import — an onnxruntime build's provider list is fixed.

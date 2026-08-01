@@ -15,7 +15,7 @@ import { SDXL_FIX_VAE } from '@/lib/workflows/sdxl'
 import { KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA, KREA2_PROJECTOR_DEFAULT } from '@/lib/workflows/krea2'
 import { FACE_SWAP_NODE, PIXEL_BOOST_NODE } from '@/lib/workflows/face-swap'
 import { comboOptions } from '@/lib/models/installed'
-import { isAriaModel } from '@/lib/models/patreon'
+import { isAriaModel, effectiveAriaModel } from '@/lib/models/patreon'
 import { DEFAULT_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
 import { negativePromptApplies } from '@/lib/workflows/expert-sampler'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
@@ -109,6 +109,10 @@ export default function GenerationForm() {
   const [ariaCheckpoints, setAriaCheckpoints] = useState<string[]>([])
   const [ariaLoras, setAriaLoras] = useState<string[]>([])
   const [ariaUnets, setAriaUnets] = useState<string[]>([])
+  // True once all three lists above reflect a real answer from ComfyUI. Until
+  // then they are indistinguishable from "this install has no Aria models", and
+  // a stale `params.ariaModel` must not be cleared on that basis.
+  const [ariaLoaded, setAriaLoaded] = useState(false)
   // Whether ComfyUI has the FaceDetailer node (Impact Pack installed).
   // null = still loading; false = unavailable; true = available.
   const [faceDetailerAvailable, setFaceDetailerAvailable] = useState<boolean | null>(null)
@@ -197,12 +201,15 @@ export default function GenerationForm() {
   // Aria *diffusion models* (UNETLoader). The LoraLoader list is kept for the
   // legacy 'lora' kind.
   useEffect(() => {
+    // Resolves true only when ComfyUI actually answered, so `ariaLoaded` below
+    // never treats an offline install as "no Aria models".
     const load = async (node: string, field: string, set: (v: string[]) => void) => {
       try {
         const d = await (await fetch(`/api/comfyui/object_info/${node}`)).json()
-        const names = d?.[node]?.input?.required?.[field]?.[0] as string[] | undefined
-        if (Array.isArray(names)) set(names.filter(isAriaModel))
-      } catch { /* ComfyUI offline — leave list empty */ }
+        const names = comboOptions(d, node, field)
+        set(names.filter(isAriaModel))
+        return true
+      } catch { /* ComfyUI offline — leave list empty */ return false }
     }
     const checkDetailer = async () => {
       try {
@@ -215,9 +222,11 @@ export default function GenerationForm() {
         setFaceDetailerAvailable(false)
       }
     }
-    void load('CheckpointLoaderSimple', 'ckpt_name', setAriaCheckpoints)
-    void load('LoraLoader', 'lora_name', setAriaLoras)
-    void load('UNETLoader', 'unet_name', setAriaUnets)
+    void Promise.all([
+      load('CheckpointLoaderSimple', 'ckpt_name', setAriaCheckpoints),
+      load('LoraLoader', 'lora_name', setAriaLoras),
+      load('UNETLoader', 'unet_name', setAriaUnets),
+    ]).then((ok) => setAriaLoaded(ok.every(Boolean)))
     void checkDetailer()
     const checkFaceSwap = async () => {
       // Probed independently: ReActor failing and RaccoonSwapNodes failing are
@@ -445,6 +454,23 @@ export default function GenerationForm() {
 
   const showNegativePrompt = negativePromptApplies(params, workflow)
 
+  // The Aria/Patreon model picker swaps the generation model once an Aria model
+  // has been imported (muscgi/muscgro are excluded upstream by isAriaModel).
+  // SDXL-family picks an Aria checkpoint; diffusion families (z-image/ernie/
+  // anima) pick an Aria diffusion model (UNET); the legacy lora kind picks an
+  // Aria LoRA.
+  const ariaModels =
+    workflow.ariaModelKind === 'checkpoint'
+      ? ariaCheckpoints
+      : workflow.ariaModelKind === 'unet'
+        ? ariaUnets
+        : ariaLoras
+  // `ariaModel` is persisted and shared across families, so it outlives both the
+  // preset switch that makes it wrong and the install that made it exist.
+  // Derived rather than written back to state: leaving the raw value in storage
+  // means re-importing the model restores the choice instead of losing it.
+  const ariaModel = effectiveAriaModel(params.ariaModel, ariaModels, ariaLoaded)
+
   const handleGenerate = useCallback(async () => {
     if (!params.prompt.trim()) {
       toast.error('Please enter a prompt')
@@ -510,6 +536,10 @@ export default function GenerationForm() {
           // value_not_in_list, which surfaces as a bare "Generation failed".
           ...(isKrea2 && krea2Builtins.refusal ? { krea2RefusalLora: KREA2_REFUSAL_LORA } : {}),
           ...(isKrea2 && krea2Builtins.projector ? { krea2ProjectorLora: KREA2_PROJECTOR_LORA } : {}),
+          // Same guard, for the imported Aria model: every family injects this
+          // into its own loader, so one that belongs to another family or whose
+          // file is gone takes the whole prompt down with value_not_in_list.
+          ariaModel,
         }
         // Expand wildcards per job so each job in a batch re-rolls independently,
         // and the resolved text (not the template) is what's built + recorded.
@@ -530,7 +560,7 @@ export default function GenerationForm() {
       setIsGenerating(false)
     }
   }, [params, workflow, workflowId, clientId, addJob, faceDetailerAvailable, faceSwapAvailable,
-      pixelBoostAvailable, sdxlVaeAvailable, krea2Builtins, wildcardLists])
+      pixelBoostAvailable, sdxlVaeAvailable, krea2Builtins, wildcardLists, ariaModel])
 
   // Cancel the in-flight generation: stop the batch submit loop, interrupt the
   // running prompt, drop any still-queued prompts, and mark our active jobs
@@ -577,17 +607,6 @@ export default function GenerationForm() {
     (r) => r.width === params.width && r.height === params.height
   )
 
-  // The Aria/Patreon model picker swaps the generation model once an Aria model
-  // has been imported (muscgi/muscgro are excluded upstream by isAriaModel).
-  // SDXL-family picks an Aria checkpoint; diffusion families (z-image/ernie/
-  // anima) pick an Aria diffusion model (UNET); the legacy lora kind picks an
-  // Aria LoRA.
-  const ariaModels =
-    workflow.ariaModelKind === 'checkpoint'
-      ? ariaCheckpoints
-      : workflow.ariaModelKind === 'unet'
-        ? ariaUnets
-        : ariaLoras
   const showModelPicker =
     ariaModels.length > 0 &&
     (workflow.ariaModelKind === 'checkpoint' ||
@@ -653,7 +672,7 @@ export default function GenerationForm() {
               <Badge variant="outline" className="ml-2 text-[10px] font-normal">Aria</Badge>
             </SectionLabel>
             <Select
-              value={params.ariaModel || 'base'}
+              value={ariaModel || 'base'}
               onValueChange={(v) => set('ariaModel', (v ?? 'base') === 'base' ? undefined : v)}
             >
               <SelectTrigger className="h-9 text-sm">

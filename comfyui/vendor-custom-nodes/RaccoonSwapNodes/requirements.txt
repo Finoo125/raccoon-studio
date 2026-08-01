@@ -1,0 +1,16 @@
+# Both installers install this file automatically when the pack is copied in
+# (Copy-VendorPack / copy_vendor_pack).
+#
+# These were undeclared until 2026-08-01, and the pack only ever loaded because
+# ReActor's own requirements happened to pull them into the shared venv first.
+# When ReActor's clone failed (it comes from Codeberg, which the installer treats
+# as non-fatal), onnx was never installed and this pack died on import — taking
+# pixel-boost swap with it, reported as an unrelated "No module named 'analyzer'".
+#
+# numpy / torch / opencv come with ComfyUI itself, so they stay out of here.
+onnx
+
+# Imported directly by swapper/analyzer/providers. Which *build* lands is not
+# ours to choose: Install-OnnxRuntime reconciles gpu/directml/cpu across every
+# pack afterwards, so pin no flavour here or it will fight that step.
+onnxruntime

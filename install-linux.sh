@@ -1230,6 +1230,20 @@ main() {
   spin_run "Running npm install" npm install --prefix "$APP_DIR"
   ok "Node.js dependencies installed"
 
+  # npm rewrites the tracked app/package-lock.json whenever it disagrees with
+  # package.json, leaving the working tree dirty in an install nobody edited - and
+  # the next `git pull` (the Update button) then aborts with "your local changes
+  # would be overwritten by merge". v1.0.18-34 shipped exactly that disagreement,
+  # so those installs sit on a dead Update button; restoring the file here means a
+  # plain Reinstall - a button they can already press - revives it.
+  #
+  # Safe to discard: it is generated, node_modules is already installed above, and
+  # app/src/lib/package-lock.test.ts keeps the two files in sync.
+  if [ "$DRY_RUN" != 1 ] && [ -d "$SCRIPT_DIR/.git" ]; then
+    git -C "$SCRIPT_DIR" checkout -- app/package-lock.json 2>/dev/null || true
+    _log "[git] restored app/package-lock.json (keeps the Update button working)"
+  fi
+
   # ── Step 12: Start scripts + .env.local ──────────────────────────────────────
   step "Writing start scripts and configuration"
 
@@ -1315,15 +1329,27 @@ if [ "$stopped" -eq 1 ]; then echo "[Raccoon Studio] Stopped."; else echo "[Racc
 STOPSCRIPT
   chmod +x "$SCRIPT_DIR/stop.sh"
 
-  # .env.local
+  # .env.local — the four keys below are ours and always rewritten; every other
+  # line is the user's (OLLAMA_BASE_URL, FFMPEG_PATH, RACCOON_DATA_DIR, a changed
+  # port, their comments) and is carried across. Until 2026-08-01 the whole file
+  # was replaced, so every install and every update silently dropped those - the
+  # .bak beside it made them recoverable, but only for someone who knew to look,
+  # and a lost OLLAMA_BASE_URL just looks like the video prompt enhancer breaking.
   local env_file="$APP_DIR/.env.local"
-  [ -f "$env_file" ] && cp "$env_file" "$env_file.bak" && info ".env.local backed up"
+  local preserved=''
+  if [ -f "$env_file" ]; then
+    cp "$env_file" "$env_file.bak" && info ".env.local backed up"
+    # Drop only the managed assignments; comments and blanks ride along. Matches
+    # `KEY=` at the start of a line, so a commented-out managed key is kept.
+    preserved=$(grep -vE '^(COMFYUI_BASE_URL|COMFYUI_OUTPUT_DIR|COMFYUI_MODELS_DIR|COMFYUI_START_SCRIPT)=' "$env_file" || true)
+  fi
   cat > "$env_file" <<ENVFILE
 COMFYUI_BASE_URL=http://127.0.0.1:8188
 COMFYUI_OUTPUT_DIR=${COMFYUI_DIR}/output
 COMFYUI_MODELS_DIR=${COMFYUI_DIR}/models
 COMFYUI_START_SCRIPT=${SCRIPT_DIR}/start-comfyui.sh
 ENVFILE
+  [ -n "$preserved" ] && printf '%s\n' "$preserved" >> "$env_file"
   ok "start-comfyui.sh, start.sh, start-desktop.sh, stop.sh created"
   ok ".env.local written"
   fi # end DRY_RUN guard for file writes

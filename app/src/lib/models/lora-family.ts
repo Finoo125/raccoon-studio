@@ -4,6 +4,7 @@
  * in `lora-arch.ts`, which is server-only — importing that from a component
  * drags `fs` into the browser bundle and fails the build.
  */
+import { selectionIsStale } from './installed'
 
 /**
  * Families the app can generate with, plus the two it can only recognise well
@@ -41,10 +42,13 @@ export function visibleLoras(
  *
  * Selections survive reloads and arrive from gallery deep-links, so a name can
  * outlive the file — and ComfyUI rejects a name it can't resolve with
- * `value_not_in_list`, which surfaces as a raw "Generation failed". An empty
- * `installed` means the list never loaded (ComfyUI down), not that everything
- * vanished, so it never reports missing.
+ * `value_not_in_list`, which surfaces as a raw "Generation failed".
+ *
+ * `loaded` says whether ComfyUI answered. It used to be inferred as
+ * `installed.length > 0`, which silently exempted the worst case: an install
+ * with **zero** LoRAs reports an empty list, so a name left in localStorage by a
+ * previous install was forwarded forever and broke every job.
  */
-export function loraIsMissing(selected: string, installed: string[]): boolean {
-  return Boolean(selected) && installed.length > 0 && !installed.includes(selected)
+export function loraIsMissing(selected: string, installed: string[], loaded: boolean): boolean {
+  return selectionIsStale(selected, installed, loaded)
 }

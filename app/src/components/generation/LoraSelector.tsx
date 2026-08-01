@@ -5,6 +5,7 @@ import { X } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { loraIsMissing, visibleLoras, type LoraFamily } from '@/lib/models/lora-family'
+import { comboOptions } from '@/lib/models/installed'
 
 interface Props {
   label: string
@@ -23,23 +24,26 @@ interface Props {
 
 export default function LoraSelector({ label, value, strength, onChange, onRemove, family }: Props) {
   const [loras, setLoras] = useState<string[]>([])
+  const [lorasLoaded, setLorasLoaded] = useState(false)
   const [families, setFamilies] = useState<Record<string, LoraFamily | null>>({})
 
+  // `lorasLoaded` separates "ComfyUI said there are none" from "ComfyUI has not
+  // answered", which the stale-selection guard below cannot infer from an empty
+  // list — an install with zero LoRAs reports exactly that.
   useEffect(() => {
     fetch('/api/comfyui/object_info/LoraLoader')
       .then((r) => r.json())
       .then((d) => {
-        const names = d?.LoraLoader?.input?.required?.lora_name?.[0] as string[] | undefined
-        if (Array.isArray(names)) setLoras(names)
+        setLoras(comboOptions(d, 'LoraLoader', 'lora_name'))
+        setLorasLoaded(true)
       })
       .catch(() => {
         // Fallback: try Lora Loader Stack
         fetch('/api/comfyui/object_info')
           .then(r => r.json())
           .then(d => {
-            const names = (d as Record<string, {input?: {required?: Record<string, [string[]]>}}>)
-              ?.LoraLoader?.input?.required?.lora_name?.[0] ?? []
-            if (Array.isArray(names)) setLoras(names as string[])
+            setLoras(comboOptions(d, 'LoraLoader', 'lora_name'))
+            setLorasLoaded(true)
           })
           .catch(() => {})
       })
@@ -65,8 +69,8 @@ export default function LoraSelector({ label, value, strength, onChange, onRemov
   // mid-job. Every entry path routes through this picker, so this is the one
   // guard needed. Self-limiting: clearing sets value to '', which no-ops here.
   useEffect(() => {
-    if (loraIsMissing(value, loras)) onChange('', strength)
-  }, [value, loras, strength, onChange])
+    if (loraIsMissing(value, loras, lorasLoaded)) onChange('', strength)
+  }, [value, loras, lorasLoaded, strength, onChange])
 
   const active = Boolean(value)
 

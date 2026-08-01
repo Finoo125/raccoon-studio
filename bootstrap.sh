@@ -37,6 +37,16 @@ fi
 if [ -f install-linux.sh ]; then
   ROOT="$PWD"
   printf '  Using the repo in the current folder: %s\n' "$ROOT"
+  # Pull here too. This is the documented "already have the repo cloned" path,
+  # and it used to run the installer against the existing checkout without
+  # fetching anything — so an install whose own Update button was stuck (the
+  # dirty package-lock in v1.0.18-34) had no route left to new code at all.
+  # Guarded on .git: this branch also matches an unzipped copy with no history.
+  if [ -d "$ROOT/.git" ]; then
+    printf '  Pulling latest...\n'
+    git -C "$ROOT" checkout -- app/package-lock.json 2>/dev/null || true
+    git -C "$ROOT" pull --ff-only
+  fi
 elif [ -d raccoon-studio/.git ]; then
   ROOT="$PWD/raccoon-studio"
   printf '  Repo already cloned — pulling latest...\n'
