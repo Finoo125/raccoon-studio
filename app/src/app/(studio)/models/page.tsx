@@ -12,9 +12,12 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { PATREON_PATTERNS, isPatreonModel, patreonSubfolder, matchesPatreonPreset } from '@/lib/models/patreon'
-import { LTX23_ASSETS, ltxAssetInstalled, type Ltx23Asset } from '@/lib/models/ltx23-assets'
+import { LTX23_ASSETS, assetInstalled, type ModelAsset } from '@/lib/models/ltx23-assets'
+import { MINIMAX_H3_ASSETS } from '@/lib/models/minimax-h3-assets'
 import { comboOptions } from '@/lib/models/installed'
-import { KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA } from '@/lib/workflows/krea2'
+import { restartComfyUI } from '@/lib/comfyui/restart'
+import { createTransferTracker } from '@/lib/models/transfer-tracker'
+import { KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA, KREA2_KROMA_LORA } from '@/lib/workflows/krea2'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -286,6 +289,15 @@ const LTX_PRESET: PresetDefinition = {
   files: [],
 }
 
+// `id` must match the state-key prefix the H3 status probe writes, or every row
+// stays stuck at "idle" while the download reports progress under another key.
+const MINIMAX_H3_PRESET: PresetDefinition = {
+  id: 'minimax-h3',
+  name: 'MiniMax H3 (Video)',
+  description: 'Models for the MiniMax H3 video workflow',
+  files: [],
+}
+
 interface DetailerAsset {
   name: string
   path: string
@@ -398,6 +410,31 @@ const KREA2_STYLE_PRESET: PresetDefinition = {
   id: 'krea2-styles',
   name: 'Krea2 Style LoRAs',
   description: 'Optional looks for the Krea2 models',
+  files: [],
+}
+
+// The Kroma uncensor fine-tune — the heavyweight alternative to the 27 MB
+// refusal patch that ships inside both Krea2 presets. Its own opt-in row rather
+// than part of a preset: 1.9 GB, and it changes how every image looks, so it is
+// not something to hand someone who just wanted Krea2. Filename must match
+// KREA2_KROMA_LORA in lib/workflows/krea2.ts — the Generate form asks ComfyUI
+// for exactly that name. Upstream also publishes `-rl` and `-rl-mild` variants
+// (3.8 / 2.8 GB) that the model card does not document; deliberately not listed.
+const KREA2_NSFW_LORAS: DetailerAsset[] = [
+  {
+    name: KREA2_KROMA_LORA,
+    path: 'loras',
+    url: 'https://huggingface.co/lodestones/Kroma/resolve/main/kroma-v0.1.safetensors',
+    sizeMb: 1883,
+    nodeClass: 'LoraLoader',
+    fieldName: 'lora_name',
+  },
+]
+
+const KREA2_NSFW_PRESET: PresetDefinition = {
+  id: 'krea2-nsfw',
+  name: 'Krea2 NSFW',
+  description: 'Optional uncensor model for the Krea2 models',
   files: [],
 }
 
@@ -526,12 +563,16 @@ export default function ModelsPage() {
       const safeFetch = async (url: string) => {
         try { return await (await fetch(url)).json() } catch { return null }
       }
-      const [ckpt, lora, vae, clip, latent] = await Promise.all([
+      const [ckpt, lora, vae, clip, latent, unet] = await Promise.all([
         safeFetch('/api/comfyui/object_info/CheckpointLoaderSimple'),
         safeFetch('/api/comfyui/object_info/LoraLoader'),
         safeFetch('/api/comfyui/object_info/VAELoader'),
         safeFetch('/api/comfyui/object_info/CLIPLoader'),
         safeFetch('/api/comfyui/object_info/LatentUpscaleModelLoader'),
+        // MiniMax H3's DiT lives in models/diffusion_models, which only
+        // UNETLoader enumerates — without this probe every H3 row reads "missing"
+        // even once the 21 GB file is on disk.
+        safeFetch('/api/comfyui/object_info/UNETLoader'),
       ])
       const available = new Set<string>([
         ...comboOptions(ckpt, 'CheckpointLoaderSimple', 'ckpt_name'),
@@ -539,10 +580,17 @@ export default function ModelsPage() {
         ...comboOptions(vae, 'VAELoader', 'vae_name'),
         ...comboOptions(clip, 'CLIPLoader', 'clip_name'),
         ...comboOptions(latent, 'LatentUpscaleModelLoader', 'model_name'),
+        ...comboOptions(unet, 'UNETLoader', 'unet_name'),
       ])
       for (const asset of LTX23_ASSETS) {
         patchState(`ltx23::${asset.name}`, {
-          status: ltxAssetInstalled(asset.name, available) ? 'present' : 'missing',
+          status: assetInstalled(asset.name, available) ? 'present' : 'missing',
+          progress: 0,
+        })
+      }
+      for (const asset of MINIMAX_H3_ASSETS) {
+        patchState(`minimax-h3::${asset.name}`, {
+          status: assetInstalled(asset.name, available) ? 'present' : 'missing',
           progress: 0,
         })
       }
@@ -566,8 +614,8 @@ export default function ModelsPage() {
     void checkDetailer()
   }, [])
 
-  // Krea2 style LoRAs: one LoraLoader probe covers all eleven, rather than the
-  // per-asset probe above repeating the same fetch.
+  // Krea2 style + NSFW LoRAs: one LoraLoader probe covers all of them, rather
+  // than the per-asset probe above repeating the same fetch.
   useEffect(() => {
     const checkKrea2Styles = async () => {
       let names: string[]
@@ -582,13 +630,17 @@ export default function ModelsPage() {
         // claiming the files are missing.
         return
       }
-      for (const asset of KREA2_STYLE_LORAS) {
-        const installed = names.some((n) => n === asset.name || n.endsWith('/' + asset.name))
-        patchState(`krea2-styles::${asset.name}`, {
-          status: installed ? 'present' : 'missing',
-          progress: 0,
-        })
+      const mark = (prefix: string, assets: DetailerAsset[]) => {
+        for (const asset of assets) {
+          const installed = names.some((n) => n === asset.name || n.endsWith('/' + asset.name))
+          patchState(`${prefix}::${asset.name}`, {
+            status: installed ? 'present' : 'missing',
+            progress: 0,
+          })
+        }
       }
+      mark(KREA2_STYLE_PRESET.id, KREA2_STYLE_LORAS)
+      mark(KREA2_NSFW_PRESET.id, KREA2_NSFW_LORAS)
     }
     void checkKrea2Styles()
   }, [])
@@ -623,10 +675,18 @@ export default function ModelsPage() {
   const aborters = useRef(new Map<string, AbortController>())
   const cancelDownload = (key: string) => aborters.current.get(key)?.abort()
 
+  // New model files only reach ComfyUI's pickers when it restarts. Catalogue
+  // downloads and Patreon imports both register with one tracker, so a bulk
+  // download or a run of imports asks once, when the last transfer settles.
+  const [restartOpen, setRestartOpen] = useState(false)
+  const transfers = useRef(createTransferTracker(() => setRestartOpen(true))).current
+
   const handleDownload = async (preset: PresetDefinition, file: ModelFile) => {
     const key = `${preset.id}::${file.name}`
     const ctrl = new AbortController()
     aborters.current.set(key, ctrl)
+    transfers.begin()
+    let added = false
     patchState(key, { status: 'downloading', progress: 0, received: 0, total: 0 })
     toast.info(`Downloading ${file.name}…`)
     try {
@@ -652,7 +712,8 @@ export default function ModelsPage() {
           if (!line.startsWith('data: ')) continue
           try {
             const ev = JSON.parse(line.slice(6)) as {
-              type: string; value?: number; receivedBytes?: number; totalBytes?: number; message?: string
+              type: string; value?: number; receivedBytes?: number; totalBytes?: number
+              message?: string; alreadyExists?: boolean
             }
             if (ev.type === 'progress') {
               patchState(key, {
@@ -663,6 +724,8 @@ export default function ModelsPage() {
             } else if (ev.type === 'done') {
               patchState(key, { status: 'done', progress: 100 })
               toast.success(`${file.name} downloaded`)
+              // A file that was already on disk is one ComfyUI has seen before.
+              if (!ev.alreadyExists) added = true
             } else if (ev.type === 'error') {
               throw new Error(ev.message ?? 'Unknown error')
             }
@@ -679,17 +742,27 @@ export default function ModelsPage() {
       }
     } finally {
       aborters.current.delete(key)
+      transfers.end(added)
     }
   }
 
-  const addPatreonEntry = (presetId: string, entry: PatreonEntry) =>
+  // These two are also how an import reports its progress: PatreonPanel adds the
+  // entry as 'importing' when the copy starts and flips it to 'active' (the file
+  // landed — new or replaced) or 'error' when it settles. That is exactly the
+  // begin/end pair the restart prompt needs, so imports join the same counter as
+  // downloads without an extra prop.
+  const addPatreonEntry = (presetId: string, entry: PatreonEntry) => {
+    if (entry.status === 'importing') transfers.begin()
     setPatreonImports((prev) => ({ ...prev, [presetId]: [...(prev[presetId] ?? []), entry] }))
+  }
 
-  const updatePatreonEntry = (presetId: string, name: string, patch: Partial<PatreonEntry>) =>
+  const updatePatreonEntry = (presetId: string, name: string, patch: Partial<PatreonEntry>) => {
+    if (patch.status && patch.status !== 'importing') transfers.end(patch.status === 'active')
     setPatreonImports((prev) => ({
       ...prev,
       [presetId]: (prev[presetId] ?? []).map((e) => (e.name === name ? { ...e, ...patch } : e)),
     }))
+  }
 
   return (
     <div className="p-6 md:p-8 space-y-5">
@@ -720,7 +793,10 @@ export default function ModelsPage() {
       {/* Preset cards — 3-column grid */}
       <div className="space-y-3">
       <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Image Models</h2>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* data-tour: what the first-run tour rings on its Models step — "download
+          one of these" is the whole point of the page for a new install. On the
+          grid, not the section, so the ring doesn't cut through the heading. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" data-tour="/models">
         {PRESETS.map((preset) => (
           <PresetCard
             key={preset.id}
@@ -734,7 +810,11 @@ export default function ModelsPage() {
       </div>
 
       {/* LTX 2.3 video models */}
-      <LtxVideoSection
+      <VideoModelSection
+        title="LTX 2.3 (Video)"
+        blurb={`Models for the Generate Videos workflow. ${LTX23_ASSETS.filter((a) => !a.url).length} files have no public mirror — import them below (or copy from an existing ComfyUI install).`}
+        assets={LTX23_ASSETS}
+        keyPrefix={LTX_PRESET.id}
         states={states}
         onDownload={(asset) =>
           void handleDownload(LTX_PRESET, {
@@ -745,6 +825,24 @@ export default function ModelsPage() {
           })
         }
         onCancel={(asset) => cancelDownload(`${LTX_PRESET.id}::${asset.name}`)}
+      />
+
+      {/* MiniMax H3 video models */}
+      <VideoModelSection
+        title="MiniMax H3 (Video)"
+        blurb="Video with natively synced stereo audio, 24 fps. All four files are required — the audio VAE included, or clips come out silent. ~42.5 GB total; needs ComfyUI 0.30.0 or newer."
+        assets={MINIMAX_H3_ASSETS}
+        keyPrefix={MINIMAX_H3_PRESET.id}
+        states={states}
+        onDownload={(asset) =>
+          void handleDownload(MINIMAX_H3_PRESET, {
+            name: asset.name,
+            path: asset.folder,
+            url: asset.url ?? '',
+            sizeMb: asset.sizeMb,
+          })
+        }
+        onCancel={(asset) => cancelDownload(`${MINIMAX_H3_PRESET.id}::${asset.name}`)}
       />
 
       {/* ControlNet + IP-Adapter reference models */}
@@ -801,6 +899,24 @@ export default function ModelsPage() {
         onCancel={(asset) => cancelDownload(`${FACESWAP_PRESET.id}::${asset.name}`)}
       />
 
+      {/* Krea2 NSFW — the optional heavyweight uncensor model */}
+      <AssetSection
+        assets={KREA2_NSFW_LORAS}
+        keyPrefix={KREA2_NSFW_PRESET.id}
+        title={KREA2_NSFW_PRESET.name}
+        description="Kroma is a re-trained, uncensored version of Krea2. Optional — the Krea2 models already come with a small uncensor patch that costs you nothing, and that is enough for most prompts. Kroma goes further (more willing, better bodies and skin) but it also changes the look of every image and adds 1.9 GB. Once installed, pick it under NSFW in Generate."
+        states={states}
+        onDownload={(asset) =>
+          void handleDownload(KREA2_NSFW_PRESET, {
+            name: asset.name,
+            path: asset.path,
+            url: asset.url,
+            sizeMb: asset.sizeMb,
+          })
+        }
+        onCancel={(asset) => cancelDownload(`${KREA2_NSFW_PRESET.id}::${asset.name}`)}
+      />
+
       {/* Krea2 style LoRAs — optional looks, pick any */}
       <AssetSection
         assets={KREA2_STYLE_LORAS}
@@ -823,6 +939,19 @@ export default function ModelsPage() {
 
       {/* Manage installed models — disk usage + delete */}
       <ManageModelsSection />
+
+      {/* Raised once every started download and import has finished. */}
+      <ConfirmDialog
+        open={restartOpen}
+        onOpenChange={setRestartOpen}
+        title="Restart ComfyUI to load the new models?"
+        description={
+          'All downloads and imports have finished. ComfyUI only scans its model folders when it starts, ' +
+          'so the new files will not appear in the pickers until it restarts.'
+        }
+        confirmLabel="Restart ComfyUI"
+        onConfirm={() => void restartComfyUI()}
+      />
     </div>
   )
 }
@@ -980,35 +1109,45 @@ function FileRow({
   )
 }
 
-// ─── LtxVideoSection ──────────────────────────────────────────────────────────
+// ─── VideoModelSection ────────────────────────────────────────────────────────
 
-function LtxVideoSection({
+/**
+ * One video family's model files. Shared by LTX 2.3 and MiniMax H3 — the two
+ * differ only in title, blurb, asset list and state-key prefix, so they render
+ * through the same component rather than a copied one.
+ */
+function VideoModelSection({
+  title,
+  blurb,
+  assets,
+  keyPrefix,
   states,
   onDownload,
   onCancel,
 }: {
+  title: string
+  blurb: string
+  assets: ModelAsset[]
+  keyPrefix: string
   states: Record<string, DownloadState>
-  onDownload: (asset: Ltx23Asset) => void
-  onCancel: (asset: Ltx23Asset) => void
+  onDownload: (asset: ModelAsset) => void
+  onCancel: (asset: ModelAsset) => void
 }) {
-  const isMissing = (a: Ltx23Asset) => {
-    const s = states[`ltx23::${a.name}`]?.status
+  const isMissing = (a: ModelAsset) => {
+    const s = states[`${keyPrefix}::${a.name}`]?.status
     return !s || s === 'missing' || s === 'idle'
   }
   // Only files with a verified public URL can be fetched here; the rest are
   // imported manually via the section below.
-  const downloadableMissing = LTX23_ASSETS.filter((a) => a.url && isMissing(a))
-  const manualCount = LTX23_ASSETS.filter((a) => !a.url).length
+  const downloadableMissing = assets.filter((a) => a.url && isMissing(a))
+  const totalGb = downloadableMissing.reduce((n, a) => n + a.sizeMb, 0) / 1000
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">LTX 2.3 (Video)</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            Models for the Generate Videos workflow. {manualCount} files have no public mirror — import
-            them below (or copy from an existing ComfyUI install).
-          </p>
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">{title}</h2>
+          <p className="text-xs text-muted-foreground mt-1">{blurb}</p>
         </div>
         {downloadableMissing.length > 0 && (
           <Button
@@ -1016,17 +1155,17 @@ function LtxVideoSection({
             onClick={() => downloadableMissing.forEach((a) => onDownload(a))}
           >
             <Download className="h-4 w-4 mr-2" />
-            Download available ({downloadableMissing.length})
+            Download available ({downloadableMissing.length} · {totalGb.toFixed(1)} GB)
           </Button>
         )}
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4 grid grid-cols-1 md:grid-cols-2 gap-2">
-        {LTX23_ASSETS.map((asset) => (
+        {assets.map((asset) => (
           <LtxAssetRow
             key={asset.name}
             asset={asset}
-            state={states[`ltx23::${asset.name}`] ?? { status: 'idle', progress: 0 }}
+            state={states[`${keyPrefix}::${asset.name}`] ?? { status: 'idle', progress: 0 }}
             onDownload={() => onDownload(asset)}
             onCancel={() => onCancel(asset)}
           />
@@ -1042,7 +1181,7 @@ function LtxAssetRow({
   onDownload,
   onCancel,
 }: {
-  asset: Ltx23Asset
+  asset: ModelAsset
   state: DownloadState
   onDownload: () => void
   onCancel?: () => void

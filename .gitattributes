@@ -4,6 +4,13 @@
 # /usr/bin/env bash^M"). This shipped broken through v1.0.14.
 *.sh text eol=lf
 
+# The mirror image, and just as load-bearing: cmd.exe reads a batch file by byte
+# offset, so an LF-only .bat drifts out of sync partway through and starts
+# executing the wrong lines. "Upgrade Raccoon Studio.bat" carries a PowerShell
+# payload after `exit /b`, and with LF endings cmd ran that payload as batch
+# commands instead of stopping.
+*.bat text eol=crlf
+
 # install-linux.sh parses this manifest line by line, so it ships LF for the
 # same reason. pinned_rev() strips a stray CR anyway — this keeps the file
 # clean rather than relying on that.

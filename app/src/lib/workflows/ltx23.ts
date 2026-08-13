@@ -42,6 +42,9 @@ const FPS_ID = (BASE[PROMPT_ID].inputs.fps as [string, number])[0]
 const SAVE_ID = Object.keys(BASE).filter(
   (k) => BASE[k].class_type === 'VHS_VideoCombine' && BASE[k].inputs.save_output === true,
 )[0]
+// The only other output node hanging off the upscale branch — it takes SAVE_ID's
+// filenames, so it has to go whenever SAVE_ID does (see the seed-hunt branch).
+const PRUNE_ID = idOf('VHS_PruneOutputs')
 
 // The i2v conditioning path — one pair per sampling pass. `LTXVImgToVideoInplaceKJ`
 // pins frame 0 to the source image; `RaccoonLTXReferenceConditioning` attaches the
@@ -53,13 +56,13 @@ const INPLACE_IDS = idsOf('LTXVImgToVideoInplaceKJ')
 const REFERENCE_IDS = idsOf('RaccoonLTXReferenceConditioning')
 const CHUNK_ID = idOf('LTXVChunkFeedForward')
 
-type Tier = NonNullable<VideoGenerationParams['vramMode']>
+export type Tier = NonNullable<VideoGenerationParams['vramMode']>
 
 /** Legacy/unknown stored values render full-size, exactly as they always did. */
-const tierOf = (m?: string): Tier => (m === 'low' || m === 'medium' ? m : 'high')
+export const tierOf = (m?: string): Tier => (m === 'low' || m === 'medium' ? m : 'high')
 
 /** Pixel budget per tier, used for the i2v dims fitted to the source aspect. */
-const BUDGET_MP: Record<Tier, number> = { high: 2, medium: 1.4, low: 1 }
+export const BUDGET_MP: Record<Tier, number> = { high: 2, medium: 1.4, low: 1 }
 
 /**
  * t2v framings — the final size, i.e. after the x2 spatial upscaler.
@@ -72,7 +75,7 @@ const BUDGET_MP: Record<Tier, number> = { high: 2, medium: 1.4, low: 1 }
  *
  * Square is the same at every tier: 1024² is already ~1MP.
  */
-const ORIENTATIONS: { label: string; value: string; dims: Record<Tier, [number, number]> }[] = [
+export const ORIENTATIONS: { label: string; value: string; dims: Record<Tier, [number, number]> }[] = [
   {
     label: 'Portrait 9:16',
     value: 'portrait',
@@ -139,6 +142,30 @@ const FACE_ID_SETTINGS = {
   phase_scale: 1,
   debug: false,
 } as const
+
+/**
+ * The `RaccoonLoraStack` rows for a render, as the node's `stack_data` JSON.
+ *
+ * Order is load-bearing and measured: DMD first (the few-step schedule needs
+ * it), then VBVR so it shapes base behaviour before any user style LoRA, then
+ * the user's slots, then FaceID last — matching PlagueKind's ordering.
+ *
+ * Shared with the Director builder, which stacks LoRAs onto the same node.
+ */
+export function loraStackData(params: VideoGenerationParams, faceId: boolean): string {
+  const rows: Record<string, unknown>[] = [DMD_ROW]
+  if (params.motionLora === true) rows.push(MOTION_ROW)
+  for (const [lora, str] of [
+    [params.lora1, params.lora1Strength],
+    [params.lora2, params.lora2Strength],
+    [params.lora3, params.lora3Strength],
+    [params.lora4, params.lora4Strength],
+  ] as [string | undefined, number | undefined][]) {
+    if (lora && lora !== 'None') rows.push({ on: true, lora, str: str ?? 1, vs: 1, as: 1 })
+  }
+  if (faceId) rows.push(FACE_ID_ROW)
+  return JSON.stringify(rows)
+}
 
 export const ltx23Workflow: VideoWorkflowDefinition = {
   id: 'ltx23',
@@ -246,18 +273,21 @@ export const ltx23Workflow: VideoWorkflowDefinition = {
     // omitted). VBVR is opt-in here even though the form defaults it on — the
     // stack skips a missing LoRA silently, but only the form knows whether the
     // optional 554 MB file is actually installed.
-    const rows: Record<string, unknown>[] = [DMD_ROW]
-    if (params.motionLora === true) rows.push(MOTION_ROW)
-    for (const [lora, str] of [
-      [params.lora1, params.lora1Strength],
-      [params.lora2, params.lora2Strength],
-      [params.lora3, params.lora3Strength],
-      [params.lora4, params.lora4Strength],
-    ] as [string | undefined, number | undefined][]) {
-      if (lora && lora !== 'None') rows.push({ on: true, lora, str: str ?? 1, vs: 1, as: 1 })
+    wf[LORA_ID].inputs.stack_data = loraStackData(params, faceId)
+
+    // Seed hunt: drop the two output nodes terminating the upscale branch. That
+    // leaves 906:* / 1152:* unreachable from any output node, so ComfyUI prunes
+    // them and the job stops after the half-size first pass — whose VideoCombine
+    // (889:549) already writes a temp mp4. Returning here rather than editing
+    // anything is the point: the surviving graph stays identical to a full
+    // render, which is what makes the winning seed reproduce this exact clip.
+    // Placement matters — after the LoRA stack (a candidate without the user's
+    // LoRAs would be a lying preview), before the RIFE splice (it rewires SAVE_ID).
+    if (params.seedHunt) {
+      delete wf[SAVE_ID]
+      delete wf[PRUNE_ID]
+      return wf as unknown as ComfyUIPrompt
     }
-    if (faceId) rows.push(FACE_ID_ROW)
-    wf[LORA_ID].inputs.stack_data = JSON.stringify(rows)
 
     // RIFE off: feed the saving combine straight from RIFE's own sources — the
     // raw frames and the base fps (RIFE normally upsamples to a fixed 60).

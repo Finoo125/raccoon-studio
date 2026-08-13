@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server'
-import { addonFeatures } from '@/lib/features/registry'
+import { listedAddons } from '@/lib/features/registry'
 import { getUnlockedFeatures, installKey } from '@/lib/addons/entitlement'
 
 export async function GET() {
   const unlocked = await getUnlockedFeatures()
   const set = new Set(unlocked)
-  const addons = addonFeatures().map((f) => ({
+  const addons = listedAddons().map((f) => ({
     id: f.id,
     label: f.label,
     href: f.href,
     requires: f.requires ?? null,
+    release: f.release ?? null,
     unlocked: set.has(f.id),
   }))
   return NextResponse.json({ unlocked, addons })

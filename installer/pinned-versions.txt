@@ -53,7 +53,26 @@
 # verification, not a formality. Images and face swap work on both revisions, so
 # "images still generate" is not evidence that a bump is safe. Render a video
 # before changing this line.
-ComfyUI                   a58473fd9bf3a1e2383a41c6267ca03a168150ba
+#
+# Bumped 0.26.0 -> v0.30.0 on 2026-08-06, for MiniMax H3 (core support landed in
+# 0.29.0; the H3 docs ask for 0.30.0). Both breakages above were re-checked
+# against this tree before the bump and neither can bite: RaccoonVideoNodes
+# touches only two comfy internals, `av_model.LTXAVModel` and
+# `symmetric_patchifier.latent_to_pixel_coords`, and both still exist. It never
+# imported `interleaved_freqs_cis` -- that name survives only in a comment in
+# tiled_vae_decode.py explaining why the node was vendored. (Upstream fixed both
+# independently -- 10S_Nodes v1.9.6, ComfyUI-LTXVideo "Support core rope change"
+# -- but we stay vendored; see the "No longer installed" note at the bottom.)
+#
+# Verified the way this file demands: LTX23Director live render, 2026-08-06,
+# 131 s, two sampling passes + tiled upscale + RIFE + audio, mp4 on disk
+# (153558-LTX23Director__00001-audio.mp4). All 48 LTX23.json node classes and
+# all 9 Raccoon nodes registered on this revision.
+#
+# Deps moved with it: comfy-kitchen 0.2.14 -> 0.2.26, comfy-aimdo 0.4.10 ->
+# 0.4.11, frontend 1.45.19 -> 1.47.11. Re-run the installer (or
+# `pip install -r requirements.txt`) after checking this revision out.
+ComfyUI                   b1693ecba9f5b65f8c80ab36b195ab963ec92413
 
 # Core workflow nodes
 rgthree-comfy             27b4f4cdcf3b127c29d5d8135ac1536ecbd4c383
@@ -79,6 +98,13 @@ ComfyUI-mxToolkit         7f7a0e584f12078a1c589645d866ae96bad0cc35
 comfyui-various           5bd85aaf7616878471469c4ec7e11bbd0cef3bf2
 ComfyUI-VFI               6176a430f12cd16003f4664c1e3c6af8e96cc3c6
 comfyui_nvidia_rtx_nodes  892515e3eb9a4920a131a502a047e47adca9eb0d
+# LTX Director timeline nodes (video Director mode). GPL-3, so it is cloned here
+# rather than vendored -- comfyui/vendor-custom-nodes/ is redistributed in the
+# public release repo, cloned packs are fetched from upstream on the user's own
+# machine. Captured from the tree a 3 s two-segment prompt-relay render passed
+# on, 2026-08-02: both sampling passes, tiled upscale to 1280x704, RIFE to
+# 60 fps, audio.
+WhatDreamsCost-ComfyUI    a3c809c8b593a74c2ddcd6c1f83ad85ebebe3c64
 
 # ── No longer installed, deliberately ────────────────────────────────────────
 # ComfyUI-LTXVideo and 10S_Nodes used to be cloned here. Every node the video

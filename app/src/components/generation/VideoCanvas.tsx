@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 import { Download, Clapperboard, Clock, Check, Loader2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useQueueStore } from '@/lib/comfyui/queue'
+import { useQueueStore, isSeedHunt } from '@/lib/comfyui/queue'
+import SeedHuntGrid from './SeedHuntGrid'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import { formatEta } from '@/lib/generation/eta'
 import { Progress } from '@/components/ui/progress'
@@ -15,7 +16,15 @@ import { useDirectorStage } from '@/lib/director/director-stage'
  * the live latent preview frames (same websocket path as images); on completion
  * it swaps to an inline <video> player for the finished mp4.
  */
-export default function VideoCanvas() {
+export default function VideoCanvas({
+  videoRef,
+  hideControls = false,
+}: {
+  /** Director mode drives this element from its transport bar and playhead. */
+  videoRef?: React.RefObject<HTMLVideoElement | null>
+  /** Suppress the native controls when an external transport owns playback. */
+  hideControls?: boolean
+} = {}) {
   const [isHovered, setIsHovered] = useState(false)
   const director = useDirectorStage('video')
   const activeVideoUrl = useStudioStore((s) => s.activeVideoUrl)
@@ -26,6 +35,19 @@ export default function VideoCanvas() {
   const runningJob =
     jobs.find((j) => j.kind === 'video' && j.status === 'running') ??
     jobs.find((j) => j.kind === 'video' && j.status === 'pending')
+
+  // The live candidate batch is the contiguous run of hunt jobs at the head of
+  // the queue (jobs are prepended). Once the newest video job is not a hunt job
+  // the batch is spent, so the committed render takes the canvas back on its own
+  // — no dismiss button, no state to reset, and nothing destroyed either way.
+  // `jobs` is a stable store reference, so deriving here is safe under zustand v5.
+  const huntBatch: typeof jobs = []
+  for (const j of jobs) {
+    if (j.kind !== 'video') continue
+    if (!isSeedHunt(j)) break
+    huntBatch.push(j)
+  }
+  huntBatch.reverse() // oldest first, so the tiles read #1 … #N
 
   const isRunning = runningJob != null
   const [now, setNow] = useState(() => Date.now())
@@ -50,6 +72,11 @@ export default function VideoCanvas() {
   // not fix, so this is the moment to cancel if it looks wrong.
   const firstPassUrl = runningJob?.previewVideo ?? null
 
+  // Director mode nests the canvas in a flex column that already bounds it, so
+  // the viewport-relative cap (which assumes canvas + rail is the whole page)
+  // would leave a gap under the timeline instead.
+  const mediaMaxHeight = hideControls ? '100%' : 'calc(100vh - 11rem)'
+
   const handleDownload = () => {
     if (!activeVideoUrl) return
     const a = document.createElement('a')
@@ -65,7 +92,7 @@ export default function VideoCanvas() {
       onMouseLeave={() => setIsHovered(false)}
     >
       {/* Ambient surface — only when idle/empty */}
-      {!previewUrl && !firstPassUrl && !activeVideoUrl && (
+      {!previewUrl && !firstPassUrl && !activeVideoUrl && huntBatch.length === 0 && (
         <>
           <div className="pointer-events-none absolute inset-0 canvas-board opacity-60" />
           <div className="pointer-events-none absolute inset-0 canvas-ambient animate-ambient" />
@@ -74,7 +101,21 @@ export default function VideoCanvas() {
       )}
 
       <AnimatePresence mode="wait">
-        {firstPassUrl ? (
+        {huntBatch.length > 0 ? (
+          <motion.div
+            key="hunt"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            // The progress bar below is absolutely pinned to the canvas bottom,
+            // so it sits on top of the last row of tiles while candidates are
+            // still rendering. Reserve its height for exactly as long as it is up
+            // — the other branches dodge this with their own maxHeight calc.
+            className={`h-full w-full ${runningJob ? 'pb-14' : ''}`}
+          >
+            <SeedHuntGrid jobs={huntBatch} />
+          </motion.div>
+        ) : firstPassUrl ? (
           <motion.div
             // Stable key — the url is a /view link, but keying on media that can
             // change mid-render thrashes the element (see the latent-preview rule).
@@ -91,7 +132,7 @@ export default function VideoCanvas() {
               muted
               playsInline
               className="max-w-full max-h-full object-contain rounded-xl canvas-artifact"
-              style={{ maxHeight: 'calc(100vh - 11rem)' }}
+              style={{ maxHeight: mediaMaxHeight }}
             />
             <span className="absolute top-4 left-4 rounded-md bg-background/85 px-2 py-1 text-xs font-medium text-action backdrop-blur-sm ring-1 ring-action/25">
               First pass · motion preview
@@ -110,7 +151,7 @@ export default function VideoCanvas() {
               src={previewUrl}
               alt="Sampling preview"
               className="max-w-full max-h-full object-contain rounded-xl canvas-artifact shimmer-sweep"
-              style={{ maxHeight: 'calc(100vh - 11rem)' }}
+              style={{ maxHeight: mediaMaxHeight }}
             />
           </motion.div>
         ) : activeVideoUrl ? (
@@ -124,12 +165,13 @@ export default function VideoCanvas() {
           >
             <video
               key={activeVideoUrl}
+              ref={videoRef}
               src={activeVideoUrl}
-              controls
+              controls={!hideControls}
               autoPlay
               loop
               className="max-w-full max-h-full object-contain rounded-xl canvas-artifact"
-              style={{ maxHeight: 'calc(100vh - 11rem)' }}
+              style={{ maxHeight: mediaMaxHeight }}
             />
           </motion.div>
         ) : (
@@ -147,7 +189,12 @@ export default function VideoCanvas() {
                 Bring it to life
               </h2>
               <p className="text-sm text-muted-foreground text-balance">
-                Describe a shot on the left and generate an LTX 2.3 video clip.
+                {/* Deliberately does not name the model. This canvas is shared by
+                    three flows — the video page, LTX Director and Movie Maker's
+                    director stage — and only the first two sit inside
+                    VideoFormProvider, so reading the active model here would
+                    throw in Movie Maker. The model picker is on the left anyway. */}
+                Describe a shot on the left and generate a video clip.
               </p>
               <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground/80">
                 <Clock className="h-3.5 w-3.5" /> Video generation takes several minutes.

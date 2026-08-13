@@ -4,7 +4,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Wand2, Clapperboard, Images, Film, Package, ScrollText, ExternalLink, SlidersHorizontal, Puzzle, PencilRuler, Settings, Wrench, LayoutGrid, ChevronDown } from 'lucide-react'
+import { Wand2, Clapperboard, Images, Film, Package, ScrollText, ExternalLink, SlidersHorizontal, Puzzle, PencilRuler, Settings, Wrench, Archive, LayoutGrid, ChevronDown } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Toaster } from '@/components/ui/sonner'
@@ -18,9 +18,10 @@ import { useAddonStore } from '@/lib/addons/store'
 import { Fragment, useEffect, useState } from 'react'
 import QueuePanel from '@/components/queue/QueuePanel'
 import FirstRunModels from '@/components/FirstRunModels'
+import GuidedTour from '@/components/GuidedTour'
 
 const ICONS: Record<string, LucideIcon> = {
-  Wand2, Clapperboard, Images, SlidersHorizontal, Film, Package, ScrollText, Puzzle, PencilRuler, Wrench, Settings,
+  Wand2, Clapperboard, Images, SlidersHorizontal, Film, Package, ScrollText, Puzzle, PencilRuler, Wrench, Archive, Settings,
 }
 
 /**
@@ -97,9 +98,11 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
                     />
                   ))
                 )}
-                {/* The Add-ons store link lives at the tail of the paid cluster. */}
+                {/* The add-on store link lives at the tail of the paid cluster.
+                    Labelled "Patreon" — that is where the key comes from, and
+                    "Add-ons" said nothing to anyone who hadn't found the page. */}
                 {g.group === 'studio' && (
-                  <NavLink href="/add-ons" label="Add-ons" Icon={Puzzle} active={pathname === '/add-ons'} />
+                  <NavLink href="/add-ons" label="Patreon" Icon={Puzzle} active={pathname === '/add-ons'} />
                 )}
               </div>
             </Fragment>
@@ -147,6 +150,7 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
       <QueueProvider />
       <QueuePanel open={queueOpen} onOpenChange={setQueueOpen} />
       <FirstRunModels />
+      <GuidedTour />
       <Toaster richColors position="bottom-right" />
     </div>
   )
@@ -176,7 +180,10 @@ function NavLink({
   href, label, Icon, active,
 }: { href: string; label: string; Icon?: LucideIcon; active: boolean }) {
   return (
-    <Link href={href} title={label} aria-label={label} className={navItemClass(active)}>
+    // data-tour: what the guided tour rings when it talks about this menu. Keyed
+    // by route so nothing has to be listed twice — anything else worth pointing
+    // at just carries the same attribute with the same route.
+    <Link href={href} data-tour={href} title={label} aria-label={label} className={navItemClass(active)}>
       {active && <ActivePill />}
       {Icon && <Icon className="relative h-4 w-4 shrink-0" />}
       <span className={cn('relative hidden whitespace-nowrap', LABELS_AT)}>{label}</span>
@@ -184,7 +191,7 @@ function NavLink({
   )
 }
 
-/** The 'manage' cluster (Tools · Logs · Settings) as one dropdown. */
+/** The 'manage' cluster (Tools · Logs · Settings) as one "Utilities" dropdown. */
 function ManageMenu({ items, pathname }: { items: FeatureDef[]; pathname: string }) {
   const [open, setOpen] = useState(false)
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
@@ -192,10 +199,12 @@ function ManageMenu({ items, pathname }: { items: FeatureDef[]; pathname: string
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger title="Manage" aria-label="Manage" className={navItemClass(active)}>
+      {/* No href of its own — tagged with the route its first entry points at,
+          which is the one the tour's Utilities step navigates to. */}
+      <PopoverTrigger data-tour="/tools" title="Utilities" aria-label="Utilities" className={navItemClass(active)}>
         {active && <ActivePill />}
         <LayoutGrid className="relative h-4 w-4 shrink-0" />
-        <span className={cn('relative hidden whitespace-nowrap', LABELS_AT)}>Manage</span>
+        <span className={cn('relative hidden whitespace-nowrap', LABELS_AT)}>Utilities</span>
         <ChevronDown className="relative h-3.5 w-3.5 shrink-0 opacity-70" />
       </PopoverTrigger>
       <PopoverContent align="end" className="w-52 gap-0.5 p-1.5">

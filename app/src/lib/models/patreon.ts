@@ -18,6 +18,8 @@ export const PATREON_FAMILIES: Record<string, { keywords: string[]; ariaKind: 'l
   'anima-turbo': { keywords: ['anima'], ariaKind: 'diffusion_models' },
   'ernie-turbo': { keywords: ['ernie'], ariaKind: 'diffusion_models' },
   'z-image-turbo': { keywords: ['zit', 'zimage'], ariaKind: 'diffusion_models' },
+  'krea2-turbo': { keywords: ['krea'], ariaKind: 'diffusion_models' },
+  'krea2-raw': { keywords: ['krea'], ariaKind: 'diffusion_models' },
   sdxl: { keywords: ['sdxl'], ariaKind: 'checkpoints' },
   pony: { keywords: ['pony'], ariaKind: 'checkpoints' },
   illustrious: { keywords: ['illustrious', 'illu'], ariaKind: 'checkpoints' },

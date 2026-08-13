@@ -16,8 +16,19 @@ const BACKEND_URL = '/api/comfyui/rvn/set_backend'
 export interface EnhanceArgs {
   /** Ollama model name. */
   model: string
-  videoMode: 't2v' | 'i2v'
-  imageB64: string
+  videoMode: 't2v' | 'i2v' | 'ref2v' | 'director'
+  /**
+   * What the vision pass gets to look at. One image for i2v; in Director mode a
+   * list — every shot's picture, in play order — because the brief describes a
+   * whole timeline and one frame of it anchors nothing.
+   */
+  imageB64: string | string[]
+  /**
+   * Reference mode only: how many of each reference type are attached. The H3
+   * ref2va doctrine names exactly these and no others — told about a type that
+   * is not there, the model invents a role for a reference H3 never receives.
+   */
+  refCounts?: { images: number; videos: number; audios: number }
   environment: string
   scenario: string
   camera: string
@@ -28,6 +39,12 @@ export interface EnhanceArgs {
   energy: number
   userIntent: string
   durationS: number
+  /**
+   * Which video workflow the prompt is for. Selects the doctrine server-side
+   * (`generation_core.doctrine_for`): 'minimax-h3' gets H3's Base multi-shot
+   * format, anything else keeps the LTX shot-script brain.
+   */
+  videoModel?: string
 }
 
 /** Map the app-side args to the node route's snake_case body. */
@@ -37,6 +54,7 @@ function toBody(args: EnhanceArgs): Record<string, unknown> {
     mmproj_file: 'None (text-only)',
     video_mode: args.videoMode,
     image_b64: args.imageB64,
+    ref_counts: args.refCounts,
     environment: args.environment,
     scenario: args.scenario,
     camera_move: args.camera,
@@ -47,6 +65,7 @@ function toBody(args: EnhanceArgs): Record<string, unknown> {
     intensity: args.energy,
     user_intent: args.userIntent,
     duration_s: args.durationS,
+    video_model: args.videoModel,
   }
 }
 

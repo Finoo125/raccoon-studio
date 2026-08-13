@@ -214,6 +214,24 @@ def _t2v_open():
     )
 
 
+def _director_open():
+    # Director is a timeline, not a single frame, so neither of the other two
+    # openings is true for it: _i2v_open() names ONE "start image" and would
+    # make shots 2..N invisible, while _t2v_open() swears there is no reference
+    # image at all. The pictures here are every shot that has one, in order.
+    return (
+        "The images are this clip's SHOTS, in the order they play — the first is the opening frame. "
+        "Read them as ONE continuous scene: the same people, the same place, the same look throughout. "
+        "The FIRST section sets identity and place from what the images actually show — build, hair, "
+        "wardrobe and how it sits, and the space around them — and invents nothing they do not show.\n\n"
+        "Write ONE flowing script for the whole clip. Never number the shots, never caption them one by "
+        "one, and never mention images, frames, references or the timeline — the words describe the film, "
+        "not the material you were handed.\n\n"
+        "FACING: the images fix orientation only where they show it. Anywhere between them, state facing "
+        "explicitly relative to the other people and to the camera, and restate it whenever it changes.\n"
+    )
+
+
 def _dialogue_budget(tier, duration_s):
     """Turn the tier into a concrete word budget — ~1 word/sec is generous, not stingy."""
     dur = float(duration_s or 10)
@@ -269,7 +287,11 @@ def _wants_undress(intent, scenario_block):
 def build_system(*, mode="i2v", duration_s=12.0, pov=False, pov_gender="female",
                  explicit=False, dialogue_tier="standard", energy=5,
                  environment_block="", scenario_block="", camera_block="", music_block="", intent="",
-                 seed=None):
+                 seed=None, **_ignored):
+    # Extras are swallowed so `generation_core` can call either doctrine's
+    # build_system with one signature — h3_brain's needs `ref_counts`, this one
+    # has no use for it. Same contract as finalize(). Without this, every LTX
+    # and Director enhance died on `unexpected keyword argument 'ref_counts'`.
     mode = (mode or "i2v").lower()
     lo, hi = _sections_hint(duration_s)
 
@@ -286,7 +308,12 @@ def build_system(*, mode="i2v", duration_s=12.0, pov=False, pov_gender="female",
     # unified section-based output format for both i2v and t2v
     parts.append("\n" + _SECTION_FORMAT)
     parts.append(_example(mode))
-    parts.append(_i2v_open() if mode == "i2v" else _t2v_open())
+    if mode == "i2v":
+        parts.append(_i2v_open())
+    elif mode == "director":
+        parts.append(_director_open())
+    else:
+        parts.append(_t2v_open())
     parts.append(f"For a ~{float(duration_s or 10):.0f}s shot, expect roughly {lo}–{hi} sections — "
                  "but let the action decide, not the clock.\n")
 
@@ -348,10 +375,17 @@ def build_user(intent, duration_s, mode):
 
 def build_messages(system, intent, duration_s, mode, image_b64=None, has_vision=False,
                    prior="", refine=False):
+    # `image_b64` is one image or a list of them — Director sends every shot's
+    # picture. Both transports in generation_core already fan a content list out
+    # to N images, so the only cap that ever existed was this loop.
+    images = image_b64 if isinstance(image_b64, (list, tuple)) else [image_b64]
     parts = []
-    if has_vision and image_b64:
-        b64 = image_b64.split(",", 1)[1] if image_b64.startswith("data:") else image_b64
-        parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+    if has_vision:
+        for b64 in images:
+            if not b64:
+                continue
+            raw = b64.split(",", 1)[1] if b64.startswith("data:") else b64
+            parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{raw}"}})
     if refine and (prior or "").strip():
         text = (f"Revise the script below. Apply ONLY the requested change; keep everything else.\n"
                 f"Revision:\n{intent}\n\nCurrent script:\n{prior.strip()}")
@@ -389,7 +423,10 @@ def clean(text):
     return s.strip()
 
 
-def finalize(text, *, mode="i2v", intent=""):
+def finalize(text, *, mode="i2v", intent="", **_ignored):
+    # Extras are swallowed so `generation_core` can call either doctrine's
+    # finalize with one signature — h3_brain's needs `ref_counts`, this one
+    # has no use for it. Same contract as build_system.
     s = clean(text)
     if (mode or "").lower() == "i2v" and s and not re.search(r"use the provided start image", s, re.I):
         s = _I2V_ANCHOR + "\n" + s.lstrip()

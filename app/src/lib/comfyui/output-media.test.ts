@@ -31,6 +31,28 @@ describe('resolveOutputMedia', () => {
     expect(res.urls).toEqual(['/api/comfyui/view?filename=clip.mp4&subfolder=&type=output'])
   })
 
+  // Payload copied verbatim from a real /history entry for MiniMax H3 node 15.
+  // Core ComfyUI's SaveVideo puts its mp4 under `images`, not VHS's `gifs`;
+  // reporting that as an image left the job stuck at 20/20 steps forever,
+  // because useGenerationWebSocket drops an `executed` frame whose isVideo
+  // does not match the job kind.
+  it('reports core SaveVideo mp4 under `images` as video', () => {
+    const res = resolveOutputMedia({
+      images: [{ filename: 'MinimaxH3_00001_.mp4', subfolder: 'video', type: 'output' }],
+    })
+    expect(res.isVideo).toBe(true)
+    expect(res.urls).toEqual([
+      '/api/comfyui/view?filename=MinimaxH3_00001_.mp4&subfolder=video&type=output',
+    ])
+  })
+
+  it('still reports a plain image under `images` as an image', () => {
+    const res = resolveOutputMedia({
+      images: [{ filename: 'a.webp', subfolder: '', type: 'output' }],
+    })
+    expect(res.isVideo).toBe(false)
+  })
+
   it('returns no urls for an empty/absent output', () => {
     expect(resolveOutputMedia(undefined)).toEqual({ urls: [], isVideo: false })
     expect(resolveOutputMedia({})).toEqual({ urls: [], isVideo: false })

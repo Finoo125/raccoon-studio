@@ -487,3 +487,43 @@ describe('ltxDimsForImage', () => {
     expect(h).toBeGreaterThanOrEqual(32)
   })
 })
+
+describe('seed hunt', () => {
+  const ids = (wf: ComfyUIPrompt, cls: string) =>
+    Object.keys(wf as Wf).filter((k) => (wf as Wf)[k].class_type === cls)
+
+  it('drops exactly the two nodes that terminate the upscale branch', () => {
+    const full = ltx23Workflow.buildPrompt(base) as Wf
+    const hunt = ltx23Workflow.buildPrompt({ ...base, seedHunt: true }) as Wf
+    const dropped = Object.keys(full).filter((k) => !(k in hunt))
+
+    expect(dropped).toHaveLength(2)
+    expect(dropped.map((k) => full[k].class_type).sort()).toEqual([
+      'VHS_PruneOutputs',
+      'VHS_VideoCombine',
+    ])
+    const saver = dropped.find((k) => full[k].class_type === 'VHS_VideoCombine')!
+    expect(full[saver].inputs.save_output).toBe(true)
+  })
+
+  // The whole feature rests on this: a candidate must be the same first pass a
+  // full render would produce, or the winning seed reproduces nothing.
+  it('leaves every surviving node byte-identical to a full render', () => {
+    const full = ltx23Workflow.buildPrompt(base) as Wf
+    const hunt = ltx23Workflow.buildPrompt({ ...base, seedHunt: true }) as Wf
+    for (const k of Object.keys(hunt)) expect(hunt[k], k).toEqual(full[k])
+  })
+
+  it('keeps the first-pass preview combine as the only surviving output', () => {
+    const hunt = ltx23Workflow.buildPrompt({ ...base, seedHunt: true })
+    const combines = ids(hunt, 'VHS_VideoCombine')
+    expect(combines).toHaveLength(1)
+    expect((hunt as Wf)[combines[0]].inputs.save_output).toBe(false)
+  })
+
+  it('honours the same params a full render does', () => {
+    const hunt = ltx23Workflow.buildPrompt({ ...base, seedHunt: true, seed: 4242 })
+    expect(byClass(hunt, 'Seed (rgthree)').inputs.seed).toBe(4242)
+    expect(byClass(hunt, 'RaccoonVideoPrompt').inputs.confirmed_prompt).toBe(base.prompt)
+  })
+})

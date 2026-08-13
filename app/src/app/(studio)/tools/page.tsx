@@ -2,7 +2,6 @@
 
 import { Wrench } from 'lucide-react'
 import FaceModelBuilder from '@/components/tools/FaceModelBuilder'
-import BackupRestore from '@/components/tools/BackupRestore'
 
 export default function ToolsPage() {
   return (
@@ -18,8 +17,8 @@ export default function ToolsPage() {
           </div>
         </header>
 
+        {/* Backup & Restore used to sit here; it has its own Utilities entry now. */}
         <FaceModelBuilder />
-        <BackupRestore />
       </div>
     </div>
   )

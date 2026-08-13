@@ -3,9 +3,17 @@ import type { OutputImage } from '@/types/comfyui'
 export interface ResolvedOutputMedia {
   /** Proxy view URLs for the produced media, in output order. */
   urls: string[]
-  /** True when the output came from VHS `gifs` (a video) rather than `images`. */
+  /** True when the produced media is a video rather than a still image. */
   isVideo: boolean
 }
+
+/**
+ * The output key does not identify the medium: VHS_VideoCombine reports its mp4
+ * under `gifs`, but core ComfyUI's `SaveVideo` (MiniMax H3) reports its mp4 under
+ * `images`. The filename does identify it, and it is what the `<video>` element
+ * actually cares about.
+ */
+const VIDEO_FILE = /\.(mp4|webm|mkv|mov|m4v)$/i
 
 function viewUrl(item: OutputImage): string {
   return `/api/comfyui/view?filename=${encodeURIComponent(item.filename)}&subfolder=${encodeURIComponent(item.subfolder)}&type=${item.type}`
@@ -29,7 +37,11 @@ export function resolveOutputMedia(
   if (gifs.length > 0) {
     return { urls: gifs.map(viewUrl), isVideo: true }
   }
-  return { urls: saved(output?.images).map(viewUrl), isVideo: false }
+  const images = saved(output?.images)
+  return {
+    urls: images.map(viewUrl),
+    isVideo: images.some((i) => VIDEO_FILE.test(i.filename)),
+  }
 }
 
 /**

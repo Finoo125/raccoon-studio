@@ -12,6 +12,7 @@ import time
 
 try:
     from . import brain as brain
+    from . import h3_brain as h3_brain
     from . import llama_manager as llm
     from .inject import env_block, scenario_block as scn_block, scenario_forces_explicit
     from .camera import bolt as camera_bolt
@@ -20,6 +21,7 @@ try:
     from .vram import flush_vram
 except ImportError:
     import brain as brain
+    import h3_brain as h3_brain
     import llama_manager as llm
     from inject import env_block, scenario_block as scn_block, scenario_forces_explicit
     from camera import bolt as camera_bolt
@@ -64,7 +66,10 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
     mode = body.get("video_mode", "i2v")
     duration_s = float(body.get("duration_s", 12))
     intent = (body.get("user_intent") or "").strip()
-    image_b64 = body.get("image_b64", "")
+    # One image, or a list of them: Director sends every shot's picture. Empties
+    # are dropped here so the gates below can just ask whether the list is empty.
+    image_b64 = body.get("image_b64") or ""
+    images = [b for b in (image_b64 if isinstance(image_b64, (list, tuple)) else [image_b64]) if b]
     pov = bool(body.get("pov", False))
     pov_gender = body.get("pov_gender", "female")
     explicit = _infer_explicit(intent) or scenario_forces_explicit(body.get("scenario",""))
@@ -78,12 +83,15 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
     temperature = float(body.get("temperature", 0.6))
     skip_flush = _skip_flush(body)
 
-    if mode == "i2v" and not image_b64:
+    if mode == "i2v" and not images:
         return {"error": "I2V needs an image", "elapsed_s": 0}
     if model_file == "None" and llm.is_managed():
         return {"error": "No model selected", "elapsed_s": 0}
 
-    need_vision = mode == "i2v" and bool(image_b64)
+    # Director shots are optional, so an empty timeline simply writes blind.
+    # ref2v stays out on purpose: H3's reference doctrine was tuned without a
+    # vision pass, and turning one on here would silently change its prompts.
+    need_vision = bool(images) and mode in ("i2v", "director")
     if need_vision and mmproj_file == "None (text-only)" and llm.is_managed():
         return {"error": "I2V needs an mmproj (vision) file", "elapsed_s": 0}
 
@@ -104,7 +112,8 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
         tl = brain.timeline(duration_s)
         await emit({"type": "timeline", "beats": tl})
 
-        system = brain.build_system(
+        doctrine = doctrine_for(body)
+        system = doctrine.build_system(
             mode=mode, duration_s=duration_s, pov=pov, pov_gender=pov_gender,
             explicit=explicit, dialogue_tier=dialogue_tier, energy=energy, intent=intent,
             environment_block=env_block(environment, mode),
@@ -112,10 +121,13 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
             camera_block=camera_bolt(body.get("camera_move","None"), pov=pov),
             music_block=music_block(body.get("music", "")),
             seed=random.randrange(1 << 30),
+            # {images, videos, audios} — lets the H3 ref2va doctrine name only
+            # the reference types actually attached. Ignored by the LTX brain.
+            ref_counts=body.get("ref_counts"),
         )
         messages = brain.build_messages(
             system, intent, duration_s, mode,
-            image_b64=image_b64, has_vision=need_vision,
+            image_b64=images, has_vision=need_vision,
             prior=prior, refine=refine,
         )
 
@@ -222,7 +234,8 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
                 acc.append(tail)
                 await emit({"type": "delta", "text": tail})
 
-        full = brain.finalize("".join(acc), mode=mode, intent=intent)
+        full = doctrine.finalize("".join(acc), mode=mode, intent=intent,
+                                 ref_counts=body.get("ref_counts"))
         if not full:
             await emit({"type": "error", "msg": "Empty response"})
             return {"error": "Empty response", "status": status_log, "elapsed_s": time.time() - t0}
@@ -237,6 +250,18 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
             flush_vram("RaccoonVideoPrompt")
 
 
+def doctrine_for(body: dict):
+    """Which prompt doctrine writes this clip.
+
+    MiniMax H3 consumes named fields with a timed shot timeline; LTX 2.3
+    consumes a shot script. The two output contracts cannot be reconciled in one
+    canon, so the model picks the module. Anything that is not explicitly H3
+    keeps the LTX brain — including an absent field, so an older client that
+    never learned to send `video_model` behaves exactly as before.
+    """
+    return h3_brain if (body.get("video_model") or "").lower() == "minimax-h3" else brain
+
+
 def assemble_preview(body: dict) -> dict:
     """Build the system + user messages without hitting the LLM (for the Preview pane)."""
     mode = body.get("video_mode", "i2v")
@@ -244,7 +269,7 @@ def assemble_preview(body: dict) -> dict:
     intent = (body.get("user_intent") or "").strip()
     pov = bool(body.get("pov", False))
     explicit = _infer_explicit(intent) or scenario_forces_explicit(body.get("scenario",""))
-    system = brain.build_system(
+    system = doctrine_for(body).build_system(
         mode=mode, duration_s=duration_s, pov=pov,
         pov_gender=body.get("pov_gender", "female"),
         explicit=explicit, dialogue_tier=body.get("dialogue_tier", "standard"), intent=intent,
@@ -253,6 +278,7 @@ def assemble_preview(body: dict) -> dict:
         scenario_block=scn_block(body.get("scenario", "None — your words decide")),
         camera_block=camera_bolt(body.get("camera_move","None"), pov=bool(body.get("pov", False))),
         music_block=music_block(body.get("music", "")),
+        ref_counts=body.get("ref_counts"),
     )
     user_text = brain.build_user(intent, duration_s, mode)
     return {

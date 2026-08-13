@@ -175,3 +175,57 @@ export function parsePngTextChunks(buffer: Buffer): Record<string, string> {
 
   return chunks
 }
+
+let crcTable: Uint32Array | null = null
+
+/** PNG chunk CRC (IEEE 802.3, the one every PNG chunk carries in its last 4 bytes). */
+function crc32(buf: Buffer): number {
+  if (!crcTable) {
+    crcTable = new Uint32Array(256)
+    for (let n = 0; n < 256; n++) {
+      let c = n
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+      crcTable[n] = c >>> 0
+    }
+  }
+  let c = 0xffffffff
+  for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8)
+  return (c ^ 0xffffffff) >>> 0
+}
+
+/**
+ * Splice tEXt chunks into a PNG, immediately after IHDR (where ComfyUI puts its
+ * own, and where `parsePngTextChunks` will find them). Used to carry a generated
+ * image's `prompt`/`workflow` recipe across a re-encode — a canvas export drops
+ * every ancillary chunk, which would otherwise strip the seed, prompt and LoRAs
+ * off any image that passes through the photo editor.
+ *
+ * Values round-trip as latin1, the same encoding the parser reads, so bytes come
+ * out exactly as they went in. A non-PNG buffer (a JPEG export) is returned
+ * untouched.
+ */
+export function injectPngTextChunks(png: Buffer, chunks: Record<string, string>): Buffer {
+  const keys = Object.keys(chunks)
+  if (keys.length === 0) return png
+  if (png.length < 8 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) return png
+
+  // IHDR is required to be the first chunk: 8 (signature) + 12 (frame) + its length.
+  const ihdrEnd = 8 + 12 + png.readUInt32BE(8)
+  if (ihdrEnd > png.length) return png
+
+  const encoded = keys.map((key) => {
+    const data = Buffer.concat([
+      Buffer.from(key, 'latin1'),
+      Buffer.from([0]),
+      Buffer.from(chunks[key], 'latin1'),
+    ])
+    const out = Buffer.allocUnsafe(data.length + 12)
+    out.writeUInt32BE(data.length, 0)
+    out.write('tEXt', 4, 'ascii')
+    data.copy(out, 8)
+    out.writeUInt32BE(crc32(out.subarray(4, 8 + data.length)), 8 + data.length)
+    return out
+  })
+
+  return Buffer.concat([png.subarray(0, ihdrEnd), ...encoded, png.subarray(ihdrEnd)])
+}

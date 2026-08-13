@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { extractMetadataFromPromptChunk, parsePngTextChunks } from './metadata'
+import { crc32 } from 'zlib'
+import { extractMetadataFromPromptChunk, injectPngTextChunks, parsePngTextChunks } from './metadata'
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 
@@ -39,6 +40,47 @@ describe('parsePngTextChunks', () => {
   it('returns nothing for a non-PNG buffer (e.g. a jpeg prefix)', () => {
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0])
     expect(parsePngTextChunks(jpeg)).toEqual({})
+  })
+})
+
+describe('injectPngTextChunks', () => {
+  // A canvas re-encode (the photo editor's save path) produces a PNG with no
+  // ancillary chunks at all, so the generation recipe has to be spliced back in.
+  const ihdr = () => chunk('IHDR', Buffer.alloc(13))
+  const bare = () => Buffer.concat([PNG_SIGNATURE, ihdr(), chunk('IDAT', Buffer.from('pixels'))])
+
+  it('round-trips through the parser byte-for-byte', () => {
+    const meta = { prompt: '{"1":{"class_type":"KSampler"}}', workflow: '{"nodes":[]}' }
+    expect(parsePngTextChunks(injectPngTextChunks(bare(), meta))).toEqual(meta)
+  })
+
+  it('keeps the signature and IHDR first, so the file stays a valid PNG', () => {
+    const out = injectPngTextChunks(bare(), { prompt: 'x' })
+    expect(out.subarray(0, 8)).toEqual(PNG_SIGNATURE)
+    expect(out.toString('ascii', 12, 16)).toBe('IHDR')
+    expect(out.indexOf(Buffer.from('tEXt'))).toBeGreaterThan(out.indexOf(Buffer.from('IHDR')))
+    expect(out.indexOf(Buffer.from('tEXt'))).toBeLessThan(out.indexOf(Buffer.from('IDAT')))
+  })
+
+  it('writes a CRC a decoder will accept', () => {
+    const out = injectPngTextChunks(bare(), { a: 'b' })
+    const at = out.indexOf(Buffer.from('tEXt')) - 4
+    const len = out.readUInt32BE(at)
+    // zlib.crc32 as an independent oracle. The implementation rolls its own table
+    // because `engines.node` allows 20.9, and zlib.crc32 only lands in 20.15.
+    expect(out.readUInt32BE(at + 8 + len)).toBe(crc32(out.subarray(at + 4, at + 8 + len)))
+  })
+
+  it('preserves latin1 bytes above 0x7f', () => {
+    const value = 'café ÿ'
+    const out = injectPngTextChunks(bare(), { prompt: value })
+    expect(parsePngTextChunks(out).prompt).toBe(value)
+  })
+
+  it('leaves a JPEG (or an empty chunk set) untouched', () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0])
+    expect(injectPngTextChunks(jpeg, { prompt: 'x' })).toEqual(jpeg)
+    expect(injectPngTextChunks(bare(), {})).toEqual(bare())
   })
 })
 

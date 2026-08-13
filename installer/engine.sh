@@ -8,7 +8,9 @@ source "$ENGINE_DIR/lib.sh"
 
 COMFY_PY="$RACCOON_ROOT/comfyui/ComfyUI/.venv/bin/python"
 APP_MODULES="$RACCOON_ROOT/app/node_modules"
-PUBLIC_REPO="https://github.com/Finoo125/raccoon-studio.git"
+# Overridable so the tests can point at a local repo instead of GitHub. Never set
+# in a real install.
+: "${PUBLIC_REPO:=https://github.com/Finoo125/raccoon-studio.git}"
 
 is_installed() { [ -x "$COMFY_PY" ] && [ -d "$APP_MODULES" ]; }
 is_running()   { curl -s --max-time 2 "$HEALTH_URL" >/dev/null 2>&1; }
@@ -63,12 +65,36 @@ cmd_stop() {
 }
 
 cmd_update() {
-  # STUB — real git-pull backend (app + ComfyUI + custom nodes) lands later.
-  emit_progress 1 2 "Checking for updates"
-  if [ "$DRY_RUN" = 1 ]; then emit_progress 2 2 "[dry-run] update stub"; emit_done update; return 0; fi
-  emit_progress 2 2 "Up to date"
-  emit_warn "Update backend not yet implemented — no changes made."
-  emit_done update
+  # Pull the public release repo explicitly (not whatever origin points at), then
+  # re-run the idempotent installer if new code arrived so deps/vendor nodes stay
+  # in sync. --ff-only makes a pull against any non-release clone fail safely.
+  emit_progress 1 3 "Checking the public repo for updates"
+  if [ "$DRY_RUN" = 1 ]; then emit_progress 2 3 "[dry-run] would git pull"; emit_progress 3 3 "[dry-run] up to date"; emit_done update; return 0; fi
+  local before after
+  before="$(git -C "$RACCOON_ROOT" rev-parse HEAD 2>/dev/null)"
+  # app/package-lock.json is tracked, but `npm install` rewrites it whenever it
+  # disagrees with package.json — so it is dirty in installs that never touched a
+  # file (v1.0.18-34 shipped `engines` in package.json alone, and every install of
+  # those wrote it back into the lock). Any release that also changes the lock then
+  # aborts the pull with "your local changes would be overwritten by merge" and the
+  # Update button is dead for good. Discard ours: it is generated, and the
+  # cmd_install below regenerates it minutes later. Guarded by the sync test in
+  # app/src/lib/package-lock.test.ts, which stops the desync recurring.
+  git -C "$RACCOON_ROOT" checkout -- app/package-lock.json >>"$LOG_FILE" 2>&1
+  if ! git -C "$RACCOON_ROOT" pull --ff-only "$PUBLIC_REPO" main >>"$LOG_FILE" 2>&1; then
+    emit_fail update "git pull from the public repo failed — see $LOG_FILE"; return 1
+  fi
+  after="$(git -C "$RACCOON_ROOT" rev-parse HEAD 2>/dev/null)"
+  # Linux has no .installed-rev marker (it is written by install-windows.ps1 only),
+  # so this can only ask whether *this* pull moved HEAD. Weaker than the Windows
+  # check: a hand-run `git pull` between updates leaves the install half-applied,
+  # with new code on disk and old vendored packs. Accepted for now — the upgrade
+  # script re-runs the installer unconditionally and is the way out of that state.
+  if [ "$before" = "$after" ]; then
+    emit_progress 3 3 "Already up to date"; emit_done update; return 0
+  fi
+  emit_progress 2 3 "Update downloaded — applying (this can take a few minutes)"
+  cmd_install
 }
 
 cmd_install() {

@@ -41,7 +41,9 @@ export default function GalleryToolbar({ onRefresh, loading }: Props) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-10">
+    // data-tour: rung by the first-run tour's Gallery step — tagging, comparing
+    // and send-to all start from this row.
+    <div data-tour="/gallery" className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-10">
       {/* Folder sidebar toggle */}
       <Button
         variant={sidebarCollapsed ? 'outline' : 'default'}

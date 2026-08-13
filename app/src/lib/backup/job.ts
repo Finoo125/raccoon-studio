@@ -1,6 +1,9 @@
 import fs from 'fs'
 import { createArchive, restoreArchive, deleteSources, type BackupProgress } from './archive'
 import type { BackupSource } from './components'
+import { getSettings } from '@/lib/settings/settings'
+import { getComfyUIDir } from '@/lib/comfyui/server-state'
+import { syncExtraModelPaths } from '@/lib/comfyui/extra-model-paths'
 
 /**
  * Server-side backup/restore job state. The job runs to completion regardless
@@ -28,6 +31,30 @@ export interface BackupJob {
   // Restore results
   restoredCount?: number
   skipped?: string[]
+  /** Non-fatal: the restored settings could not be re-applied to this machine. */
+  settingsWarning?: string
+}
+
+/**
+ * Re-apply the on-disk side effects of the settings that just came back, so a
+ * restore doesn't need a manual round-trip through Settings → Save. Everything
+ * in settings.json is re-read per request, so only `sharedModelsDir` has one:
+ * it generates ComfyUI's `extra_model_paths.yaml`, which otherwise keeps
+ * pointing at whatever this install had before (or nothing at all).
+ *
+ * A path that doesn't exist on *this* machine is the normal cross-machine case
+ * — report it, never fail an otherwise good restore over it.
+ */
+function applyRestoredSettings(): string | undefined {
+  const shared = getSettings().sharedModelsDir
+  const comfyDir = getComfyUIDir()
+  if (!shared || !comfyDir) return undefined
+  try {
+    syncExtraModelPaths(comfyDir, shared)
+    return undefined
+  } catch (e) {
+    return `Shared models folder from the backup could not be applied: ${e instanceof Error ? e.message : String(e)}`
+  }
 }
 
 interface Slot {
@@ -134,6 +161,7 @@ export function startRestoreJob(opts: { srcPath: string; plan: BackupSource[] })
       Object.assign(job, {
         status: 'done', phase: 'done', value: 100,
         restoredCount: result.restored.length, skipped: result.skipped,
+        settingsWarning: applyRestoredSettings(),
       })
     } catch (e) {
       job.status = 'error'

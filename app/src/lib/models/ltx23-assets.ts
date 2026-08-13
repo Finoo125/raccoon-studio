@@ -10,7 +10,12 @@
  * Not listed: the RIFE weights (`flownet.pkl`) — the interpolation node pack
  * fetches them automatically on first use.
  */
-export interface Ltx23Asset {
+/**
+ * One model file a bundled workflow references. Shared with the other video
+ * catalogs (see `minimax-h3-assets.ts`) — the Models page renders any list of
+ * these with the same row component.
+ */
+export interface ModelAsset {
   /** Exact filename ComfyUI's loader node expects. */
   name: string
   /** Target subfolder under models/. */
@@ -19,6 +24,7 @@ export interface Ltx23Asset {
     | 'loras'
     | 'vae'
     | 'text_encoders'
+    | 'diffusion_models'
     | 'latent_upscale_models'
   /** Approximate download size, MB (for display only). */
   sizeMb: number
@@ -28,7 +34,7 @@ export interface Ltx23Asset {
   source: string
 }
 
-export const LTX23_ASSETS: Ltx23Asset[] = [
+export const LTX23_ASSETS: ModelAsset[] = [
   {
     // The workflow expects this exact filename; the public source file is
     // 10Eros_v1.4_fp8mixed_learned.safetensors — the download route saves
@@ -84,6 +90,36 @@ export const LTX23_ASSETS: Ltx23Asset[] = [
     sizeMb: 400,
     source: 'Optional style LoRA (Civitai) — import manually',
   },
+  // ── IC-LoRAs: the video Director mode's motion lane ────────────────────────
+  // These are what make a reference video on the motion lane mean anything —
+  // `LTXDirectorGuide.ic_lora_name` selects one, and without it motion segments
+  // are inert. All optional; the lane stays disabled until at least one is
+  // installed. Lightricks publishes 18 of these; these three are the ones that
+  // take a *reference clip*, which is what the lane feeds them.
+  {
+    name: 'ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors',
+    folder: 'loras',
+    sizeMb: 327,
+    url: 'https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Motion-Track-Control/resolve/main/ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors',
+    source: 'Lightricks (optional — transfers motion from a reference clip)',
+  },
+  {
+    name: 'ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors',
+    folder: 'loras',
+    sizeMb: 654,
+    url: 'https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control/resolve/main/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors',
+    source: 'Lightricks (optional — general-purpose reference-clip control)',
+  },
+  {
+    // No `url` deliberately: this repo is gated on Hugging Face (a plain
+    // resolve/ request 401s), so an automated download would fail with a
+    // confusing error. Verified 2026-08-02; the other two IC-LoRAs are public.
+    name: 'ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors',
+    folder: 'loras',
+    sizeMb: 1309,
+    source:
+      'Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients — gated on HF, accept the licence there and import manually',
+  },
   {
     name: 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
     folder: 'latent_upscale_models',
@@ -101,11 +137,24 @@ export const LTX23_ASSETS: Ltx23Asset[] = [
 ]
 
 /**
+ * The IC-LoRAs the Director mode's motion lane can drive, shortest-label first.
+ * Derived from the catalog so a filename can only be wrong in one place.
+ */
+export const IC_LORAS: { name: string; label: string }[] = [
+  {
+    name: 'ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors',
+    label: 'Motion track',
+  },
+  { name: 'ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors', label: 'Union control' },
+  { name: 'ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors', label: 'Ingredients' },
+]
+
+/**
  * True when ComfyUI lists `name` among the available model files. ComfyUI may
  * report a file under a subfolder (e.g. `sub/foo.safetensors`), so a trailing
  * basename match counts too.
  */
-export function ltxAssetInstalled(name: string, available: Set<string>): boolean {
+export function assetInstalled(name: string, available: Set<string>): boolean {
   if (available.has(name)) return true
   for (const a of available) {
     if (a.endsWith('/' + name)) return true

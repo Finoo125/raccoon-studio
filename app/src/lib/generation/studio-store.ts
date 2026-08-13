@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type { GenerationParams } from '@/types/workflow'
 import type { VideoGenerationParams } from '@/types/video-workflow'
+import { emptyTimeline, type DirectorTimeline } from '@/lib/workflows/director-timeline'
 
 export interface StudioPrefill {
   workflowId: string
@@ -16,6 +17,14 @@ export interface StudioPrefill {
 }
 
 interface StudioState {
+  /**
+   * The Director timeline lives here rather than in the video form's params
+   * because it is edited in its own full-width panel, not in the control
+   * column — the two are in different parts of the page. The form reads it
+   * back when it builds a job.
+   */
+  directorTimeline: DirectorTimeline
+  setDirectorTimeline(t: DirectorTimeline): void
   activeImageUrl: string | null
   /** Newest finished video URL, shown on the Generate Videos canvas. */
   activeVideoUrl: string | null
@@ -32,6 +41,8 @@ interface StudioState {
 }
 
 export const useStudioStore = create<StudioState>((set) => ({
+  directorTimeline: emptyTimeline(),
+  setDirectorTimeline: (directorTimeline) => set({ directorTimeline }),
   activeImageUrl: null,
   activeVideoUrl: null,
   prefill: null,

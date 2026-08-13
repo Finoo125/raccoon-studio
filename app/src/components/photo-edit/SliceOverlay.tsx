@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { usePhotoEditStore } from '@/lib/photo-edit/store'
+import { sliceVeil, VEIL_SPAN } from '@/lib/photo-edit/geometry'
 
 /** Cross product sign test matching applySliceMask in pipeline.ts. */
 function crossSign(ax: number, ay: number, bx: number, by: number, px: number, py: number) {
@@ -57,31 +58,67 @@ export default function SliceOverlay() {
     if (moved) setSlice({ ax: draft.ax, ay: draft.ay, bx: draft.bx, by: draft.by, keep: 'a' })
   }
 
-  const line = draft ?? slice
+  // A drag commits with keep: 'a', so previewing the draft with that same value
+  // shows the real outcome *before* the pointer comes up — which side survives
+  // depends on the direction you drag, and that was invisible until now.
+  const line = draft ? { ...draft, keep: 'a' as const } : slice
+  const veil = line ? sliceVeil(line) : null
 
   return (
-    <svg
-      ref={svgRef}
-      viewBox="0 0 1 1"
-      preserveAspectRatio="none"
-      className="absolute inset-0 h-full w-full cursor-crosshair"
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-    >
-      {line && (
-        <line
-          x1={line.ax}
-          y1={line.ay}
-          x2={line.bx}
-          y2={line.by}
-          stroke="white"
-          strokeWidth={0.006}
-          vectorEffect="non-scaling-stroke"
-          style={{ filter: 'drop-shadow(0 0 1px rgba(0,0,0,0.8))' }}
-        />
+    <>
+      <svg
+        ref={svgRef}
+        viewBox="0 0 1 1"
+        preserveAspectRatio="none"
+        className="absolute inset-0 h-full w-full cursor-crosshair"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        {/* The half that goes. One oversized rect laid along the cut — the SVG
+            viewport clips whatever hangs outside the frame. */}
+        {veil && (
+          <rect
+            x={-VEIL_SPAN}
+            y={veil.y}
+            width={VEIL_SPAN * 2}
+            height={VEIL_SPAN}
+            fill="rgba(0,0,0,0.55)"
+            transform={`translate(${line!.ax} ${line!.ay}) rotate(${veil.angle})`}
+          />
+        )}
+
+        {line && (
+          <line
+            x1={line.ax}
+            y1={line.ay}
+            x2={line.bx}
+            y2={line.by}
+            stroke="white"
+            strokeWidth={0.006}
+            vectorEffect="non-scaling-stroke"
+            style={{ filter: 'drop-shadow(0 0 1px rgba(0,0,0,0.8))' }}
+          />
+        )}
+      </svg>
+
+      {/* Named, not just shaded: a dim half could read as a vignette or a mask.
+          Outside the SVG because preserveAspectRatio="none" would stretch text. */}
+      {veil && (
+        <span
+          data-slice-tag=""
+          className="pointer-events-none absolute rounded-full bg-black/75 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-white/90 backdrop-blur-sm"
+          style={{
+            left: `${veil.label.x * 100}%`,
+            top: `${veil.label.y * 100}%`,
+            // Undo the canvas zoom so the tag is the same size at 20% or 400%.
+            transform: 'translate(-50%, -50%) scale(calc(1 / var(--pe-zoom, 1)))',
+          }}
+        >
+          Removed
+        </span>
       )}
-    </svg>
+    </>
   )
 }

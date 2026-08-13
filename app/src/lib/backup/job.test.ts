@@ -44,6 +44,10 @@ describe.skipIf(!tarAvailable)('backup job store', () => {
     const srcPaths = paths(path.join(root, 'src'))
     fs.mkdirSync(srcPaths.dataDir, { recursive: true })
     fs.writeFileSync(path.join(srcPaths.dataDir, 'settings.json'), '{"ok":true}')
+    // A saved ReActor face model rides along without the models folder.
+    const srcFaces = path.join(srcPaths.modelsDir, 'reactor', 'faces')
+    fs.mkdirSync(srcFaces, { recursive: true })
+    fs.writeFileSync(path.join(srcFaces, 'alice.safetensors'), 'face')
     const destPath = path.join(root, 'job-backup.tar')
 
     const started = startBackupJob({
@@ -59,7 +63,7 @@ describe.skipIf(!tarAvailable)('backup job store', () => {
     const done = await waitFinished()
     expect(done.kind).toBe('backup')
     expect(done.status).toBe('done')
-    expect(done.totalFiles).toBe(1)
+    expect(done.totalFiles).toBe(2)
     expect(fs.existsSync(destPath)).toBe(true)
 
     const dstPaths = paths(path.join(root, 'restored'))
@@ -71,7 +75,11 @@ describe.skipIf(!tarAvailable)('backup job store', () => {
     const restored = await waitFinished()
     expect(restored.kind).toBe('restore')
     expect(restored.status).toBe('done')
-    expect(restored.restoredCount).toBe(1)
+    expect(restored.restoredCount).toBe(2)
     expect(fs.readFileSync(path.join(dstPaths.dataDir, 'settings.json'), 'utf8')).toBe('{"ok":true}')
+    // Lands under the *restoring* machine's models dir, not the source's.
+    expect(
+      fs.readFileSync(path.join(dstPaths.modelsDir, 'reactor', 'faces', 'alice.safetensors'), 'utf8'),
+    ).toBe('face')
   })
 })

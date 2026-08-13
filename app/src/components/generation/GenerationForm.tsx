@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus, LayoutGrid, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -12,10 +13,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { workflows } from '@/lib/workflows'
 import { FUN_MODEL } from '@/lib/workflows/zimage-controlnet'
 import { SDXL_FIX_VAE } from '@/lib/workflows/sdxl'
-import { KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA, KREA2_PROJECTOR_DEFAULT } from '@/lib/workflows/krea2'
+import {
+  KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA, KREA2_PROJECTOR_DEFAULT, KREA2_PROJECTOR_ON,
+  KREA2_KROMA_LORA, KREA2_KROMA_DEFAULT,
+} from '@/lib/workflows/krea2'
 import { FACE_SWAP_NODE, PIXEL_BOOST_NODE } from '@/lib/workflows/face-swap'
-import { comboOptions } from '@/lib/models/installed'
-import { isAriaModel, effectiveAriaModel } from '@/lib/models/patreon'
+import { comboOptions, presetAvailable } from '@/lib/models/installed'
+import { isAriaModel, effectiveAriaModel, matchesPatreonPreset } from '@/lib/models/patreon'
 import { DEFAULT_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
 import { negativePromptApplies } from '@/lib/workflows/expert-sampler'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
@@ -33,7 +37,7 @@ import WildcardManager from './WildcardManager'
 import { expandWildcards, hasWildcards } from '@/lib/prompts/wildcards-expand'
 import { uploadImageBlob } from '@/lib/generation/upload'
 import type { WildcardLists } from '@/lib/prompts/store'
-import type { GenerationParams } from '@/types/workflow'
+import type { GenerationParams, WorkflowDefinition } from '@/types/workflow'
 import { parseGalleryLoras } from '@/lib/gallery/lora-transfer'
 
 // Persists the workflow choice and all form params across reloads (localStorage).
@@ -113,6 +117,9 @@ export default function GenerationForm() {
   // then they are indistinguishable from "this install has no Aria models", and
   // a stale `params.ariaModel` must not be cleared on that basis.
   const [ariaLoaded, setAriaLoaded] = useState(false)
+  // Every checkpoint + diffusion model ComfyUI offers (not just the Aria ones),
+  // which is what decides whether a model preset is downloaded and usable.
+  const [installedBaseModels, setInstalledBaseModels] = useState<string[]>([])
   // Whether ComfyUI has the FaceDetailer node (Impact Pack installed).
   // null = still loading; false = unavailable; true = available.
   const [faceDetailerAvailable, setFaceDetailerAvailable] = useState<boolean | null>(null)
@@ -130,11 +137,12 @@ export default function GenerationForm() {
   // colors on SDXL checkpoints with a bad baked VAE, e.g. Illustrious). When
   // present, SDXL-family jobs decode through it instead of the checkpoint VAE.
   const [sdxlVaeAvailable, setSdxlVaeAvailable] = useState(false)
-  // Which of Krea2's two built-in LoRAs are actually on disk. They are patched
-  // in outside the user's LoRA slots — refusal reduction at a fixed strength 1,
-  // projector scale on the slider below — and ComfyUI rejects an unknown
-  // lora_name outright, so neither is ever passed until it has been seen here.
-  const [krea2Builtins, setKrea2Builtins] = useState({ refusal: false, projector: false })
+  // Which of Krea2's three built-in LoRAs are actually on disk. They are patched
+  // in outside the user's LoRA slots — refusal reduction at a fixed strength 1
+  // or Kroma in its place, projector scale on the slider below — and ComfyUI
+  // rejects an unknown lora_name outright, so none is ever passed until it has
+  // been seen here.
+  const [krea2Builtins, setKrea2Builtins] = useState({ refusal: false, projector: false, kroma: false })
   // Gate persistence until the saved session has been restored, so the first
   // render's defaults don't overwrite what we're about to load.
   const [restored, setRestored] = useState(false)
@@ -208,8 +216,8 @@ export default function GenerationForm() {
         const d = await (await fetch(`/api/comfyui/object_info/${node}`)).json()
         const names = comboOptions(d, node, field)
         set(names.filter(isAriaModel))
-        return true
-      } catch { /* ComfyUI offline — leave list empty */ return false }
+        return names
+      } catch { /* ComfyUI offline — leave list empty */ return null }
     }
     const checkDetailer = async () => {
       try {
@@ -226,7 +234,12 @@ export default function GenerationForm() {
       load('CheckpointLoaderSimple', 'ckpt_name', setAriaCheckpoints),
       load('LoraLoader', 'lora_name', setAriaLoras),
       load('UNETLoader', 'unet_name', setAriaUnets),
-    ]).then((ok) => setAriaLoaded(ok.every(Boolean)))
+    ]).then(([ckpt, lora, unet]) => {
+      setAriaLoaded([ckpt, lora, unet].every(Boolean))
+      // Same two answers, unfiltered: which base models this install actually
+      // has decides which model presets are offered below.
+      setInstalledBaseModels([...(ckpt ?? []), ...(unet ?? [])])
+    })
     void checkDetailer()
     const checkFaceSwap = async () => {
       // Probed independently: ReActor failing and RaccoonSwapNodes failing are
@@ -263,9 +276,13 @@ export default function GenerationForm() {
         // ComfyUI reports subfolders with OS separators; match on the leaf.
         const has = (file: string) =>
           names.some((n) => n === file || n.replace(/\\/g, '/').endsWith('/' + file))
-        setKrea2Builtins({ refusal: has(KREA2_REFUSAL_LORA), projector: has(KREA2_PROJECTOR_LORA) })
+        setKrea2Builtins({
+          refusal: has(KREA2_REFUSAL_LORA),
+          projector: has(KREA2_PROJECTOR_LORA),
+          kroma: has(KREA2_KROMA_LORA),
+        })
       } catch {
-        setKrea2Builtins({ refusal: false, projector: false })
+        setKrea2Builtins({ refusal: false, projector: false, kroma: false })
       }
     }
     void checkKrea2Builtins()
@@ -531,10 +548,16 @@ export default function GenerationForm() {
           // washed-out colors). Gated on availability so it never references a
           // VAE that isn't there.
           ...(workflow.controlNetKind === 'sdxl-union' && sdxlVaeAvailable ? { sdxlVae: SDXL_FIX_VAE } : {}),
-          // Krea2 family: patch in the two built-in LoRAs, but only the ones
-          // ComfyUI actually reports — an unknown lora_name is rejected with
+          // Krea2 family: patch in the built-in LoRAs, but only the ones ComfyUI
+          // actually reports — an unknown lora_name is rejected with
           // value_not_in_list, which surfaces as a bare "Generation failed".
-          ...(isKrea2 && krea2Builtins.refusal ? { krea2RefusalLora: KREA2_REFUSAL_LORA } : {}),
+          // The uncensor slot holds one of two files or nothing; 'patch' is the
+          // default so sessions saved before the picker existed keep behaving
+          // exactly as they did.
+          ...(isKrea2 && (params.krea2Nsfw ?? 'patch') === 'patch' && krea2Builtins.refusal
+            ? { krea2RefusalLora: KREA2_REFUSAL_LORA } : {}),
+          ...(isKrea2 && params.krea2Nsfw === 'kroma' && krea2Builtins.kroma
+            ? { krea2KromaLora: KREA2_KROMA_LORA } : {}),
           ...(isKrea2 && krea2Builtins.projector ? { krea2ProjectorLora: KREA2_PROJECTOR_LORA } : {}),
           // Same guard, for the imported Aria model: every family injects this
           // into its own loader, so one that belongs to another family or whose
@@ -607,6 +630,26 @@ export default function GenerationForm() {
     (r) => r.width === params.width && r.height === params.height
   )
 
+  /**
+   * Whether a model preset can be generated with right now. Takes the three
+   * fields rather than the workflow object on purpose: handing a whole
+   * `workflow` to a locally-declared function makes the React Compiler treat it
+   * as possibly-mutated and bail out of memoizing this component.
+   *
+   * The Aria list is narrowed to this family's own naming first. All the UNET
+   * families share one list, so an unfiltered check let a single Aria Z-Image
+   * model light up Anima, Ernie and Krea2 as well — every preset colourful on
+   * an install that could render two of them.
+   */
+  const presetOk = (id: string, baseModel: string, kind: WorkflowDefinition['ariaModelKind']) =>
+    presetAvailable(
+      baseModel,
+      installedBaseModels,
+      (kind === 'checkpoint' ? ariaCheckpoints : kind === 'unet' ? ariaUnets : ariaLoras)
+        .filter((n) => matchesPatreonPreset(n, id)),
+      ariaLoaded,
+    )
+
   const showModelPicker =
     ariaModels.length > 0 &&
     (workflow.ariaModelKind === 'checkpoint' ||
@@ -629,12 +672,20 @@ export default function GenerationForm() {
       {/* Workflow selector */}
       <div className="space-y-2">
         <SectionLabel>Model preset</SectionLabel>
-        <div className="flex gap-2 flex-wrap">
-          {workflows.map((w) => (
+        {/* data-tour: rung by the first-run tour's Generate step — picking a
+            model is the first thing to do on this page. */}
+        <div className="flex gap-2 flex-wrap" data-tour="/generate">
+          {workflows.map((w) => {
+            const available = presetOk(w.id, w.baseModel, w.ariaModelKind)
+            return (
             <Button
               key={w.id}
               variant={workflowId === w.id ? 'default' : 'outline'}
-              className="h-9 px-3.5 text-sm"
+              disabled={!available}
+              // Not-downloaded presets stay visible but read as inert — the point
+              // is to show what this install *could* run, not to hide it.
+              className={`h-9 px-3.5 text-sm${available ? '' : ' opacity-45'}`}
+              title={available ? undefined : `${w.name} isn't downloaded — get it on the Models page`}
               onClick={() => {
                 if (w.id === workflowId) return
                 // Stash the outgoing model's prompt boxes, then restore the
@@ -657,9 +708,20 @@ export default function GenerationForm() {
             >
               {w.name}
             </Button>
-          ))}
+            )
+          })}
         </div>
         <p className="text-xs text-muted-foreground leading-snug line-clamp-2">{workflow.description}</p>
+        {/* The selected preset can be one that isn't installed — it is restored
+            from localStorage, which outlives any reinstall. Say so here, since a
+            greyed-out button the user cannot click explains nothing on its own. */}
+        {!presetOk(workflow.id, workflow.baseModel, workflow.ariaModelKind) && (
+          <p className="text-xs text-muted-foreground leading-snug">
+            Greyed-out presets aren&apos;t downloaded yet.{' '}
+            <Link href="/models" className="font-medium text-foreground underline">Get models</Link>{' '}
+            to switch them on.
+          </p>
+        )}
       </div>
 
       {/* Model picker + aspect ratio — two columns so the panel stays one page.
@@ -1141,46 +1203,168 @@ export default function GenerationForm() {
         )
       })()}
 
-      {/* Krea2 built-ins: the refusal-reduction patch is fixed at strength 1 and
-          has no control; the projector-scale patch gets a slider. Mechanically
-          it is a prompt-adherence knob on a different axis than CFG — it is
-          surfaced as "NSFW filter" because pushing the model back onto the
-          literal prompt is what gets a censored or dodged render to come out. */}
+      {/* Krea2 NSFW section — three independent things, deliberately grouped:
+          an uncensor patch (small corrective LoRA *or* the Kroma retrain, never
+          both — they rewrite the same text-fusion tower), Kroma's strength, and
+          the projector-scale slider. That last one is mechanically a
+          prompt-adherence knob on a different axis than CFG; it is surfaced as
+          "filter bypass" because pushing the model back onto the literal prompt
+          is what gets a censored or dodged render to come out.
+          Every label here is written for someone who has never heard of a LoRA. */}
       {workflow.loraFamily === 'krea2' && (() => {
+        const mode = params.krea2Nsfw ?? 'patch'
         const strength = params.krea2ProjectorStrength ?? KREA2_PROJECTOR_DEFAULT
+        const kroma = params.krea2KromaStrength ?? KREA2_KROMA_DEFAULT
+        const modes = [
+          {
+            id: 'off' as const,
+            label: 'Off',
+            hint: 'Stock model',
+            installed: true,
+            note: 'Krea2 exactly as it ships. It will often add clothing, crop away or quietly ignore an explicit prompt — the model was trained to. Pick this if you want the plain model back.',
+          },
+          {
+            id: 'patch' as const,
+            label: 'Uncensor patch',
+            hint: '27 MB · recommended',
+            installed: krea2Builtins.refusal,
+            note: 'A tiny add-on that stops the model second-guessing what you asked for. It does not change the look, the speed or the quality of your images at all — it only removes the reflex to censor. Start here; this is what the app used before this choice existed.',
+          },
+          {
+            id: 'kroma' as const,
+            label: 'Kroma',
+            hint: '1.9 GB · stronger',
+            installed: krea2Builtins.kroma,
+            note: 'A fully re-trained version of Krea2 (by lodestones) rather than a small patch. Much more willing, and generally better bodies and skin — but it also changes the overall look of every image, and it is a 1.9 GB download that makes the model slower to load. Use it when the patch above is not enough.',
+          },
+        ]
+        const active = modes.find((m) => m.id === mode)!
         return (
           <div className="space-y-2">
-            <SectionLabel>NSFW filter</SectionLabel>
-            {krea2Builtins.projector ? (
+            <SectionLabel>NSFW</SectionLabel>
+            <div className="space-y-1.5 rounded-xl border border-border bg-muted/30 p-3">
+              <div className="grid grid-cols-3 gap-2">
+                {modes.map((m) => {
+                  const selected = mode === m.id
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      disabled={!m.installed}
+                      onClick={() => set('krea2Nsfw', m.id)}
+                      className={`rounded-lg border p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        selected ? 'border-primary/40 bg-primary/10' : 'border-border bg-background hover:bg-muted/50'
+                      }`}
+                    >
+                      <span className="block text-sm font-medium">{m.label}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {m.installed ? m.hint : 'not installed'}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {active.note}
+                {!active.installed && ' — download it on the Models page first; until then renders use the plain model.'}
+              </p>
+            </div>
+
+            {/* Kroma replaces the model's own style, so how far it is blended in
+                is the one knob that actually matters for it. */}
+            {mode === 'kroma' && krea2Builtins.kroma && (
               <div className="space-y-1.5 rounded-xl border border-border bg-muted/30 p-3">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">Filter bypass</span>
-                  <span className="font-mono tabular-nums text-muted-foreground">
-                    {strength === 0 ? 'off' : strength.toFixed(3)}
-                  </span>
+                  <span className="font-medium">Kroma strength</span>
+                  <span className="font-mono tabular-nums text-muted-foreground">{kroma.toFixed(2)}</span>
                 </div>
                 <input
                   type="range"
-                  min={0}
-                  max={0.3}
-                  step={0.005}
-                  value={strength}
+                  min={0.1}
+                  max={1}
+                  step={0.05}
+                  value={kroma}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    set('krea2ProjectorStrength', Number(e.target.value))
+                    set('krea2KromaStrength', Number(e.target.value))
                   }
                   className="w-full accent-primary"
-                  aria-label="Krea2 NSFW filter bypass"
+                  aria-label="Kroma strength"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Off by default. If a render comes out censored, covered up or simply not what you
-                  asked for, raise this a little — a nudge is usually enough. Push it too far and the
-                  image starts to overcook.
+                  How much of Kroma to mix in. 1.00 is the full effect and what its author recommends.
+                  Drop to 0.70–0.90 if the images start looking too different from normal Krea2.
+                </p>
+              </div>
+            )}
+
+            {krea2Builtins.projector ? (
+              <div className="space-y-2">
+                {/* On/off switch, then the slider — "make it stop censoring" is
+                    one click, and the number is there for whoever wants it. */}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={strength > 0}
+                  onClick={() => set('krea2ProjectorStrength', strength > 0 ? 0 : KREA2_PROJECTOR_ON)}
+                  className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
+                    strength > 0
+                      ? 'border-primary/40 bg-primary/10'
+                      : 'border-border bg-muted/30 hover:bg-muted/50'
+                  }`}
+                >
+                  <span
+                    className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${
+                      strength > 0 ? 'bg-primary' : 'bg-input'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-sm transition-transform mt-0.5 ${
+                        strength > 0 ? 'translate-x-[1.375rem]' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold">Filter bypass</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Forces the model to take your words literally
+                    </span>
+                  </span>
+                </button>
+
+                {strength > 0 && (
+                  <div className="space-y-1.5 rounded-xl border border-border bg-muted/30 p-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">Strength</span>
+                      <span className="font-mono tabular-nums text-muted-foreground">
+                        {strength.toFixed(3)}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.005}
+                      max={0.3}
+                      step={0.005}
+                      value={strength}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        set('krea2ProjectorStrength', Number(e.target.value))
+                      }
+                      className="w-full accent-primary"
+                      aria-label="Krea2 NSFW filter bypass strength"
+                    />
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  Separate from the setting above, and works with any of them. Off by default: if a
+                  render comes out censored, covered up or simply not what you asked for, switch
+                  this on — the starting amount is usually enough. Raise it only if that did not do
+                  it; push it too far and the image starts to overcook (burnt colors, crunchy
+                  detail).
                 </p>
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Install the Krea2 models on the Models page to unlock the NSFW filter and
-                refusal-reduction patches.
+                Install the Krea2 models on the Models page to unlock the filter-bypass slider.
               </p>
             )}
           </div>

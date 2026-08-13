@@ -37,6 +37,7 @@ function animaFamily(v: AnimaVariant): WorkflowDefinition {
     id: v.id,
     name: v.name,
     description: v.description,
+    baseModel: v.unet,
     supportsNegativePrompt: v.negativePrompt,
     supportsLoRA: true,
     loraFamily: 'anima',

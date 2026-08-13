@@ -1,5 +1,5 @@
 import { verify, createPublicKey } from 'node:crypto'
-import { addonIds } from '@/lib/features/registry'
+import { sellableAddonIds } from '@/lib/features/registry'
 import { ADDON_PUBLIC_KEY, REVOKED_SUBS } from './public-key'
 
 export interface KeyPayload {
@@ -41,6 +41,15 @@ export function verifyKey(
   if (REVOKED_SUBS.includes(payload.sub)) return { ok: false, reason: 'revoked' }
   if (payload.exp != null && now > payload.exp * 1000) return { ok: false, reason: 'expired' }
 
-  const features = payload.feat.includes('*') ? addonIds() : payload.feat
+  // The app, not the key, decides what is released. Keys minted earlier list
+  // add-ons that this build holds back (`release` in the registry), so grants
+  // are intersected with what is actually on sale — one filter here covers
+  // every reader, since nothing reaches an entitlement without passing through.
+  // Dropping an add-on's `release` marker makes existing keys grant it, no
+  // re-mint needed. `'*'` never means "and future add-ons too".
+  const sellable = sellableAddonIds()
+  const features = payload.feat.includes('*')
+    ? sellable
+    : payload.feat.filter((f) => sellable.includes(f))
   return { ok: true, payload, features }
 }

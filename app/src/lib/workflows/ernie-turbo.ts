@@ -21,6 +21,8 @@ export const ernieTurboWorkflow: WorkflowDefinition = {
   id: 'ernie-turbo',
   name: 'Ernie Image Turbo',
   description: 'Fast photorealistic generation with optional 1.5× upscale and face swap',
+  // Read off the template — see z-image-turbo.ts for why.
+  baseModel: baseWorkflow['88:66'].inputs.unet_name,
   supportsNegativePrompt: false,
   supportsLoRA: true,
   loraFamily: 'ernie',

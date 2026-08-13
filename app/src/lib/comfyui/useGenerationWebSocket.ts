@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { useQueueStore } from './queue'
+import { useQueueStore, isSeedHunt } from './queue'
 import { useConnectionStore } from './connection'
 import { ComfyUIWebSocket } from './websocket'
 import { resolveOutputMedia, resolveInterimVideo } from './output-media'
@@ -74,7 +74,24 @@ export function useGenerationWebSocket() {
           // while the upscale pass still has minutes to run. Surface it so the
           // motion can be judged and the job cancelled before paying for it.
           const interim = job.kind === 'video' ? resolveInterimVideo(msg.data.output) : null
-          if (interim) updateJob(job.id, { previewVideo: interim })
+          if (!interim) return
+          // A seed-hunt candidate stops after that first pass, so the temp clip
+          // IS its result. Deliberately left as `temp`: candidates are throwaway,
+          // which is what keeps them out of the gallery and out of history —
+          // both live in the urls.length > 0 path below, which they never reach.
+          if (isSeedHunt(job)) {
+            const cur = useQueueStore.getState().jobs.find((j) => j.id === job.id)
+            if (cur?.livePreview) URL.revokeObjectURL(cur.livePreview)
+            updateJob(job.id, {
+              status: 'done',
+              outputVideos: [interim],
+              progress: job.maxProgress,
+              endedAt: Date.now(),
+              livePreview: undefined,
+            })
+            return
+          }
+          updateJob(job.id, { previewVideo: interim })
           return
         }
         if (job.kind === 'video' && !isVideo) return

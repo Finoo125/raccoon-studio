@@ -85,6 +85,7 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
     id: config.id,
     name: config.name,
     description: config.description,
+    baseModel: config.checkpoint,
     supportsNegativePrompt: true,
     supportsLoRA: true,
     // Pony and Illustrious are SDXL, so all three share a LoRA pool.

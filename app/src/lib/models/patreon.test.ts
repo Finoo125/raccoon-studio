@@ -28,6 +28,16 @@ describe('matchesPatreonPreset', () => {
     expect(matchesPatreonPreset('aria_zit_01.safetensors', 'z-image-turbo')).toBe(true)
     expect(matchesPatreonPreset('aria_zit_01.safetensors', 'sdxl')).toBe(false)
   })
+
+  // Every UNET family reads one shared Aria list, so without a krea2 entry any
+  // Aria diffusion model counted as a Krea2 one — which is what decides whether
+  // the Krea2 presets show as installed.
+  it('keeps the two Krea2 presets apart from the other diffusion families', () => {
+    expect(matchesPatreonPreset('aria_krea_v1.safetensors', 'krea2-turbo')).toBe(true)
+    expect(matchesPatreonPreset('aria_krea_v1.safetensors', 'krea2-raw')).toBe(true)
+    expect(matchesPatreonPreset('aria_zit_01.safetensors', 'krea2-turbo')).toBe(false)
+    expect(matchesPatreonPreset('aria_krea_v1.safetensors', 'anima')).toBe(false)
+  })
 })
 
 describe('effectiveAriaModel', () => {

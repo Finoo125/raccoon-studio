@@ -57,6 +57,20 @@ export interface GenerationParams {
    * failed". Absent ⇒ the loader node is never emitted.
    */
   krea2RefusalLora?: string
+  /**
+   * Krea2 family only: which uncensor patch the NSFW section selected.
+   * 'patch' (the default, and what shipped before this choice existed) = the
+   * small refusal-reduction LoRA; 'kroma' = the full Kroma fine-tune instead;
+   * 'off' = stock model. Only the form reads this — it decides which of the two
+   * filenames below to inject, and they are mutually exclusive by construction.
+   */
+  krea2Nsfw?: 'off' | 'patch' | 'kroma'
+  /** Krea2 family only: filename of the Kroma fine-tune LoRA. Same
+   *  form-confirms-then-injects rule as `krea2RefusalLora`. */
+  krea2KromaLora?: string
+  /** Krea2 family only: Kroma strength. 1 (default) is upstream's recommendation;
+   *  lower blends it back toward stock Krea2. 0 omits the LoRA entirely. */
+  krea2KromaStrength?: number
   /** Krea2 family only: filename of the projector-scale LoRA. Same
    *  form-confirms-then-injects rule as `krea2RefusalLora`. */
   krea2ProjectorLora?: string
@@ -148,6 +162,14 @@ export interface WorkflowDefinition {
   id: string
   name: string
   description: string
+  /**
+   * Filename of the base model this preset loads when no Aria model is chosen —
+   * a checkpoint for the SDXL family, a diffusion model for the UNET families.
+   * Drives the "is this preset usable" state in the form, so it is always read
+   * off the same value the builder writes into the graph rather than repeated
+   * as a second literal.
+   */
+  baseModel: string
   supportsNegativePrompt: boolean
   supportsLoRA: boolean
   /**

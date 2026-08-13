@@ -2,8 +2,39 @@ import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
 import { assertEntitled } from '@/lib/addons/guard'
+import { injectPngTextChunks, parsePngTextChunks } from '@/lib/gallery/metadata'
 
 const OUTPUT_DIR = process.env.COMFYUI_OUTPUT_DIR ?? ''
+
+/** Text chunks sit before IDAT, so a 1 MB prefix is enough to read them all. */
+const HEADER_BYTES = 1024 * 1024
+
+/**
+ * Carry the source image's generation recipe onto the edited bytes.
+ *
+ * The editor exports through `canvas.toBlob()`, which writes a PNG with no
+ * ancillary chunks — so without this the gallery's prompt/seed/LoRA metadata is
+ * silently lost on "save as copy" and *destroyed* on "overwrite original".
+ *
+ * ponytail: PNG only. JPEG would need an EXIF/XMP writer for the same trick, and
+ * PNG is the default and the format every generated image already uses.
+ */
+function carryMetadata(edited: Buffer, originalPath: string | null): Buffer {
+  if (!originalPath) return edited
+  try {
+    const fd = fs.openSync(originalPath, 'r')
+    try {
+      const len = Math.min(HEADER_BYTES, fs.fstatSync(fd).size)
+      const head = Buffer.allocUnsafe(len)
+      fs.readSync(fd, head, 0, len, 0)
+      return injectPngTextChunks(edited, parsePngTextChunks(head))
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch {
+    return edited // original gone, unreadable, or not a PNG — saving still wins
+  }
+}
 
 export function resolveWithinRoot(root: string, subfolder: string, filename: string): string | null {
   const r = path.resolve(root)
@@ -44,7 +75,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing file or filename' }, { status: 400 })
   }
   const ext = file.type === 'image/jpeg' ? 'jpg' : 'png'
-  const buf = Buffer.from(await file.arrayBuffer())
+  // The source image the edits came from — its text chunks ride along to the copy.
+  // Only for gallery originals: an upload just happens to share a name with a
+  // gallery file would otherwise be stamped with that file's unrelated recipe.
+  const sourcePath =
+    form.get('origin') === 'gallery' ? resolveWithinRoot(OUTPUT_DIR, subfolder, filename) : null
+  const buf = carryMetadata(Buffer.from(await file.arrayBuffer()), sourcePath)
 
   if (mode === 'overwrite') {
     const target = resolveWithinRoot(OUTPUT_DIR, subfolder, filename)

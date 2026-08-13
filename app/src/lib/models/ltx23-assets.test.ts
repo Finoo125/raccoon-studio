@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { LTX23_ASSETS, ltxAssetInstalled } from './ltx23-assets'
+import { LTX23_ASSETS, IC_LORAS, assetInstalled } from './ltx23-assets'
 import workflow from '../../../workflows/LTX23.json'
 
 // Every model filename the LTX23 workflow references, scraped from its inputs.
@@ -23,6 +23,20 @@ describe('LTX23_ASSETS', () => {
     expect(missing).toEqual([])
   })
 
+  // The Director motion lane offers these by name and gates itself on them
+  // being installed; a filename that drifts from the catalog would show a
+  // picker entry that can never be satisfied by any download.
+  it('can download every IC-LoRA the Director motion lane offers', () => {
+    for (const ic of IC_LORAS) {
+      const asset = LTX23_ASSETS.find((a) => a.name === ic.name)
+      expect(asset, ic.name).toBeDefined()
+      expect(asset!.folder).toBe('loras')
+      // A url is optional (Ingredients is gated on HF and must be imported by
+      // hand) but a wrong one is worse than none.
+      if (asset!.url) expect(asset!.url, ic.name).toMatch(/^https:\/\/huggingface\.co\//)
+    }
+  })
+
   it('targets only valid ComfyUI model subfolders', () => {
     const valid = new Set(['checkpoints', 'loras', 'vae', 'text_encoders', 'latent_upscale_models', 'diffusion_models', 'upscale_models'])
     for (const a of LTX23_ASSETS) expect(valid.has(a.folder)).toBe(true)
@@ -35,16 +49,16 @@ describe('LTX23_ASSETS', () => {
   })
 })
 
-describe('ltxAssetInstalled', () => {
+describe('assetInstalled', () => {
   it('matches an exact available name', () => {
-    expect(ltxAssetInstalled('a.safetensors', new Set(['a.safetensors']))).toBe(true)
+    expect(assetInstalled('a.safetensors', new Set(['a.safetensors']))).toBe(true)
   })
 
   it('matches when ComfyUI lists the file under a subfolder', () => {
-    expect(ltxAssetInstalled('a.safetensors', new Set(['sub/a.safetensors']))).toBe(true)
+    expect(assetInstalled('a.safetensors', new Set(['sub/a.safetensors']))).toBe(true)
   })
 
   it('is false when absent', () => {
-    expect(ltxAssetInstalled('a.safetensors', new Set(['b.safetensors']))).toBe(false)
+    expect(assetInstalled('a.safetensors', new Set(['b.safetensors']))).toBe(false)
   })
 })

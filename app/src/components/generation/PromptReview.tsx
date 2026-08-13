@@ -14,11 +14,14 @@ interface PromptReviewProps {
   onPromptChange: (v: string) => void
   onRefine: (instruction: string) => void
   onStop: () => void
+  /** Director mode uses this field as the timeline's global prompt. */
+  label?: string
+  placeholder?: string
 }
 
 export default function PromptReview({
   status, isStreaming, error,
-  prompt, onPromptChange, onRefine, onStop,
+  prompt, onPromptChange, onRefine, onStop, label, placeholder,
 }: PromptReviewProps) {
   const [refineText, setRefineText] = useState('')
 
@@ -46,9 +49,11 @@ export default function PromptReview({
 
       {/* Editable confirmed prompt */}
       <div className="space-y-2">
-        <SectionLabel>Final prompt</SectionLabel>
+        <SectionLabel>{label ?? 'Final prompt'}</SectionLabel>
         <Textarea
-          placeholder="Enhance an idea above, or write/paste the final cinematic prompt here…"
+          placeholder={
+            placeholder ?? 'Enhance an idea above, or write/paste the final cinematic prompt here…'
+          }
           className="min-h-[160px] resize-y leading-relaxed text-sm font-mono"
           value={prompt}
           onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => onPromptChange(e.target.value)}

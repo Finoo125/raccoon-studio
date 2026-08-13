@@ -1,9 +1,11 @@
 import ltx23 from '../../../workflows/LTX23.json'
+import ltx23Director from '../../../workflows/LTX23-Director.json'
 import anima from '../../../workflows/image_anima_preview.json'
 import ernie from '../../../workflows/image_ernie_image_turbo.json'
 import sdxl from '../../../workflows/image_sdxl.json'
 import zImage from '../../../workflows/image_z_image_turbo.json'
 import krea2 from '../../../workflows/image_krea2.json'
+import minimaxH3 from '../../../workflows/MinimaxH3.json'
 
 /**
  * One plain-text file a user can attach in Discord when something breaks.
@@ -84,11 +86,13 @@ type Graph = Record<string, { class_type?: string }>
  */
 export const SCANNED_TEMPLATES: Record<string, unknown> = {
   'LTX23.json': ltx23,
+  'LTX23-Director.json': ltx23Director,
   'image_anima_preview.json': anima,
   'image_ernie_image_turbo.json': ernie,
   'image_sdxl.json': sdxl,
   'image_z_image_turbo.json': zImage,
   'image_krea2.json': krea2,
+  'MinimaxH3.json': minimaxH3,
 }
 
 /**

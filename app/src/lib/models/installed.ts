@@ -48,6 +48,39 @@ export function selectionIsStale(
 }
 
 /**
+ * True when ComfyUI offers `file`. Names come back either bare or with a
+ * subfolder prefix (`sdxl/foo.safetensors`, and on Windows with a backslash),
+ * so the leaf is what gets compared.
+ */
+export function fileInstalled(file: string, available: string[]): boolean {
+  return available.some((n) => n === file || n.replace(/\\/g, '/').endsWith('/' + file))
+}
+
+/**
+ * Whether a model preset can actually generate right now.
+ *
+ * Usable means one of two things: its own base model is on disk, or the family
+ * has an imported Aria model to run instead (the form's Model dropdown swaps the
+ * loader wholesale, so an Aria model alone is enough — and it is the only *other*
+ * checkpoint of that category the form can select).
+ *
+ * `loaded` is the guard that keeps a cold start honest: the lists fill from
+ * /object_info, so before ComfyUI answers "empty" means "don't know yet", not
+ * "nothing installed". Greying every preset out while ComfyUI boots — or
+ * whenever it is offline — would look like a broken install, so until then
+ * everything reads as available.
+ */
+export function presetAvailable(
+  baseModel: string,
+  installed: string[],
+  ariaModels: string[],
+  loaded: boolean,
+): boolean {
+  if (!loaded) return true
+  return ariaModels.length > 0 || fileInstalled(baseModel, installed)
+}
+
+/**
  * True when ComfyUI reports at least one base model to generate with — an
  * SDXL-family checkpoint (CheckpointLoaderSimple) or a diffusion model
  * (UNETLoader, used by z-image/ernie/anima).

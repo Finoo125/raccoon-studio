@@ -35,6 +35,14 @@ export interface GenerationJob {
   livePreview?: string
 }
 
+/**
+ * True for an LTX seed-hunt candidate — a stage-1-only render whose result is a
+ * throwaway temp clip rather than a saved one. Read off the job's params rather
+ * than duplicated onto the job, so there is a single source of truth.
+ */
+export const isSeedHunt = (job: GenerationJob): boolean =>
+  (job.generationParams as VideoGenerationParams).seedHunt === true
+
 interface QueueState {
   clientId: string
   jobs: GenerationJob[]

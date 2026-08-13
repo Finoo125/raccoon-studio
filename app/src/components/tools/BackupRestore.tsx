@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Archive, DownloadCloud, UploadCloud, Loader2, HardDriveDownload, ShieldAlert, XCircle } from 'lucide-react'
+import { DownloadCloud, UploadCloud, Loader2, HardDriveDownload, ShieldAlert, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import { restartComfyUI } from '@/lib/comfyui/restart'
 import type { BackupJob } from '@/lib/backup/job'
 
 interface InspectResult {
@@ -47,6 +48,9 @@ export default function BackupRestore() {
   const [confirmDest, setConfirmDest] = useState<string | null>(null)
   // Restore preview holds the picked archive + its manifest until confirmed.
   const [preview, setPreview] = useState<(InspectResult & { srcPath: string }) | null>(null)
+  // Offered once a restore lands: restored models + shared-model paths are only
+  // read by ComfyUI at startup.
+  const [restartOpen, setRestartOpen] = useState(false)
 
   const running = job?.status === 'running'
   const busy = running || starting
@@ -79,6 +83,11 @@ export default function BackupRestore() {
       } else if (job.status === 'done' && job.kind === 'restore') {
         const skippedNote = job.skipped && job.skipped.length > 0 ? ` (${job.skipped.length} unknown skipped)` : ''
         toast.success(`Restore complete — ${job.restoredCount ?? 0} sections restored${skippedNote}.`)
+        if (job.settingsWarning) toast.warning(job.settingsWarning)
+        // Reacting to an external system (the polled server job) crossing into
+        // "done", exactly like the toasts above — not derived render state.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setRestartOpen(true)
       } else if (job.status === 'cancelled') {
         toast.info('Backup cancelled — the partial archive was removed.')
       } else if (job.status === 'error') {
@@ -156,19 +165,9 @@ export default function BackupRestore() {
     : `Failed: ${job.error ?? 'Unknown error'}`
 
   return (
+    // No header of its own: this panel has a page now, and that page's header
+    // already names it. It kept one when it was a card among others on Tools.
     <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
-      <div className="flex items-center gap-2.5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/15 ring-1 ring-primary/25">
-          <Archive className="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <h2 className="font-heading text-lg font-bold tracking-tight leading-none">Backup &amp; restore</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            Snapshot your gallery, projects and settings into one file, and bring it back after a reinstall
-          </p>
-        </div>
-      </div>
-
       {/* Options */}
       <div className="space-y-2.5 rounded-xl border border-border bg-muted/20 p-4">
         <label className="flex items-start gap-2.5 text-sm">
@@ -253,12 +252,18 @@ export default function BackupRestore() {
         </div>
       )}
 
-      <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+      {/* The icon is a flex item; the prose is not. As one flex container the
+          inline <span>s each became their own column and the sentence broke
+          into ragged blocks — only obvious once this panel had a page to
+          itself and room to be wide. */}
+      <div className="flex items-start gap-1.5">
         <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-        Backups are a single uncompressed <span className="font-medium text-foreground">.tar</span> written to the
-        location you choose, with a matching <span className="font-medium text-foreground">.sha256</span> checked on
-        restore. Backups keep running even if you close this page — come back any time to check on them.
-      </p>
+        <p className="text-xs text-muted-foreground">
+          Backups are a single uncompressed <span className="font-medium text-foreground">.tar</span> written to the
+          location you choose, with a matching <span className="font-medium text-foreground">.sha256</span> checked on
+          restore. Backups keep running even if you close this page — come back any time to check on them.
+        </p>
+      </div>
 
       {/* Delete-after confirmation */}
       <ConfirmDialog
@@ -317,6 +322,20 @@ export default function BackupRestore() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Restore done: settings were re-applied server-side, but ComfyUI reads
+          its model folders and shared-model paths only at startup. */}
+      <ConfirmDialog
+        open={restartOpen}
+        onOpenChange={setRestartOpen}
+        title="Restart ComfyUI to finish the restore?"
+        description={
+          'Your settings have been applied already. ComfyUI reads its model folders and shared-model ' +
+          'paths only when it starts, so restart it now for the restored models and paths to show up.'
+        }
+        confirmLabel="Restart ComfyUI"
+        onConfirm={() => void restartComfyUI()}
+      />
     </div>
   )
 }

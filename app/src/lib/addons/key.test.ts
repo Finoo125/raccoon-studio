@@ -19,20 +19,41 @@ function signAddonKey(payload: unknown, privateKeyPem: string) {
 }
 
 const kp = generateKeypair()
-const base = { v: 1, sub: 'p1', feat: ['photo-editor'], iat: 1750000000, exp: null as number | null }
+const base = { v: 1, sub: 'p1', feat: ['ltx-director'], iat: 1750000000, exp: null as number | null }
 
 describe('verifyKey', () => {
   it('accepts a valid key and returns granted features', () => {
     const token = signAddonKey(base, kp.privateKey)
     const r = verifyKey(token, kp.publicKey)
     expect(r.ok).toBe(true)
-    if (r.ok) expect(r.features).toEqual(['photo-editor'])
+    if (r.ok) expect(r.features).toEqual(['ltx-director'])
   })
 
-  it('expands "*" to all add-on ids', () => {
+  it('drops add-ons this build has not released, keeping the rest', () => {
+    // Keys minted before an add-on was held back still list it. The signature
+    // is genuine, so the key is accepted — but the held-back grant is not.
+    const token = signAddonKey(
+      { ...base, feat: ['photo-editor', 'movie-maker', 'ltx-director'] },
+      kp.privateKey,
+    )
+    const r = verifyKey(token, kp.publicKey)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.features).toEqual(['ltx-director'])
+  })
+
+  it('a key granting only held-back add-ons verifies but unlocks nothing', () => {
+    const token = signAddonKey({ ...base, feat: ['photo-editor'] }, kp.privateKey)
+    const r = verifyKey(token, kp.publicKey)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.features).toEqual([])
+  })
+
+  it('expands "*" to the released add-ons only', () => {
     const token = signAddonKey({ ...base, feat: ['*'] }, kp.privateKey)
     const r = verifyKey(token, kp.publicKey)
-    expect(r.ok && r.features.sort()).toEqual(['movie-maker', 'photo-editor', 'prompt-builder'])
+    // Never every add-on in the registry: a wildcard key must not hand out
+    // add-ons that are built but deliberately not part of this release.
+    expect(r.ok && r.features.sort()).toEqual(['ltx-director'])
   })
 
   it('rejects a tampered payload', () => {

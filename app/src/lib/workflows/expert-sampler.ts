@@ -4,10 +4,12 @@ import type { GenerationParams } from '@/types/workflow'
 /**
  * Node-id prefix used by every sampler this pass must NOT touch. `hires-fix.ts`
  * appends its resample as `hires:sample`, a second plain KSampler in the same
- * graph; its step count is sized against a low denoise (KSampler slices the
- * schedule by `denoise`, so its "12 steps" is ~2-3 real ones) and is meaningless
- * as a user-facing number. The face detailer needs no exclusion — it is a
- * `FaceDetailer`, not a `KSampler`.
+ * graph; its step count is paired with a low denoise and is meaningless as a
+ * user-facing number. (It is not a *fraction* of a step, as this comment once
+ * claimed: `comfy/samplers.py:1420` builds `int(steps/denoise)` sigmas and keeps
+ * the last `steps + 1`, so all 12 run — just over the tail of the schedule.)
+ * The face detailer needs no exclusion — it is a `FaceDetailer`, not a
+ * `KSampler`.
  */
 const APPENDED_SAMPLER_PREFIX = 'hires:'
 

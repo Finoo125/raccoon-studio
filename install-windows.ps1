@@ -1653,6 +1653,12 @@ Install-NodePack 'controlaltai-nodes'       'https://github.com/gseth/ControlAlt
 Install-NodePack 'ComfyUI-mxToolkit'        'https://github.com/Smirnov75/ComfyUI-mxToolkit.git'
 Install-NodePack 'comfyui-various'          'https://github.com/jamesWalker55/comfyui-various.git'
 Install-NodePack 'ComfyUI-VFI'              'https://github.com/GACLove/ComfyUI-VFI.git'
+# LTX Director timeline nodes (LTXDirector / LTXDirectorGuide / LTXDirectorCropGuides)
+# for the video Director mode. Cloned rather than vendored: it is GPL-3, and
+# comfyui/vendor-custom-nodes/ is redistributed in the public release repo while
+# cloned packs are fetched from upstream on the user's own machine. Needs no extra
+# pip deps — torch/numpy/PIL/av/aiohttp are all already present.
+Install-NodePack 'WhatDreamsCost-ComfyUI'   'https://github.com/WhatDreamsCost/WhatDreamsCost-ComfyUI.git'
 # 10S_Nodes and ComfyUI-LTXVideo are deliberately absent: the four nodes the video
 # workflow used from them are vendored in RaccoonVideoNodes. See its LICENSE-10S_Nodes
 # and comfyui/vendor-custom-nodes/README.md.

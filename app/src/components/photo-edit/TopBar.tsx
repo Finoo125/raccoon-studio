@@ -78,6 +78,9 @@ export default function TopBar() {
       fd.append('mode', mode)
       fd.append('subfolder', subfolder)
       fd.append('filename', filename)
+      // Tells the server whether there's an original on disk whose ComfyUI
+      // prompt/workflow chunks should be carried onto the edited bytes.
+      fd.append('origin', origin.kind)
 
       const res = await fetch('/api/photo-edit/save', { method: 'POST', body: fd })
       if (!res.ok) {

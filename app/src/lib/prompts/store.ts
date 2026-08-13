@@ -1,8 +1,14 @@
 import { randomUUID } from 'crypto'
 import { readJson, writeJson } from '@/lib/system/json-store'
 
-const PRESETS_FILE = 'prompt-presets.json'
-const WILDCARDS_FILE = 'wildcards.json'
+/**
+ * The prompt library, as two files in the app data dir. Exported because the
+ * backup plan claims to carry them: a test binds these names to the component's
+ * source dir, so moving either file out of `dataDir` fails loudly instead of
+ * quietly dropping a user's presets from every backup taken afterwards.
+ */
+export const PRESETS_FILE = 'prompt-presets.json'
+export const WILDCARDS_FILE = 'wildcards.json'
 
 export interface PromptPreset { id: string; name: string; prompt: string; negative?: string }
 export type WildcardLists = Record<string, string[]>

@@ -31,6 +31,43 @@ import { appendImg2Img } from './img2img'
 export const KREA2_REFUSAL_LORA = 'Krea2_TextFusion_Refusal_Reduction.safetensors'
 
 /**
+ * Kroma — the heavyweight alternative to the refusal patch. A full Krea2
+ * fine-tune shipped as a LoRA: 264 adapters plus 159 norm/modulation `.diff`
+ * deltas, all `diffusion_model.*`, so it is model-only like the other two
+ * built-ins and ComfyUI's own loader handles both key forms (`.lora_B` →
+ * weight_adapter/lora.py's mochi form, `.diff` → lora.py's diff patch). No
+ * custom node.
+ *
+ * Mutually exclusive with the refusal patch in the form: both rewrite the same
+ * text-fusion tower, and stacking a 27 MB corrective patch on top of a 1.9 GB
+ * retrain of the same layers is fighting, not adding.
+ */
+export const KREA2_KROMA_LORA = 'kroma-v0.1.safetensors'
+
+/** Upstream's recommended starting strength. 0.7–0.9 is the subtler take. */
+export const KREA2_KROMA_DEFAULT = 1
+
+/**
+ * Sampler for the LOW-DENOISE refinement passes (hires-fix and face detailer).
+ * Deliberately not `er_sde`, which the main pass uses.
+ *
+ * `er_sde` is stochastic — it injects fresh noise at every step. Sampling from
+ * pure noise that is the point; in a denoise-0.2 refinement it is actively
+ * harmful, because the injected noise has nowhere to go but into invented
+ * texture. Skin features bloom: the light freckles in the base render come back
+ * as blotches and moles, hair goes wiry, and the "upscale" reads as a quality
+ * drop rather than a gain.
+ *
+ * Measured live 2026-08-03, one seed, everything else held identical: `er_sde`
+ * blotchy, `res_multistep` middling, `euler` clean — at the SAME denoise, so
+ * lowering denoise was treating the symptom. Krea2 was the only family with
+ * this bug because it was the only one whose refinement passes used a
+ * stochastic sampler (Z-Image uses `res_multistep`, Ernie `euler`; neither
+ * reproduces it).
+ */
+const KREA2_REFINE_SAMPLER = 'euler'
+
+/**
  * The projector-scale LoRA. Upstream ships it as `pytorch_lora_weights.safetensors`
  * — meaningless in a shared `loras/` folder — so the Models page renames it on
  * download. This name and the one above are shared with the form and the Models
@@ -47,6 +84,13 @@ export const KREA2_PROJECTOR_LORA = 'krea2_projector_scale.safetensors'
  * for it, and the stock model stays the baseline people compare against.
  */
 export const KREA2_PROJECTOR_DEFAULT = 0
+
+/**
+ * What the filter-bypass switch turns on to — +5× prompt adherence, the middle
+ * of the useful band. The slider then tunes from there; the switch exists so
+ * "make it stop censoring" is one click rather than a guess at a number.
+ */
+export const KREA2_PROJECTOR_ON = 0.05
 
 /**
  * System prompt for the built-in enhancer, from ComfyUI's official Krea2
@@ -109,6 +153,7 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
     id: v.id,
     name: v.name,
     description: v.description,
+    baseModel: v.unet,
     supportsNegativePrompt: v.negativePrompt,
     supportsLoRA: true,
     loraFamily: 'krea2',
@@ -193,6 +238,10 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
       if (params.krea2RefusalLora) {
         builtins.push({ name: params.krea2RefusalLora, strength: 1 })
       }
+      const kromaStrength = params.krea2KromaStrength ?? KREA2_KROMA_DEFAULT
+      if (params.krea2KromaLora && kromaStrength > 0) {
+        builtins.push({ name: params.krea2KromaLora, strength: kromaStrength })
+      }
       const projectorStrength = params.krea2ProjectorStrength ?? KREA2_PROJECTOR_DEFAULT
       if (params.krea2ProjectorLora && projectorStrength > 0) {
         builtins.push({ name: params.krea2ProjectorLora, strength: projectorStrength })
@@ -241,8 +290,14 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
 
       // Latent hires-fix (on by default): ESRGAN upscale → re-encode →
       // low-denoise resample for genuine added detail at net 1.5×. Both variants
-      // reuse their native steps/cfg: KSampler truncates the schedule by
-      // denoise, so RAW's 52 steps at 0.2 is ~10 real steps, not 52.
+      // reuse their native steps/cfg — but NOT their native sampler, see
+      // KREA2_REFINE_SAMPLER.
+      //
+      // `steps` here is the full step count, not a fraction of one:
+      // `comfy/samplers.py:1420` computes `int(steps/denoise)` sigmas and keeps
+      // the last `steps + 1`, so denoise 0.2 runs all 8 (RAW: all 52) steps over
+      // the tail 20% of the schedule. That is precisely why a stochastic sampler
+      // was so destructive here — it was 8 full noise injections, not a nudge.
       if (params.upscale !== false) {
         appendHiresFix(wf, {
           saveNodeId: 'k:save',
@@ -257,7 +312,7 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
           sampler: {
             steps: v.steps,
             cfg: v.cfg,
-            sampler_name: 'er_sde',
+            sampler_name: KREA2_REFINE_SAMPLER,
             scheduler: 'simple',
             denoise: 0.2,
             seed,
@@ -277,7 +332,7 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
           sampler: {
             steps: v.steps,
             cfg: v.cfg,
-            sampler_name: 'er_sde',
+            sampler_name: KREA2_REFINE_SAMPLER,
             scheduler: 'simple',
             denoise: 0.25,
           },

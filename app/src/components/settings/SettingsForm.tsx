@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Copy, FolderOpen, Loader2 } from 'lucide-react'
+import { Compass, Copy, FolderOpen, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { TOUR_EVENT } from '@/lib/tour'
 import type { AppSettings } from '@/lib/settings/settings'
 
 interface PathsBlock { modelsDir: string | null; outputDir: string | null; logsDir: string | null; projectsDir: string | null }
@@ -119,6 +120,14 @@ export default function SettingsForm() {
             )}
           </div>
         ))}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Guided tour</h2>
+        <p className="text-xs text-muted-foreground">The first-run walkthrough of the menus. Skipping it is not final.</p>
+        <Button variant="outline" className="h-10" onClick={() => window.dispatchEvent(new Event(TOUR_EVENT))}>
+          <Compass className="mr-2 h-4 w-4" /> Replay tour
+        </Button>
       </section>
     </div>
   )

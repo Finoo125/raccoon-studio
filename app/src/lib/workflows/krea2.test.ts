@@ -258,6 +258,47 @@ describe('krea2 built-in LoRAs', () => {
     const wf = krea2RawWorkflow.buildPrompt(withBoth)
     expect(wf['krea2:builtin:0'].inputs.lora_name).toBe('Krea2_TextFusion_Refusal_Reduction.safetensors')
   })
+
+  // Kroma is the *alternative* to the refusal patch — the form never sends both
+  // — so it lands in slot 0 with the projector chained behind it, exactly where
+  // the refusal LoRA would have been.
+  it('applies Kroma model-only at full strength by default', () => {
+    const wf = krea2TurboWorkflow.buildPrompt({ ...base, krea2KromaLora: 'kroma-v0.1.safetensors' })
+    expect(wf['krea2:builtin:0'].class_type).toBe('LoraLoaderModelOnly')
+    expect(wf['krea2:builtin:0'].inputs.lora_name).toBe('kroma-v0.1.safetensors')
+    expect(wf['krea2:builtin:0'].inputs.strength_model).toBe(1)
+    expect(wf['k:loras'].inputs.model).toEqual(['krea2:builtin:0', 0])
+  })
+
+  it('honours a reduced Kroma strength', () => {
+    const wf = krea2TurboWorkflow.buildPrompt({
+      ...base,
+      krea2KromaLora: 'kroma-v0.1.safetensors',
+      krea2KromaStrength: 0.7,
+    })
+    expect(wf['krea2:builtin:0'].inputs.strength_model).toBe(0.7)
+  })
+
+  it('omits Kroma at strength 0', () => {
+    const wf = krea2TurboWorkflow.buildPrompt({
+      ...base,
+      krea2KromaLora: 'kroma-v0.1.safetensors',
+      krea2KromaStrength: 0,
+    })
+    expect(wf['krea2:builtin:0']).toBeUndefined()
+    expect(wf['k:loras'].inputs.model).toEqual(['k:unet', 0])
+  })
+
+  it('chains the projector behind Kroma', () => {
+    const wf = krea2TurboWorkflow.buildPrompt({
+      ...base,
+      krea2KromaLora: 'kroma-v0.1.safetensors',
+      krea2ProjectorLora: 'krea2_projector_scale.safetensors',
+      krea2ProjectorStrength: 0.05,
+    })
+    expect(wf['krea2:builtin:1'].inputs.lora_name).toBe('krea2_projector_scale.safetensors')
+    expect(wf['krea2:builtin:1'].inputs.model).toEqual(['krea2:builtin:0', 0])
+  })
 })
 
 describe('krea2 post-processing', () => {
@@ -273,12 +314,29 @@ describe('krea2 post-processing', () => {
     expect(wf['hires:sample'].inputs.seed).toBe(42)
   })
 
-  it('reuses RAW native sampling in the hires pass — KSampler truncates by denoise', () => {
-    // 52 steps at denoise 0.2 is ~10 real steps, so there is no separate hires
-    // step budget to tune.
+  it('reuses RAW native steps/cfg in the hires pass', () => {
+    // All 52 steps actually run — comfy/samplers.py:1420 builds int(52/0.2)=260
+    // sigmas and keeps the last 53 — they just span the tail 20% of the
+    // schedule. There is no separate hires step budget to tune.
     const wf = krea2RawWorkflow.buildPrompt({ ...post, detailer: false })
     expect(wf['hires:sample'].inputs.steps).toBe(52)
     expect(wf['hires:sample'].inputs.cfg).toBe(4)
+  })
+
+  // Regression: the refinement passes must never use a stochastic sampler.
+  // er_sde re-injects noise every step, and at denoise 0.2 all 8 steps run, so
+  // it invented texture instead of refining it — light freckles came back as
+  // blotches and the "upscale" looked worse than the base render. Measured live
+  // 2026-08-03; euler at the same denoise is clean. Same lesson Anima Turbo
+  // already encodes.
+  it.each([
+    ['turbo', krea2TurboWorkflow],
+    ['raw', krea2RawWorkflow],
+  ])('refines %s with a deterministic sampler, keeping er_sde on the main pass', (_name, workflow) => {
+    const wf = workflow.buildPrompt({ ...post, upscale: true, detailer: true })
+    expect(wf['k:sampler'].inputs.sampler_name).toBe('er_sde')
+    expect(wf['hires:sample'].inputs.sampler_name).toBe('euler')
+    expect(wf['det:face'].inputs.sampler_name).toBe('euler')
   })
 
   it('drops the hires-fix and grains the decode when upscale is off', () => {

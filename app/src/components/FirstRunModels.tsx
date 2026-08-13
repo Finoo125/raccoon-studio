@@ -7,6 +7,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
 import { hasBaseModel } from '@/lib/models/installed'
+import { tourPending } from '@/lib/tour'
 
 // ComfyUI is usually still booting when the app first paints, so retry until it
 // answers. ponytail: if it never comes online we just stay quiet — the ComfyUI
@@ -37,7 +38,10 @@ export default function FirstRunModels() {
           fetch('/api/comfyui/object_info/UNETLoader', { cache: 'no-store' }),
         ])
         if (ckpt.ok && unet.ok) {
-          if (!cancelled && !hasBaseModel(await ckpt.json(), await unet.json())) setOpen(true)
+          // The first-run tour ends on the Models page and says the same thing,
+          // so on a truly fresh install this would only stack a second dialog on
+          // top of it. Next launch the tour is done and the nudge speaks again.
+          if (!cancelled && !tourPending() && !hasBaseModel(await ckpt.json(), await unet.json())) setOpen(true)
           return
         }
       } catch { /* ComfyUI unreachable — fall through to the retry */ }

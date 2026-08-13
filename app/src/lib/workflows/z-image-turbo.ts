@@ -22,6 +22,9 @@ export const zImageTurboWorkflow: WorkflowDefinition = {
   id: 'z-image-turbo',
   name: 'Z Image Turbo',
   description: 'Fast turbo-style generation with optional 1.5× upscale and face swap',
+  // Read off the template rather than repeated: this is the exact name the graph
+  // asks ComfyUI for, so the "installed?" check can never drift from the loader.
+  baseModel: baseWorkflow['57:28'].inputs.unet_name,
   supportsNegativePrompt: false,
   supportsLoRA: true,
   loraFamily: 'zimage',

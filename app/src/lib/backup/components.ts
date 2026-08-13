@@ -63,8 +63,21 @@ export function planComponents(paths: BackupPaths, opts: { includeModels: boolea
       strip: 2,
       destDir: paths.movieProjectsDir,
     },
-    oneDeep('app-data', 'App settings & presets', paths.dataDir),
+    // The whole app data dir in one member: settings, the Generate form's prompt
+    // presets and wildcard lists, and queue history. Named for what is actually
+    // in it — "App settings" read as if the prompt library was not covered, which
+    // is the sort of doubt that makes someone skip a backup.
+    oneDeep('app-data', 'Settings, prompt presets & wildcards', paths.dataDir),
   ]
+
+  // ReActor's saved face models. A few KB each, so they always travel with a
+  // backup rather than riding on the tens-of-GB models component. Listed even
+  // when models are included (they overlap harmlessly, and the restoring
+  // machine matches components by id — dropping it here would make an archive
+  // built without models unrestorable).
+  if (paths.modelsDir) {
+    sources.push(oneDeep('face-models', 'Face models', path.join(paths.modelsDir, 'reactor', 'faces')))
+  }
 
   if (opts.includeModels) {
     sources.push(oneDeep('models', 'Models', paths.modelsDir))

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { hasBaseModel, comboOptions, selectionIsStale } from './installed'
+import { hasBaseModel, comboOptions, selectionIsStale, presetAvailable, fileInstalled } from './installed'
+import { workflows } from '../workflows'
 
 const ckpt = (names: string[]) => ({ CheckpointLoaderSimple: { input: { required: { ckpt_name: [names] } } } })
 const unet = (names: string[]) => ({ UNETLoader: { input: { required: { unet_name: [names] } } } })
@@ -53,6 +54,50 @@ describe('comboOptions', () => {
   it('is an empty list when the new shape carries no options', () => {
     const data = { UpscaleModelLoader: { input: { required: { model_name: ['COMBO', {}] } } } }
     expect(comboOptions(data, 'UpscaleModelLoader', 'model_name')).toEqual([])
+  })
+})
+
+describe('fileInstalled', () => {
+  it('matches a bare name and one under a subfolder, either separator', () => {
+    expect(fileInstalled('a.safetensors', ['a.safetensors'])).toBe(true)
+    expect(fileInstalled('a.safetensors', ['sdxl/a.safetensors'])).toBe(true)
+    expect(fileInstalled('a.safetensors', ['sdxl\\a.safetensors'])).toBe(true)
+  })
+
+  it('does not match a name that merely ends the same way', () => {
+    expect(fileInstalled('a.safetensors', ['xa.safetensors'])).toBe(false)
+  })
+})
+
+describe('presetAvailable', () => {
+  const base = 'krea2_turbo_fp8_scaled.safetensors'
+
+  it('is true once the preset\'s own model is on disk', () => {
+    expect(presetAvailable(base, ['diffusion_models/' + base], [], true)).toBe(true)
+  })
+
+  it('is true on an Aria model alone — the form can swap the loader to it', () => {
+    expect(presetAvailable(base, ['other.safetensors'], ['aria-v2.safetensors'], true)).toBe(true)
+  })
+
+  it('is false when neither is installed', () => {
+    expect(presetAvailable(base, ['other.safetensors'], [], true)).toBe(false)
+  })
+
+  // The cold-start / offline case: empty lists mean "ComfyUI hasn't answered",
+  // not "nothing installed". Greying every preset out then looks like a broken
+  // install and leaves the user nothing to click.
+  it('is true for everything until ComfyUI has answered', () => {
+    expect(presetAvailable(base, [], [], false)).toBe(true)
+  })
+
+  it('every shipped preset declares the model its graph actually loads', () => {
+    for (const w of workflows) {
+      expect(w.baseModel, w.id).toMatch(/\.safetensors$/)
+      // A preset whose own model is present must read as available, or the
+      // button greys out on a perfectly good install.
+      expect(presetAvailable(w.baseModel, [w.baseModel], [], true), w.id).toBe(true)
+    }
   })
 })
 
