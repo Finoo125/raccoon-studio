@@ -116,22 +116,37 @@ cmd_install() {
   emit_done install
 }
 
+# SageAttention is Windows-only for now — see the block in lib.sh for why there
+# is nothing to install here. The verbs exist anyway so both engines answer the
+# same questions: a launcher asking sage-status gets a straight answer instead of
+# a usage error, and the day a Linux wheel is pinned, only lib.sh changes.
+cmd_sage_status() { if sage_installed; then echo installed; else echo not-installed; fi; }
+cmd_install_sage() {
+  emit_warn "SageAttention is not available on Linux yet — see installer/lib.sh"
+  emit_done install-sage
+}
+
 main() {
   local verb="${1:-}"; shift || true
   WITH_CONTROLNET=0; GPU_REQUEST=""
   for a in "$@"; do case "$a" in
     --dry-run)         DRY_RUN=1 ;;
     --with-controlnet) WITH_CONTROLNET=1 ;;
+    # Accepted and ignored: the Windows engine passes it, and a shared launcher
+    # or script must not fail here just because this platform cannot act on it.
+    --with-sage-attention) ;;
     --gpu=*)           GPU_REQUEST="${a#*=}" ;;
   esac; done
   case "$verb" in
     status)       cmd_status ;;
     check-update) cmd_check_update ;;
+    sage-status)  cmd_sage_status ;;
     start)        cmd_start ;;
     stop)         cmd_stop ;;
     update)       cmd_update ;;
     install)      cmd_install ;;
-    *) echo "usage: engine.sh {install|start|stop|update|status|check-update} [--dry-run]" >&2; return 2 ;;
+    install-sage) cmd_install_sage ;;
+    *) echo "usage: engine.sh {install|install-sage|start|stop|update|status|check-update|sage-status} [--dry-run]" >&2; return 2 ;;
   esac
 }
 main "$@"

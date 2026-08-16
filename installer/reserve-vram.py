@@ -153,6 +153,88 @@ def preview_flags(total_gib):
     return ['--preview-size', _PREVIEW_SIZE_LARGE]
 
 
+# ── SageAttention ─────────────────────────────────────────────────────────────
+# INT8-quantised attention kernels (woct0rdho's build of thu-ml/SageAttention 2.2),
+# installed as an optional extra. Not a hardware tier — a "did the user opt in"
+# check — but it lives here because this is the one place both launchers already
+# read their flags from, so the flag reaches existing installs through `git pull`
+# like every other one. Writing it into start-comfyui.* would not: that file is
+# generated and gitignored.
+#
+# Measured 2026-08-13, RTX 5090, MiniMax H3 t2v 864x480, 20 steps, same seed:
+#
+#     5 s clip (124 frames)   6.21 -> 5.49 s/it   1.13x   (1.08x end to end)
+#    15 s clip (362 frames)  26.30 -> 18.21 s/it  1.44x   (1.37x end to end)
+#
+# The gain grows with clip length because H3 uses full 3D attention: sequence
+# scales with frames and the quadratic term takes over, taking attention from
+# ~14% of a sampling step at 5 s to ~37% at 15 s. Benchmark this on a SHORT clip
+# and you will wrongly conclude it is not worth shipping.
+#
+# The attention op itself is 5.3-6.2x faster here, which is well above the 2-3x
+# the papers quote, because the baseline is not what those papers measured
+# against: the pinned torch 2.11.0+cu128 Windows build reports "Torch was not
+# compiled with flash attention" and cuDNN attention is runtime-disabled, so
+# ComfyUI's attention_pytorch falls through to SDPA's mem-efficient kernel
+# (84.8 ms at seq 16k, vs cuDNN 34.4 and sage 13.7). Linux builds do ship flash,
+# so expect a smaller win there.
+#
+# Quality is unchanged (verified frame by frame) but the TRAJECTORY is not: same
+# seed, sage on vs off, PSNR 19.6 dB — well beyond H3's own run-to-run variance
+# of 36.9 dB. So this is deliberately an install-level flag and not a per-render
+# toggle: flipping it per job would silently invalidate saved seeds and every
+# seed-hunt result.
+#
+# Sol-Attn was evaluated as a replacement on 2026-08-16 and REJECTED. Measured on
+# the same 15 s clip with sage on: 18.65 -> 17.22 s/it, i.e. 1.083x, against the
+# pack's published 1.38-1.65x — which is an isolated attention-op figure on
+# synthetic tensors, as its own BENCHMARKS.md says. Its two lossless nodes
+# (fused modulation, chunked FFN) produced byte-identical mp4s and changed
+# neither speed nor peak VRAM, and the advertised -37% MLP memory did not show up
+# in process peak at all. The attention patch also shifts the trajectory the same
+# way this flag does, so shipping it would mean a SECOND seed-invalidating
+# install flag for 8% — where this one earns its place at 1.44x. Details and the
+# run-order trap that nearly produced a false 7 GB "saving" are in memory under
+# minimax-h3-integration.
+def sage_attention_usable():
+    """True when ComfyUI could actually start with --use-sage-attention.
+
+    A REAL import, not importlib.util.find_spec, and this matters: ComfyUI hard
+    exits when the flag is passed and the package will not import
+    (comfy/ldm/modules/attention.py:28-34), and worse, a sageattention that
+    imports while its `triton` dependency does not re-raises rather than exiting
+    — so a half-installed extra takes the whole launch down with a traceback
+    instead of degrading to SDPA. find_spec answers "is there a directory",
+    which is exactly the question that would not have caught that.
+
+    Broad except on purpose: every failure mode here (no package, no triton, a
+    bad DLL, a wheel built for another torch) has the same correct answer, which
+    is to leave the flag off and render at SDPA speed.
+    """
+    try:
+        import sageattention  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def parse_sage_override(raw):
+    """RACCOON_SAGE_ATTENTION -> True (force on), False (off), None (auto-detect).
+
+    Numeric like its RACCOON_RESERVE_VRAM and RACCOON_PINNED_MEMORY siblings, and
+    raising on anything else for the same reason: "off" reading as truthy would
+    turn the flag ON for someone explicitly disabling it.
+    """
+    if raw is None or raw.strip() == '':
+        return None
+    return float(raw) != 0
+
+
+def sage_flags(usable):
+    """--use-sage-attention, or [] to leave ComfyUI on its default attention."""
+    return ['--use-sage-attention'] if usable else []
+
+
 def parse_override(raw):
     """RACCOON_RESERVE_VRAM -> GB, or None for 'use ComfyUI's default' (0 or blank).
 
@@ -225,12 +307,18 @@ def resolve_reserve_gb(total_gib):
     return None if total_gib is None else reserve_gb(total_gib)
 
 
-def tuning_flags(ram_gib, vram_gib, keep_pinned=None):
+def tuning_flags(ram_gib, vram_gib, keep_pinned=None, sage=False):
     """Every hardware-derived launch flag for a box with this RAM and VRAM.
 
     `keep_pinned` is None to use the RAM tier, or True/False for an explicit
     RACCOON_PINNED_MEMORY. Split out of tuning_main so the self-check can assert
     the assembled command line without needing a GPU to probe.
+
+    `sage` is an explicit boolean rather than a probe, and defaults to OFF, so
+    that this stays a pure function of its arguments — the self-check below
+    asserts exact argument lists, and a probe here would make them depend on
+    whether the machine running the tests happens to have the optional extra
+    installed. tuning_main does the detecting.
     """
     if keep_pinned is None:
         flags = pinned_memory_flags(ram_gib)
@@ -248,7 +336,7 @@ def tuning_flags(ram_gib, vram_gib, keep_pinned=None):
 
     # The preview tier reads the REAL total either way: it sizes a per-step TAESD
     # decode and has nothing to do with which loader is in use.
-    return flags + preview_flags(vram_gib)
+    return flags + preview_flags(vram_gib) + sage_flags(sage)
 
 
 def tuning_main():
@@ -276,7 +364,27 @@ def tuning_main():
         total = total_vram_gib()
     except Exception as exc:
         sys.stderr.write('reserve-vram: could not probe VRAM (%s)\n' % exc)
-    flags = tuning_flags(ram, total, keep)
+
+    # An explicit RACCOON_SAGE_ATTENTION beats detection in both directions: 0
+    # turns it off without uninstalling (the way back to identical seeds), 1
+    # forces it on. Anything unparseable falls back to detection rather than
+    # guessing, exactly like the two overrides above.
+    raw_sage = os.environ.get('RACCOON_SAGE_ATTENTION')
+    try:
+        sage = parse_sage_override(raw_sage)
+    except ValueError:
+        sys.stderr.write(
+            'RACCOON_SAGE_ATTENTION=%r is not a number - detecting instead\n' % raw_sage)
+        sage = None
+    if sage is None:
+        sage = sage_attention_usable()
+    elif sage and not sage_attention_usable():
+        # Honouring a forced-on here would hand ComfyUI a flag it exits on. The
+        # override exists to change a decision, not to break the launch.
+        sys.stderr.write('RACCOON_SAGE_ATTENTION=1 but sageattention will not import - ignoring\n')
+        sage = False
+
+    flags = tuning_flags(ram, total, keep, sage)
 
     # Force LF. On Windows, text-mode stdout translates \n to \r\n, and the shell
     # reader then hands ComfyUI "--reserve-vram\r" — an unrecognised argument that
@@ -379,6 +487,22 @@ def _self_check():
             pass
         else:
             raise AssertionError('parse_pin_override(%r) should raise ValueError' % bad)
+    # SageAttention: opt-in extra, so the flag appears only when it is usable.
+    assert sage_flags(True) == ['--use-sage-attention']
+    assert sage_flags(False) == [], 'not installed means ComfyUI keeps its own attention'
+    assert parse_sage_override('1') is True and parse_sage_override('0') is False
+    assert parse_sage_override('') is None and parse_sage_override(None) is None
+    assert parse_sage_override('  0 ') is False, 'whitespace must not read as "unset"'
+    for bad in ('banana', 'off', 'yes'):
+        try:
+            parse_sage_override(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('parse_sage_override(%r) should raise ValueError' % bad)
+    # Detection must never raise, whatever state the venv is in — it runs on
+    # every launch and an exception here would cost the box all of its tuning.
+    assert sage_attention_usable() in (True, False)
     # The assembled command line. The reserve tier must NOT reach it while the
     # legacy loader is in use: there it is charged twice and it cost LTX 2.3 ~9
     # GiB of resident weights on a 32 GB card. Everything else must survive that
@@ -418,6 +542,17 @@ def _self_check():
         assert dynamic_vram_disabled(), 'surrounding whitespace is still a zero'
         assert tuning_flags(63.7, 31.8, keep_pinned=False) == \
             ['--disable-pinned-memory', '--preview-size', '768'], 'pin override still honoured'
+        # SageAttention rides along with every other flag rather than replacing
+        # any of them, and stays off unless asked for. Defaulting to off is what
+        # keeps a forgotten argument from handing ComfyUI a flag it exits on.
+        os.environ.pop('RACCOON_DYNAMIC_VRAM', None)
+        assert tuning_flags(63.7, 31.8, sage=True) == \
+            ['--reserve-vram', '8', '--preview-size', '768', '--use-sage-attention'], \
+            'sage is additive - it must not displace the measured tiers'
+        assert tuning_flags(63.7, 11.6, sage=True) == ['--use-sage-attention'], \
+            'a 12 GB card gets sage with no tier flags at all'
+        assert tuning_flags(63.7, 31.8) == ['--reserve-vram', '8', '--preview-size', '768'], \
+            'sage defaults OFF'
     finally:
         for var, val in (('RACCOON_RESERVE_VRAM', _saved), ('RACCOON_DYNAMIC_VRAM', _saved_dyn)):
             os.environ.pop(var, None)

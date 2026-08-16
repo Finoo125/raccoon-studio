@@ -16,7 +16,15 @@ import {
 import type { EnhanceSettingsValues } from './EnhanceSettings'
 import type { VideoGenerationParams } from '@/types/video-workflow'
 import { assetInstalled } from '@/lib/models/ltx23-assets'
-import { H3_TURBO_LORA, H3_REF2VA_CKPT, h3RefCount } from '@/lib/workflows/minimax-h3'
+import {
+  H3_TURBO,
+  H3_REF2V_TURBO_LORA,
+  H3_REALISM_LORA,
+  H3_REF2VA_CKPT,
+  h3RefCount,
+  h3TurboTier,
+  type H3TurboTier,
+} from '@/lib/workflows/minimax-h3'
 import { useAddonLock, LTX_DIRECTOR_ADDON } from '@/lib/addons/useAddonLock'
 import { visionShots } from '@/lib/workflows/director-timeline'
 import { shotVisionB64 } from './director/lane-media'
@@ -45,6 +53,18 @@ const RENDER_SETTING_KEYS = new Set<keyof EnhanceSettingsValues>([
  * restore/persist pair, the prefill effect and the enhance-stream mirror all
  * move across untouched, and no consumer has to memoise a selector.
  */
+/**
+ * Whether an image-anchored render is missing the image it needs.
+ *
+ * i2v is satisfied by EITHER frame: with only the end frame filled the task is
+ * H3's l2v — open somewhere plausible and converge on that image — which is a
+ * render, not a missing input. Module-level and pure so the callback that reads
+ * it derives from `params` rather than closing over a value computed a render
+ * ago.
+ */
+const missingFrame = (p: VideoGenerationParams) =>
+  p.mode === 'i2v' && !p.inputImage && !p.endImage
+
 function useVideoFormState() {
   const { clientId, addJob } = useQueueStore()
   // Whether a video job is in flight (queued or running). A boolean keeps the
@@ -100,10 +120,16 @@ function useVideoFormState() {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [faceIdReady, setFaceIdReady] = useState(false)
   const [motionReady, setMotionReady] = useState(false)
-  const [turboReady, setTurboReady] = useState(false)
+  const [turboReady, setTurboReady] = useState<Record<H3TurboTier, boolean>>({
+    draft: false,
+    fast: false,
+  })
   const [ref2vReady, setRef2vReady] = useState(false)
+  const [realismReady, setRealismReady] = useState(false)
   const { locked: directorLocked, loaded: addonsLoaded } = useAddonLock(LTX_DIRECTOR_ADDON)
   const [imageB64, setImageB64] = useState('')
+  /** The end frame's base64, for the vision pass. Same lifetime as `imageB64`. */
+  const [endImageB64, setEndImageB64] = useState('')
   const [seedPreview, setSeedPreview] = useState<string | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
   // Seed hunt batch size; 0 = off. Form-local on purpose: `seedHunt` is a per-job
@@ -197,12 +223,38 @@ function useVideoFormState() {
             : (p.motionLora ? { ...p, motionLora: false } : p),
         )
 
-        // H3 Turbo. Default-OFF, so unlike the motion LoRA there is no
-        // "turn on when undefined" half — only the restore guard, for a session
-        // saved on a machine that had the file and reopened on one that doesn't.
-        const turbo = Array.isArray(names) && assetInstalled(H3_TURBO_LORA, installed)
+        // H3 Turbo, per tier — each is its own optional download, so a machine
+        // can have either, both or neither. Default-OFF, so unlike the motion
+        // LoRA there is no "turn on when undefined" half; the guard below is for
+        // a session saved where a tier's file existed and reopened where it
+        // doesn't, which would otherwise leave the param on behind a dead button.
+        const turbo: Record<H3TurboTier, boolean> = {
+          draft: Array.isArray(names) && assetInstalled(H3_TURBO.draft.lora, installed),
+          fast: Array.isArray(names) && assetInstalled(H3_TURBO.fast.lora, installed),
+        }
         setTurboReady(turbo)
-        if (!turbo) setParams((p) => (p.turbo ? { ...p, turbo: false } : p))
+        setParams((p) => {
+          const tier = h3TurboTier(p.turbo)
+          // Normalise the legacy `true` on the way through, so exactly one
+          // spelling of "draft" survives past first load.
+          const next = tier && turbo[tier] ? tier : false
+          // ref2va's own Turbo LoRA rides on the same fetch; it is a machine
+          // fact rather than a choice, so it is written straight to params for
+          // the builder to read.
+          const ref2v = Array.isArray(names) && assetInstalled(H3_REF2V_TURBO_LORA, installed)
+          return p.turbo === next && p.ref2vTurbo === ref2v
+            ? p
+            : { ...p, turbo: next, ref2vTurbo: ref2v }
+        })
+
+        // Realism adapter — default-OFF like the Turbo tiers, so no "turn on
+        // when undefined" half. The reset guard is the same one they need: the
+        // flag is persisted, so a session saved on a machine that had the file
+        // would otherwise restore it here behind a disabled checkbox and 400 the
+        // render at ComfyUI's validation step.
+        const realism = Array.isArray(names) && assetInstalled(H3_REALISM_LORA, installed)
+        setRealismReady(realism)
+        if (!realism) setParams((p) => (p.realismLora ? { ...p, realismLora: false } : p))
       })
       .catch(() => {})
 
@@ -275,6 +327,11 @@ function useVideoFormState() {
           inputImage: undefined,
           inputImageWidth: undefined,
           inputImageHeight: undefined,
+          // Same reason as inputImage: a restored end-frame filename whose file
+          // is gone 400s the job at ComfyUI's validation step.
+          endImage: undefined,
+          endImageWidth: undefined,
+          endImageHeight: undefined,
           // Same reason as inputImage: these are ComfyUI input-dir filenames, and
           // a restored one that no longer exists 400s the job at validation.
           refImages: undefined,
@@ -345,12 +402,13 @@ function useVideoFormState() {
     params,
     workflowId: workflow.id,
     imageB64,
+    endImageB64,
     directorImages: params.mode === 'director' ? await directorVisionImages() : [],
-  }), [settings, params, imageB64, workflow.id, directorVisionImages])
+  }), [settings, params, imageB64, endImageB64, workflow.id, directorVisionImages])
 
   const enhanceDisabledReason = (() => {
     if (settings.model === 'None') return 'Select an Ollama model to enhance.'
-    if (params.mode === 'i2v' && !params.inputImage) return 'Upload a source image first.'
+    if (missingFrame(params)) return 'Upload a start or end frame first.'
     if (params.mode === 'ref2v' && !h3RefCount(params))
       return 'Add at least one reference first.'
     if (!settings.userIntent.trim()) return 'Describe your idea above first.'
@@ -373,8 +431,8 @@ function useVideoFormState() {
       toast.error('Enter or enhance a prompt first')
       return
     }
-    if (params.mode === 'i2v' && !params.inputImage) {
-      toast.error('Upload a source image for image-to-video')
+    if (missingFrame(params)) {
+      toast.error('Upload a start or end frame for image-to-video')
       return
     }
     if (params.mode === 'ref2v' && !h3RefCount(params)) {
@@ -453,7 +511,8 @@ function useVideoFormState() {
     workflow, params, set, setParams,
     settings, onSettingChange, models, options,
     collapsed, setCollapsed, advancedOpen, setAdvancedOpen,
-    faceIdReady, motionReady, turboReady, ref2vReady, seedPreview, setSeedPreview, setImageB64,
+    faceIdReady, motionReady, turboReady, ref2vReady, realismReady, seedPreview, setSeedPreview,
+    setImageB64, setEndImageB64,
     isGenerating, huntCount, setHuntCount, hasActiveJob, lastJobSeed,
     enh, enhanceDisabledReason, handleEnhance, handleRefine, handleGenerate, handleCancel,
   }

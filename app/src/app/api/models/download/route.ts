@@ -35,6 +35,16 @@ export async function POST(req: NextRequest) {
       let tmpFile: string | undefined
       let fileStream: fs.WriteStream | undefined
 
+      // A hosted pod sits behind a reverse proxy that kills any connection with
+      // no bytes for ~125 s (measured on RunPod, undocumented) — and that clock
+      // runs after the headers, not just before them, so "the stream already
+      // started" is no protection. This stream can legitimately go quiet for
+      // longer: progress fires once per whole percent, and 1% of a 42 GB model
+      // set is 420 MB. An SSE comment costs nothing and EventSource ignores it.
+      const heartbeat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(': ping\n\n')) } catch { /* client gone */ }
+      }, 15_000)
+
       try {
         if (!MODELS_DIR) {
           send(controller, { type: 'error', message: 'COMFYUI_MODELS_DIR is not set in .env.local' })
@@ -135,6 +145,7 @@ export async function POST(req: NextRequest) {
           send(controller, { type: 'error', message: e instanceof Error ? e.message : String(e) })
         }
       } finally {
+        clearInterval(heartbeat)
         try { controller.close() } catch { /* already closed by disconnect */ }
       }
     },

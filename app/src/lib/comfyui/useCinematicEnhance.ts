@@ -16,7 +16,13 @@ const BACKEND_URL = '/api/comfyui/rvn/set_backend'
 export interface EnhanceArgs {
   /** Ollama model name. */
   model: string
-  videoMode: 't2v' | 'i2v' | 'ref2v' | 'director'
+  /**
+   * The task the doctrine writes for — not always the mode the user picked.
+   * `fl2v`/`l2v` are H3's first-and-last-frame and last-frame tasks, derived by
+   * `h3Task` from which image slots are filled. A node-side doctrine that has
+   * never heard of a tag falls through to t2v, so this can grow safely.
+   */
+  videoMode: 't2v' | 'i2v' | 'fl2v' | 'l2v' | 'ref2v' | 'director'
   /**
    * What the vision pass gets to look at. One image for i2v; in Director mode a
    * list — every shot's picture, in play order — because the brief describes a

@@ -21,7 +21,7 @@
 
 import zlib from 'node:zlib'
 import { describe, it, expect, beforeAll } from 'vitest'
-import { minimaxH3Workflow, h3FrameCount, H3_REF2VA_CKPT } from './minimax-h3'
+import { minimaxH3Workflow, h3FrameCount, H3_REF2VA_CKPT, H3_TURBO } from './minimax-h3'
 import { MINIMAX_H3_ASSETS } from '@/lib/models/minimax-h3-assets'
 import type { VideoGenerationParams } from '@/types/video-workflow'
 
@@ -233,7 +233,15 @@ describe.skipIf(!LIVE)('MiniMax H3 live', () => {
 
   it('renders a reference clip that honours its reference', async () => {
     const have = await installedModels()
-    const need = [H3_REF2VA_CKPT, ...MINIMAX_H3_ASSETS.filter((a) => a.folder !== 'diffusion_models').map((a) => a.name)]
+    // Required set + the two optional files this test actually uses. Spelled
+    // as an allowlist, never as "the catalog minus what I know is optional" —
+    // that shape turns every future optional entry into a silent skip, and a
+    // skipped live test is indistinguishable from a passing one.
+    const need = [
+      ...MINIMAX_H3_ASSETS.filter((a) => !a.optional).map((a) => a.name),
+      H3_REF2VA_CKPT,
+      H3_TURBO.draft.lora,
+    ]
     const absent = need.filter((n) => !have.has(n) && ![...have].some((x) => x.endsWith('/' + n)))
     if (absent.length) {
       console.warn(`[h3] skipping ref2v render — not installed: ${absent.join(', ')}`)
@@ -284,9 +292,9 @@ describe.skipIf(!LIVE)('MiniMax H3 live', () => {
 
   it('renders a clip with a synced audio track', async () => {
     const have = await installedModels()
-    // The ref2va checkpoint is only needed by reference mode; a t2v render must
-    // not be held hostage to an optional 21 GB download.
-    const required = MINIMAX_H3_ASSETS.filter((a) => a.name !== H3_REF2VA_CKPT)
+    // Nothing optional belongs in this gate: a plain t2v render must not be
+    // held hostage to the 21 GB reference checkpoint or to a Turbo LoRA.
+    const required = MINIMAX_H3_ASSETS.filter((a) => !a.optional)
     const absent = required.filter(
       (a) => !have.has(a.name) && ![...have].some((n) => n.endsWith('/' + a.name)),
     )

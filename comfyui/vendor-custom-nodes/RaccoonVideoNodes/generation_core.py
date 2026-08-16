@@ -83,15 +83,22 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
     temperature = float(body.get("temperature", 0.6))
     skip_flush = _skip_flush(body)
 
-    if mode == "i2v" and not images:
-        return {"error": "I2V needs an image", "elapsed_s": 0}
+    # Every frame-anchored task needs its frame(s): the doctrine's first line
+    # names them, so writing blind produces a prompt that references a picture
+    # that was never attached.
+    if mode in ("i2v", "fl2v", "l2v") and not images:
+        return {"error": "%s needs an image" % mode.upper(), "elapsed_s": 0}
     if model_file == "None" and llm.is_managed():
         return {"error": "No model selected", "elapsed_s": 0}
 
     # Director shots are optional, so an empty timeline simply writes blind.
     # ref2v stays out on purpose: H3's reference doctrine was tuned without a
     # vision pass, and turning one on here would silently change its prompts.
-    need_vision = bool(images) and mode in ("i2v", "director")
+    # fl2v/l2v are in for the opposite reason — their doctrine describes the
+    # attached frames by number ("Picture 1 is the opening frame, Picture 2 is
+    # the closing frame"), so without the vision pass the model would be writing
+    # about pictures it was never shown.
+    need_vision = bool(images) and mode in ("i2v", "fl2v", "l2v", "director")
     if need_vision and mmproj_file == "None (text-only)" and llm.is_managed():
         return {"error": "I2V needs an mmproj (vision) file", "elapsed_s": 0}
 
@@ -234,8 +241,12 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
                 acc.append(tail)
                 await emit({"type": "delta", "text": tail})
 
+        # duration_s is load-bearing for the H3 keyframe tasks: fl2v/l2v repair a
+        # missing alignment line, and that line quotes the second the last frame
+        # lands on. The LTX brain swallows it like every other extra kwarg.
         full = doctrine.finalize("".join(acc), mode=mode, intent=intent,
-                                 ref_counts=body.get("ref_counts"))
+                                 ref_counts=body.get("ref_counts"),
+                                 duration_s=duration_s)
         if not full:
             await emit({"type": "error", "msg": "Empty response"})
             return {"error": "Empty response", "status": status_log, "elapsed_s": time.time() - t0}

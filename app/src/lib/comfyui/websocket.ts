@@ -88,12 +88,14 @@ export class ComfyUIWebSocket {
 
   constructor(
     private readonly clientId: string,
-    private readonly wsBase: string = 'ws://127.0.0.1:8188',
+    // Full endpoint, not an origin: reached through a proxy the path is that
+    // proxy's, not ComfyUI's. resolveWsBase() in connection.ts builds it.
+    private readonly wsBase: string = 'ws://127.0.0.1:8188/ws',
   ) {}
 
   connect() {
     if (this.ws?.readyState === WebSocket.OPEN) return
-    this.ws = new WebSocket(`${this.wsBase}/ws?clientId=${this.clientId}`)
+    this.ws = new WebSocket(`${this.wsBase}?clientId=${this.clientId}`)
     // Receive binary preview frames as ArrayBuffer so we can read the header.
     this.ws.binaryType = 'arraybuffer'
 

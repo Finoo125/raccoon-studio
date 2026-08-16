@@ -21,6 +21,45 @@ function Get-PinnedRev([string]$Name) {
     return ''
 }
 
+# --- SageAttention (optional extra) -----------------------------------------
+# INT8 attention kernels. Optional because it is 190 MB on disk for a speed-up
+# that only video really feels, and because it is NVIDIA-only.
+#
+# Pinned to a woct0rdho build rather than PyPI's `sageattention`: PyPI ships
+# source that needs CUDA toolkit + MSVC to compile, which no end user has. These
+# are prebuilt.
+#
+# PIN THE .postN, not just the version. post6 exists because earlier builds had
+# an out-of-bounds bug that produced black or noise output - a silent wrong-image
+# failure, the worst kind to ship.
+#
+# One wheel covers every card we support: it is ABI3 (cp310-abi3, so any Python
+# >=3.10) and built against the libtorch stable ABI, hence "torch2.10.0andhigher"
+# - which is what makes it survive torch moving under it. That matters here
+# because the CUDA install line is deliberately unpinned (`uv pip install torch
+# --extra-index-url .../cu128`), so the torch minor drifts with whatever that
+# index serves. Kernel coverage: sm_86 (RTX 30xx, INT8 QK + FP16 PV), sm_89
+# (40xx) and sm_120 (50xx) both INT8 + FP8.
+$script:SageWheelUrl = 'https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0%2Bcu128torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl'
+# SageAttention 2's CUDA kernels are reached through Triton, so this is a hard
+# dependency and not a nice-to-have. A sageattention that imports while triton
+# does not is WORSE than neither being present: ComfyUI re-raises rather than
+# exiting, so --use-sage-attention takes the whole launch down. reserve-vram.py
+# does a real import for exactly this reason.
+$script:SageTritonPkg = 'triton-windows'
+
+# True when sageattention is present in the ComfyUI venv. Reads the dist-info
+# directory name like Get-InstalledGpuVendor does - free, and it needs no Python
+# process. This answers "has the user opted in", which is what decides whether an
+# update reinstalls it; whether it actually WORKS is reserve-vram.py's question,
+# asked at launch with a real import.
+function Test-SageInstalled {
+    $sp = Join-Path $env:RACCOON_ROOT 'comfyui\ComfyUI\.venv\Lib\site-packages'
+    if (-not (Test-Path $sp)) { return $false }
+    return [bool](Get-ChildItem $sp -Filter 'sageattention-*.dist-info' -Directory -ErrorAction SilentlyContinue |
+                  Select-Object -First 1)
+}
+
 # --- GPU detection ----------------------------------------------------------
 # AMD cards AMD's own Windows ROCm 7.2.1 matrix covers: gfx1100/1101 (discrete
 # RDNA3) and gfx1200/1201 (RDNA4). Everything else Radeon - RX 6000/5000

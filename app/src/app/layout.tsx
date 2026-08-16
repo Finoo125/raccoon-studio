@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, Chakra_Petch, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
+import { isKiosk } from "@/lib/system/kiosk";
 
 // Clean, technical body text
 const manrope = Manrope({
@@ -50,7 +51,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        <Providers>{children}</Providers>
+        <Providers kiosk={isKiosk()}>{children}</Providers>
       </body>
     </html>
   );

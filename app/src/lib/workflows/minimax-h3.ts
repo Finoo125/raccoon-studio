@@ -34,13 +34,77 @@ const makeIds = () => {
   return () => String(n++)
 }
 
+/** Which distillation a render is using, if any. See `H3_TURBO`. */
+export type H3TurboTier = 'draft' | 'fast'
+
 /**
- * The 4-step Turbo LoRA, as converted for ComfyUI's *pruned* H3 checkpoint —
- * which is the one we ship. drbaph's conversion is what lets it load through
- * core `LoraLoaderModelOnly`; larryvrh's original needs a custom node pack, and
- * that would cost this graph its no-custom-packs property.
+ * The two Turbo tiers, each a whole profile — LoRA, step count, strength and
+ * sigma shift travel together, because a distilled LoRA is only correct at the
+ * schedule it was distilled for.
+ *
+ * `draft` — drbaph's conversion of larryvrh's 4-step preview weights, run at 6
+ * steps. Positioned as *testing*, not quality: you use it to find a prompt and
+ * a seed, then render the keeper without it. Its authors flag plastic skin and
+ * over-sharp grain, hence strength 0.9 rather than the 1.0 it trained at —
+ * strength is their own dial for that trade (1.05–1.2 against blur, 0.8–0.95
+ * against grain). drbaph's build, never larryvrh's original: the original needs
+ * the `ComfyUI-MiniMax-H3-Turbo` node pack to load on a pruned checkpoint.
+ *
+ * `fast` — lightx2v/ModelTC's 8-step v1.0, good enough for clips you keep. It
+ * loads through core `LoraLoaderModelOnly` on the pruned int8 checkpoint with
+ * no node pack at all (dynamic-rank, never pruned-converted), which is why it
+ * can sit beside `draft` without costing this graph its core-only property.
+ * 0.75 strength and shift 12/3 are the author's figures; the `audio: 3` is the
+ * node's own default and is **not** a transcription slip of draft's 6 — that 6
+ * comes from the drbaph/larryvrh reference workflow and belongs only to it.
+ *
+ * Both are optional downloads and each tier is offered only once its file is on
+ * disk, so a profile here can never name a weight the render cannot load.
  */
-export const H3_TURBO_LORA = 'minimax_h3_turbo_4step_ckpt500_pruned_comfyui.safetensors'
+export const H3_TURBO: Record<
+  H3TurboTier,
+  { lora: string; steps: number; strength: number; shift: { video: number; audio: number } }
+> = {
+  draft: {
+    lora: 'minimax_h3_turbo_4step_ckpt500_pruned_comfyui.safetensors',
+    steps: 6,
+    strength: 0.9,
+    shift: { video: 12, audio: 6 },
+  },
+  fast: {
+    // drbaph's rank-21 resize of lightx2v's 8-step v1.0 — 327 MB rather than
+    // 1.96 GB, measured equivalent over 3 seeds (see minimax-h3-assets.ts for
+    // the numbers and the `.alpha` caveat that goes with re-tuning `strength`).
+    lora: 'minimax_h3_fl2v_turbo_8step_v1.0_comfyui_resized_avg_rank_21_bf16.safetensors',
+    steps: 8,
+    strength: 0.75,
+    shift: { video: 12, audio: 3 },
+  },
+}
+
+/**
+ * ref2va's own distillation. Both tiers swap to it in reference mode, because
+ * the fl2v LoRAs above are the wrong shape for the reference checkpoint's
+ * conditioning — it is a different model, not a mode.
+ *
+ * Only lightx2v ships one and only at 4 steps / v0.1, so Fast in reference mode
+ * is the same weights as Draft, just given 8 steps instead of 6. Over-stepping
+ * a 4-step distillation is safe; it buys less than the fl2v 8-step build does.
+ * Gated on `params.ref2vTurbo`, so an install this file is missing from simply
+ * keeps the fl2v LoRA rather than failing ComfyUI validation.
+ */
+export const H3_REF2V_TURBO_LORA = 'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors'
+
+/**
+ * Normalise the param to a tier. `true` is the pre-two-tier spelling of
+ * `'draft'` and has to keep working: it is persisted in users' form state and
+ * baked into saved Director runs.
+ */
+export const h3TurboTier = (v: VideoGenerationParams['turbo']): H3TurboTier | null =>
+  v === true || v === 'draft' ? 'draft' : v === 'fast' ? 'fast' : null
+
+/** Back-compat alias: the Draft LoRA, which was the only one for a while. */
+export const H3_TURBO_LORA = H3_TURBO.draft.lora
 
 /**
  * ref2va weights — a **separate 21 GB checkpoint**, not a flag on the fl2va one.
@@ -89,26 +153,64 @@ export const h3RefCount = (p: {
   compactRefs(p.refImages).length + compactRefs(p.refVideos).length + compactRefs(p.refAudios).length
 
 /**
- * Steps per mode.
- *
- * 6 sits just above the author's floor of 4 ("any count ≥ 4 is valid; more steps
- * still help a little"). Turbo is positioned as a *testing* mode here rather
- * than a quality one — you use it to find a prompt and a seed, then render the
- * keeper without it — so speed is the point and the artefacts are accepted.
+ * Steps for an undistilled render, plus back-compat aliases onto the Draft
+ * profile. `H3_TURBO[tier]` is the live source for everything per-tier; these
+ * exist so callers that predate the second tier keep resolving.
  */
-export const H3_STEPS = { normal: 20, turbo: 6 } as const
+export const H3_STEPS = { normal: 20, turbo: H3_TURBO.draft.steps } as const
+export const H3_TURBO_STRENGTH = H3_TURBO.draft.strength
 
 /**
- * Default Draft-mode LoRA strength.
+ * fal's realism-people adapter — the fix for H3's waxy, airbrushed skin, which
+ * film grain until now only masked. Optional 125 MB download, off by default.
  *
- * 0.9, not the 1.0 the LoRA was trained at: strength is the author's own dial
- * for the sharpness/artefact trade — "if it shows over-sharp grain / artefacts,
- * nudge it down (0.8–0.95)" — and over-sharpness is exactly what these preview
- * weights are criticised for. Fixed, not exposed: Draft mode is a throwaway
- * preview, and a knob on a throwaway is one more thing to get wrong. Change it
- * here if the weights are ever retrained.
+ * Loads through core `LoraLoaderModelOnly` (standard H3 key layout, rank 32),
+ * so it costs this graph nothing.
  */
-export const H3_TURBO_STRENGTH = 0.9
+export const H3_REALISM_LORA = 'h3-realism-people-t2v-i2v-r2v.safetensors'
+
+/**
+ * 0.7, not the author's headline 1.0 — measured here 2026-08-16 at 20 steps over
+ * two seeds, then re-measured stacked on the Fast Turbo LoRA.
+ *
+ * At 1.0 the adapter reliably drags the shot to an *extreme* close-up with a
+ * blown-out background, tighter than the prompt asked for, which fights the
+ * timed multi-shot doctrine that decides framing. At 0.7 the skin win survives
+ * intact — pores, capillaries, individual stubble — and the framing and
+ * background come back. fal's README offers 0.6-0.8 as the lighter touch, so
+ * this sits inside their own range rather than off it.
+ */
+export const H3_REALISM_STRENGTH = 0.7
+
+/**
+ * The adapter's trigger word, which fal requires at the START of the prompt.
+ *
+ * Our prompts are written by the doctrine, not typed, so the builder injects it
+ * rather than asking the user to remember a magic token — forgetting it is a
+ * silent no-op that reads as "the LoRA does nothing".
+ */
+export const H3_REALISM_TRIGGER = 'r34l1sm'
+
+/** Where the H3 field block starts; the trigger goes immediately above it. */
+const IMD_FIELD = 'integrated_multimodal_description:'
+
+/**
+ * Put the trigger word in front of the field block, not in front of the prompt.
+ *
+ * The very first line of an i2v/fl2v/l2v/ref2v prompt is a load-bearing
+ * alignment instruction that H3's guide requires to come first, so prepending
+ * ahead of everything would displace it. Sitting just above the fields matches
+ * the shape this was actually measured with. A freeform prompt with no field
+ * block simply gets it at the top, which is fal's own instruction.
+ */
+export function withRealismTrigger(prompt: string): string {
+  const p = prompt ?? ''
+  // Already present (a user typed it, or a saved prompt is being re-rendered).
+  if (new RegExp(`(^|\\s)${H3_REALISM_TRIGGER}(\\s|$)`).test(p)) return p
+  const at = p.indexOf(IMD_FIELD)
+  if (at === -1) return `${H3_REALISM_TRIGGER}\n\n${p}`
+  return `${p.slice(0, at)}${H3_REALISM_TRIGGER}\n\n${p.slice(at)}`
+}
 
 /**
  * Film-grain intensity for video. Started above the stills' 0.04 on the theory
@@ -117,15 +219,6 @@ export const H3_TURBO_STRENGTH = 0.9
  * the frame, so tune downward from here, not up.
  */
 export const H3_GRAIN_INTENSITY = 0.04
-
-/**
- * Sigma shift used with Turbo, from the same reference workflow (12 / 6).
- * `shift_audio` 6 is double the node's own default — the distilled schedule
- * moves the audio stream's noise level with it, and leaving audio at 3 while
- * video runs at 12 is what desynchronises the two streams at low step counts.
- * Applied only in Turbo; the base graph keeps the model's baked-in schedule.
- */
-const TURBO_SHIFT = { video: 12, audio: 6 }
 
 /** Frames per second RIFE interpolates up to. Exactly 2x H3's fixed 24. */
 export const H3_RIFE_FPS = 48
@@ -202,6 +295,34 @@ export function h3Dims(aspect: number, budgetMp: number): { w: number; h: number
 }
 
 /**
+ * Which of MiniMax's documented tasks a set of params actually describes.
+ *
+ * H3's base checkpoint is FL2VA — first-*and-last*-frame — and its conditioning
+ * node takes `first_frame` and `last_frame` as two independent optional inputs
+ * (`nodes_minimax_h3.py`). So the task is a function of which image slots are
+ * filled, not of a separate mode the user picks:
+ *
+ *   first only  -> i2v   animate forward from the frame
+ *   both        -> fl2v  travel from one frame to the other
+ *   last only   -> l2v   converge onto a known final frame
+ *   neither     -> t2v   (what `mode: 'i2v'` with no image already did)
+ *
+ * The prompt doctrine needs the same answer — each task has its own mandatory
+ * instruction line in MiniMax's guide — so this is exported and the form sends
+ * its result to the enhancer. One reader, one table.
+ */
+export type H3Task = 't2v' | 'i2v' | 'fl2v' | 'l2v' | 'ref2v'
+
+export function h3Task(
+  p: Pick<VideoGenerationParams, 'mode' | 'inputImage' | 'endImage'>,
+): H3Task {
+  if (p.mode === 'ref2v') return 'ref2v'
+  if (p.mode !== 'i2v') return 't2v'
+  if (p.inputImage) return p.endImage ? 'fl2v' : 'i2v'
+  return p.endImage ? 'l2v' : 't2v'
+}
+
+/**
  * t2v framings. H3 takes any aspect; these three mirror the framings the video
  * form already offers for LTX so the picker does not grow a second vocabulary.
  */
@@ -232,7 +353,7 @@ function userLoras(params: VideoGenerationParams): { name: string; strength: num
 function buildModelChain(
   wf: Wf,
   params: VideoGenerationParams,
-  turbo: boolean,
+  tier: H3TurboTier | null,
   freshId: () => string,
 ): string {
   let head = MODEL_ID
@@ -252,15 +373,31 @@ function buildModelChain(
     })
 
   // The Turbo LoRA goes on first so a user LoRA stacks on top of it, the same
-  // way LTX layers the stack over its built-in distillation LoRA.
-  if (turbo) lora(H3_TURBO_LORA, H3_TURBO_STRENGTH)
+  // way LTX layers the stack over its built-in distillation LoRA. In reference
+  // mode it is ref2va's own distillation instead — but only once the form has
+  // confirmed that file is on disk, or a render that could have degraded to the
+  // fl2v LoRA would 400 at ComfyUI's validation step.
+  if (tier) {
+    const useRef2v = params.mode === 'ref2v' && params.ref2vTurbo === true
+    lora(useRef2v ? H3_REF2V_TURBO_LORA : H3_TURBO[tier].lora, H3_TURBO[tier].strength)
+  }
   for (const l of userLoras(params)) lora(l.name, l.strength)
 
-  if (turbo) {
+  // Realism last of the weight patches, so a user LoRA in a slot still stacks
+  // over it the way it stacks over Turbo. Gated on the form having confirmed the
+  // file is on disk — same contract as the Turbo tiers, because naming a missing
+  // LoRA fails ComfyUI's validation for the whole prompt rather than degrading.
+  if (params.realismLora === true) lora(H3_REALISM_LORA, H3_REALISM_STRENGTH)
+
+  if (tier) {
     link({
       class_type: 'MiniMaxH3SigmaShift',
       _meta: { title: 'MiniMax H3 Sigma Shift' },
-      inputs: { model: [head, 0], shift_video: TURBO_SHIFT.video, shift_audio: TURBO_SHIFT.audio },
+      inputs: {
+        model: [head, 0],
+        shift_video: H3_TURBO[tier].shift.video,
+        shift_audio: H3_TURBO[tier].shift.audio,
+      },
     })
   }
   return head
@@ -295,36 +432,57 @@ export const minimaxH3Workflow: VideoWorkflowDefinition = {
     // Above the mode branch: ref2v allocates loader ids before the model chain does.
     const freshId = makeIds()
 
-    cond.prompt = params.prompt
+    cond.prompt =
+      params.realismLora === true ? withRealismTrigger(params.prompt) : params.prompt
     cond.length = h3FrameCount(params.durationSeconds)
     wf[VIDEO_ID].inputs.fps = H3_FPS
 
     const tier = tierOf(params.vramMode)
     const budget = BUDGET_MP[tier]
 
-    if (params.mode === 'i2v' && params.inputImage) {
+    const task = h3Task(params)
+
+    if (params.inputImage && (task === 'i2v' || task === 'fl2v')) {
       wf[IMAGE_ID].inputs.image = params.inputImage
-      // Fit the render to the source aspect so the first frame is not distorted;
-      // without recorded dims fall back to the chosen framing.
-      const aspect =
-        params.inputImageWidth && params.inputImageHeight
-          ? params.inputImageWidth / params.inputImageHeight
-          : (ORIENTATIONS.find((o) => o.value === params.orientation) ?? ORIENTATIONS[1]).aspect
-      const d = h3Dims(aspect, budget)
-      cond.width = d.w
-      cond.height = d.h
     } else {
-      // t2v and ref2v: `first_frame` is optional on the node, so dropping the
-      // loader and the link is all it takes — there is no black-frame
+      // t2v, ref2v and l2v: `first_frame` is optional on the node, so dropping
+      // the loader and the link is all it takes — there is no black-frame
       // placeholder to feed it, and passing one would tell the model to open on
-      // black. ref2v has no source aspect either — its references never appear
-      // as a frame — so both frame from the orientation picker.
+      // black.
       spliceOut(wf, IMAGE_ID)
-      const o = ORIENTATIONS.find((x) => x.value === params.orientation) ?? ORIENTATIONS[1]
-      const d = h3Dims(o.aspect, budget)
-      cond.width = d.w
-      cond.height = d.h
     }
+
+    // The end frame is a second `LoadImage` on the node's other optional input.
+    // Allocated here rather than in the base JSON so a plain i2v/t2v graph is
+    // byte-identical to what it was before this existed — a graph that gained a
+    // dangling node would miss ComfyUI's execution cache on every old render.
+    if (params.endImage && (task === 'fl2v' || task === 'l2v')) {
+      const id = freshId()
+      wf[id] = {
+        class_type: 'LoadImage',
+        _meta: { title: 'End frame' },
+        inputs: { image: params.endImage },
+      }
+      cond.last_frame = [id, 0]
+    }
+
+    // Fit the render to whichever anchor frame exists so it is not distorted —
+    // the start frame wins when both are given, since a mismatched pair has to
+    // resolve to one shape and the opening is what the viewer sees first.
+    // Without recorded dims (or any anchor at all) fall back to the picker:
+    // ref2v has no source aspect either, its references never appear as a frame.
+    const anchor =
+      params.inputImage && params.inputImageWidth && params.inputImageHeight
+        ? params.inputImageWidth / params.inputImageHeight
+        : params.endImage && params.endImageWidth && params.endImageHeight
+          ? params.endImageWidth / params.endImageHeight
+          : null
+    const d = h3Dims(
+      anchor ?? (ORIENTATIONS.find((o) => o.value === params.orientation) ?? ORIENTATIONS[1]).aspect,
+      budget,
+    )
+    cond.width = d.w
+    cond.height = d.h
 
     // Reference mode retypes the one conditioning node rather than forking the
     // JSON: `MiniMaxH3ReferenceToVideo` has the same two outputs in the same
@@ -402,9 +560,12 @@ export const minimaxH3Workflow: VideoWorkflowDefinition = {
     // to whatever they actually chose. So the candidate and the final clip
     // deliberately differ in quality, and only the seed carries across.
     const hunting = params.seedHunt === true
-    const turbo = hunting || params.turbo === true
-    wf[SCHED_ID].inputs.steps = turbo ? H3_STEPS.turbo : H3_STEPS.normal
-    const model = buildModelChain(wf, params, turbo, freshId)
+    // Hunting upgrades "no Turbo" to Draft — the cheapest tier, since the point
+    // is throwaway candidates — but honours an explicit Fast pick rather than
+    // quietly downgrading someone who chose it.
+    const speed = h3TurboTier(params.turbo) ?? (hunting ? 'draft' : null)
+    wf[SCHED_ID].inputs.steps = speed ? H3_TURBO[speed].steps : H3_STEPS.normal
+    const model = buildModelChain(wf, params, speed, freshId)
     if (model !== MODEL_ID) {
       wf[SCHED_ID].inputs.model = [model, 0]
       wf[GUIDER_ID].inputs.model = [model, 0]

@@ -9,6 +9,11 @@ Add-Type -AssemblyName PresentationFramework
 $Root   = Resolve-Path (Join-Path $PSScriptRoot '..')
 $Engine = Join-Path $PSScriptRoot 'engine.ps1'
 if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
+# Declared up front so the ChkSage handlers can never fire against an undefined
+# variable: WPF raises Checked during Refresh-State's own state sync, before any
+# human has touched the window.
+$script:SageSyncing  = $false
+$script:SageInstalled = $false
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -213,9 +218,15 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
         </Button>
       </UniformGrid>
 
-      <!-- Optional big-model toggle, read when Install/Reinstall is clicked -->
-      <CheckBox x:Name="ChkModels" Grid.Row="4" Margin="2,14,0,0" Foreground="#9aa6b4" FontSize="12"
-                Content="Also download ControlNet + IP-Adapter models (~9 GB)"/>
+      <!-- Optional extras. ChkModels is read when Install/Reinstall is clicked;
+           ChkSage does that too before the first install, but acts immediately
+           once there is an install to add it to. -->
+      <StackPanel Grid.Row="4" Margin="2,14,0,0">
+        <CheckBox x:Name="ChkModels" Foreground="#9aa6b4" FontSize="12"
+                  Content="Also download ControlNet + IP-Adapter models (~9 GB)"/>
+        <CheckBox x:Name="ChkSage" Margin="0,7,0,0" Foreground="#9aa6b4" FontSize="12"
+                  Content="SageAttention - faster video generation (~190 MB, NVIDIA only)"/>
+      </StackPanel>
 
       <!-- Progress -->
       <StackPanel Grid.Row="5" Margin="0,22,0,0">
@@ -247,7 +258,7 @@ if (-not $env:HEALTH_URL) { $env:HEALTH_URL = 'http://localhost:3000' }
 '@
 $win = [Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader $xaml))
 $ctl = @{}
-'Status','StatusDot','BtnInstall','InstallTitle','InstallSub','ChkModels','BtnStart','BtnUpdate',
+'Status','StatusDot','BtnInstall','InstallTitle','InstallSub','ChkModels','ChkSage','BtnStart','BtnUpdate',
 'UpdateIcon','UpdateTitle','UpdateSub','BtnStop','Bar','Step','Log','TitleBar','BtnMin','BtnClose' |
   ForEach-Object { $ctl[$_] = $win.FindName($_) }
 
@@ -313,7 +324,27 @@ function Refresh-State {
   $ctl.BtnStart.IsEnabled  = ($s -eq 'stopped')
   $ctl.BtnUpdate.IsEnabled = ($s -ne 'not-installed')
   $ctl.BtnStop.IsEnabled   = ($s -eq 'running')
+  # Before there is an install, the SageAttention box is just a flag to carry
+  # into it. After, it mirrors what is actually in the venv and toggling it acts
+  # immediately - so the box always tells the truth rather than remembering a
+  # click. $script:SageSyncing suppresses the handlers while we set it here,
+  # because IsChecked fires Checked/Unchecked whether a human or this line did it.
+  $script:SageInstalled = ($s -ne 'not-installed')
+  if ($script:SageInstalled) {
+    $state = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine sage-status).Trim()
+    $script:SageSyncing = $true
+    $ctl.ChkSage.IsChecked = ($state -eq 'installed')
+    $script:SageSyncing = $false
+  }
   Start-UpdateCheck
+}
+
+# Toggling the box on a live install adds or removes the extra there and then.
+# Not wired to Install/Reinstall, because that would mean re-cloning 20-odd node
+# packs to add a 67 MB wheel.
+function Sync-Sage([bool]$want) {
+  if ($script:SageSyncing -or -not $script:SageInstalled) { return }
+  Run-Verb $(if ($want) { 'install-sage' } else { 'remove-sage' })
 }
 
 function Run-Verb([string]$verb) {
@@ -349,7 +380,14 @@ $ctl.BtnMin.Add_Click({ $win.WindowState = 'Minimized' })
 $ctl.BtnClose.Add_Click({ $win.Close() })
 $win.Add_KeyDown({ if ($_.Key -eq 'Escape') { $win.Close() } })
 
-$ctl.BtnInstall.Add_Click({ Run-Verb $(if ($ctl.ChkModels.IsChecked) { 'install -WithControlNet' } else { 'install' }) })
+$ctl.BtnInstall.Add_Click({
+  $v = 'install'
+  if ($ctl.ChkModels.IsChecked) { $v += ' -WithControlNet' }
+  if ($ctl.ChkSage.IsChecked)   { $v += ' -WithSageAttention' }
+  Run-Verb $v
+})
+$ctl.ChkSage.Add_Checked({   Sync-Sage $true  })
+$ctl.ChkSage.Add_Unchecked({ Sync-Sage $false })
 $ctl.BtnStart.Add_Click({ Run-Verb 'start' })
 $ctl.BtnUpdate.Add_Click({ Run-Verb 'update' })
 $ctl.BtnStop.Add_Click({ Run-Verb 'stop' })

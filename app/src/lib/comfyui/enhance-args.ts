@@ -1,5 +1,5 @@
 import { isLtxWorkflow } from '@/lib/workflows/video-index'
-import { compactRefs } from '@/lib/workflows/minimax-h3'
+import { compactRefs, h3Task } from '@/lib/workflows/minimax-h3'
 import type { EnhanceArgs } from './useCinematicEnhance'
 import type { EnhanceSettingsValues } from '@/components/generation/EnhanceSettings'
 import type { VideoGenerationParams } from '@/types/video-workflow'
@@ -16,6 +16,8 @@ export interface EnhanceArgsInput {
   workflowId: string
   /** The one image the i2v and reference slots hold, already base64. */
   imageB64: string
+  /** MiniMax H3 only: the end-frame slot's picture, already base64. */
+  endImageB64?: string
   /** Director only: every shot's picture, in play order, already fetched. */
   directorImages?: string[]
 }
@@ -35,18 +37,30 @@ export interface EnhanceArgsInput {
  * - **`videoMode`** — passed through, including `director`. It used to be
  *   rewritten to `t2v`, which asks the node for a doctrine that swears there is
  *   no reference image while the pictures sit on the timeline.
+ *
+ *   On H3 it is the derived *task* rather than the picked mode: filling the end
+ *   frame slot turns `i2v` into `fl2v` or `l2v`, each of which has its own
+ *   mandatory alignment line in MiniMax's guide. LTX keeps the raw mode — it has
+ *   no last-frame input and its brain knows only t2v/i2v/director.
  * - **`videoModel`** — picks the doctrine node-side. Director enhances against
  *   the LTX brain and renders on the LTX graph, so it reports the LTX id rather
  *   than its own.
  */
 export function buildEnhanceArgs({
-  settings, params, workflowId, imageB64, directorImages = [],
+  settings, params, workflowId, imageB64, endImageB64 = '', directorImages = [],
 }: EnhanceArgsInput): EnhanceArgs {
+  const task = isLtxWorkflow(workflowId) ? params.mode : h3Task(params)
   return {
     model: settings.model,
-    videoMode: params.mode,
+    videoMode: task,
+    // The vision pass has to see every frame the doctrine talks about, in the
+    // order the doctrine numbers them: fl2v's head calls them Picture 1 and
+    // Picture 2, so start must come first. l2v sends the end frame alone — it
+    // is the only image that exists, and its head says so.
     imageB64:
       params.mode === 'director' ? directorImages
+      : task === 'fl2v' ? [imageB64, endImageB64].filter(Boolean)
+      : task === 'l2v' ? endImageB64
       : params.mode === 't2v' ? ''
       : imageB64,
     // Which reference types are attached, so the H3 ref2va doctrine names only

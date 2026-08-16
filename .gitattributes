@@ -15,3 +15,11 @@
 # same reason. pinned_rev() strips a stray CR anyway — this keeps the file
 # clean rather than relying on that.
 installer/pinned-versions.txt text eol=lf
+
+# Everything that ends up inside a Linux container, or is read by one, for the
+# third time the same reason. A CRLF `run:` block in a workflow hands bash a
+# literal ^M, and the RunPod pod runs proxy.mjs under node on Linux.
+# runpod/boot.sh and entrypoint.sh are already covered by *.sh above — boot.sh
+# especially, since the pod pipes it straight into `sh`.
+.github/workflows/*.yml text eol=lf
+runpod/*.mjs text eol=lf

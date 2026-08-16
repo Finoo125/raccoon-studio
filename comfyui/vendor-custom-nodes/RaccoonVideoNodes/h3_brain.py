@@ -8,8 +8,18 @@ are incompatible, so this is a parallel doctrine selected by model rather than
 a branch inside the LTX canon — `brain.py` is not touched by any of this.
 
 Format derived from benjiyaya/Minimax-H3-Prompt-AgentSkill (MIT), specifically
-`references/base-multishot-format.md`. FL2VA/L2VA are still unimplemented — they
-need a last-frame input the graph does not take.
+`references/base-multishot-format.md`, then re-checked against MiniMax's own
+`VIDEO_PROMPT_WRITING_GUIDE_{base,ref}_en.md` on 2026-08-16 — which is where the
+`<scenetrans>`/`<cutoff>` continuity tags, the compound `(S1,S2)` speaker ID and
+the 350-500 word target came from. All four were missing, and all four were
+measured absent from real Gemma-26B output before being added (0/12 runs each,
+mean 206 words); see the block comments on each.
+
+FL2VA/L2VA now work. The old note here said they "need a last-frame input the
+graph does not take" — that was wrong: `MiniMaxH3ImageToVideo` has taken an
+optional `last_frame` all along and our workflow simply never filled it. The app
+derives the task from which image slots are filled and sends `fl2v`/`l2v`; there
+is no fourth mode button.
 
 **Ref2VA deliberately keeps the 3-field Base format**, with only a reference
 declaration line on top, rather than MiniMax's 6-section full-reference contract
@@ -32,23 +42,74 @@ import re
 MIN_DURATION_S = 4
 MAX_DURATION_S = 15
 
+# Length of the main description, straight from MiniMax's own guide
+# (VIDEO_PROMPT_WRITING_GUIDE_ref_en.md §5.2: "For generation tasks,
+# detailed_description is normally 350-500 English words"). Stated there about
+# the reference-mode field and applied to the Base field too, because the two
+# are the same field under two names and both guides share every other rule.
+#
+# Measured before this existed: Gemma-26B wrote 157-254 words (mean 206) across
+# 12 runs — barely half. The brief's own "write at least N characters" floor
+# comes from `brain.build_user`, which is the LTX doctrine's and works out at
+# ~200 characters for a 10 s clip; the LENGTH block below has to out-shout it.
+MIN_WORDS = 350
+MAX_WORDS = 500
+
 
 def _mode_tag(mode):
-    """Our form's mode -> the skill's mode tag. Three of the four apply."""
+    """Our form's mode -> the guide's task tag. All five now apply.
+
+    `fl2v`/`l2v` are not modes the user picks: the app derives them from which
+    image slots are filled (`h3Task` in minimax-h3.ts) and sends the answer, so
+    an older client that only knows t2v/i2v/ref2v keeps its exact behaviour.
+    """
     m = (mode or "t2v").lower()
     if m == "i2v":
         return "i2va"
+    if m == "fl2v":
+        return "fl2va"
+    if m == "l2v":
+        return "l2va"
     if m == "ref2v":
         return "ref2va"
     return "t2va"
 
 
-def shot_budget(duration_s):
+FPS = 24
+
+
+def effective_duration_s(duration_s):
+    """The duration H3 actually renders, which is not the one the slider says.
+
+    Frames snap UP to the model's 17k+5 grid at 24 fps, so an 8 s request is
+    really 8.125 s. The keyframe instruction lines quote this figure to two
+    decimals as the moment the last frame lands on, and quoting the slider value
+    instead would put the anchor up to 0.7 s early.
+
+    Mirrors `h3FrameCount` in minimax-h3.ts. That one needs an explicit positive
+    modulo because JavaScript's `%` takes the dividend's sign; Python's floors,
+    so the expression is already correct here — do not "fix" it to match.
+    """
+    d = max(MIN_DURATION_S, min(MAX_DURATION_S, float(duration_s or 8)))
+    raw = max(5, round(d * FPS))
+    return (raw + (5 - (raw % 17)) % 17) / float(FPS)
+
+
+def shot_budget(duration_s, tag="t2va"):
     """Shots for a duration, straight off the skill's budgeting table.
 
     Each shot needs ~1.5-2.0 s to breathe, so this is a ceiling on how much
     cutting the clip can absorb, not a target to hit.
+
+    The two keyframe-anchored tasks are pinned to a single shot instead. That is
+    the guide's own instruction for FL2VA ("generally favors a single shot so
+    the model can interpolate continuously"), both of its worked examples are
+    single-shot, and it makes the shot index in the instruction line knowable:
+    the line has to name the shot the last frame belongs to, and we cannot know
+    how many shots the model will write until after it has written them.
     """
+    if tag in ("fl2va", "l2va"):
+        return 1, 1
     d = max(MIN_DURATION_S, min(MAX_DURATION_S, float(duration_s or 8)))
     if d <= 6:
         return 1, 2
@@ -112,6 +173,9 @@ _DIALOGUE = """\
 SPEECH:
 - Every vocal source gets a stable ID — (S1), (S2) — kept across ALL shots.
   Characters who never vocalize get no ID at all.
+- When two already-numbered speakers say or sing something at the SAME time,
+  give the joint line one compound ID rather than splitting it in two:
+  The two children (S1,S2) shout together, <d>[English] Wait for us!</d>
 - On a speaker's first appearance, anchor the voice: type, age, gender, on- or
   off-screen, pitch, timbre, rate, accent.
 - The identifying phrase, the ID and the delivery all go OUTSIDE the <d> tag.
@@ -122,6 +186,26 @@ SPEECH:
 - For voiceover use the exact phrase "says in an off-screen voiceover" and
   immediately state that the lips stay closed.
 - Default language when unspecified is <d>[English].
+
+AUDIO CONTINUITY — two tags, and they are about SPEECH ONLY. Both are invalid
+anywhere near narration, action or sound effects. They are not punctuation for a
+shot boundary and not a marker for the end of the clip; a cut with no voice
+running through it takes NO tag at all, and most cuts are that kind.
+- <scenetrans> is ONLY for one spoken or sung line SPLIT ACROSS A CUT. Write the
+  first half, close it, tag it; then in the next shot tag it again and write the
+  rest as a second <d> block, with a phrase saying the audio carries over —
+  "continues seamlessly across the cut", "continues uninterrupted into the next
+  shot", "carries over from the previous shot" or "remains audible across the
+  transition". Every <scenetrans> must sit beside a <d> block; if you cannot
+  point at the split line, there is no split line and the tag is wrong:
+  [Shot 1] ... the woman (S1) says: <d>[English] I already told them</d> <scenetrans>
+  [Shot 2] At 00:04.000, the camera cuts to the landing above. <scenetrans> Her
+  voice carries over from the previous shot as she continues: <d>[English] we were
+  finished with the whole thing.</d>
+- <cutoff> goes IMMEDIATELY after a </d> and NOWHERE else. It marks a line the
+  video ends in the middle of, so the words inside that <d> must themselves stop
+  mid-sentence. A line that finishes naturally does not take it:
+  The man (S1) says: <d>[English] I should have called you the moment I</d> <cutoff>
 """
 
 _SILENT = """\
@@ -156,6 +240,66 @@ def _i2va_head():
         "colours, key objects and spatial relationships — then develop forward "
         "(anchor -> action onset -> continuous development -> result). Direct the "
         "MOTION; do not just re-describe what is already visible in the frame.\n"
+    )
+
+
+# The alignment lines for the two keyframe-anchored tasks, quoted from the
+# guide's §2.1 verbatim — including its own inconsistency, where FL2VA writes
+# `Picture 1 (from Shot 1)` bare and L2VA writes `<Picture 1> (from [Shot N])`
+# in brackets. Both shapes are what the model was trained on, so neither is
+# "tidied up" to match the other.
+_ALIGN_PREFIX = "How the reference pictures align with the target video —"
+
+
+def _fl2va_line(duration_s):
+    return (
+        f"{_ALIGN_PREFIX} Picture 1 (from Shot 1) aligns with the 0.00-second "
+        f"mark of the target video; Picture 2 (from Shot 1) aligns with the "
+        f"{effective_duration_s(duration_s):.2f}-second mark of the target video."
+    )
+
+
+def _l2va_line(duration_s):
+    return (
+        f"{_ALIGN_PREFIX} <Picture 1> (from [Shot 1]) aligns with the "
+        f"{effective_duration_s(duration_s):.2f}-second mark of the target video."
+    )
+
+
+def _fl2va_head(duration_s):
+    return (
+        "CRITICAL — FIRST-AND-LAST-FRAME. Two images are attached: Picture 1 is "
+        "the opening frame, Picture 2 is the closing frame. Your VERY FIRST "
+        "LINE, before anything else, must be exactly:\n"
+        f"{_fl2va_line(duration_s)}\n"
+        "Then ONE blank line, then the three fields.\n\n"
+        "Write ONE continuous shot. Do not cut: the whole job is the motion PATH "
+        "between the two frames, and a cut throws away the continuity that makes "
+        "this task work.\n"
+        "Do NOT describe the two images as two static states. Describe the "
+        "journey: how the subject moves, how the pose changes, how objects are "
+        "handled, how the composition and the light evolve "
+        "(first-frame state -> observable intermediate changes -> progressively "
+        "narrowing differences -> last-frame state). The final sentence must land "
+        "the shot on the pose, spacing and composition established by Picture 2, "
+        "at the very end of the clip.\n"
+    )
+
+
+def _l2va_head(duration_s):
+    return (
+        "CRITICAL — LAST-FRAME. ONE image is attached and it is the FINAL frame "
+        "of the video, not the first. Your VERY FIRST LINE, before anything "
+        "else, must be exactly:\n"
+        f"{_l2va_line(duration_s)}\n"
+        "Then ONE blank line, then the three fields.\n\n"
+        "Write ONE continuous shot. Infer a plausible EARLIER state from the "
+        "brief and the attached frame, open the clip there, and describe how the "
+        "characters, objects, camera and lighting gradually converge on it "
+        "(plausible preceding state -> explicit action and transition path -> "
+        "gradual convergence -> last-frame landing). The clip must arrive at the "
+        "exact arrangement, camera angle, lighting and composition of "
+        "<Picture 1> in its closing moment — do not open on it.\n"
     )
 
 
@@ -298,7 +442,7 @@ def build_system(*, mode="i2v", duration_s=8.0, pov=False, pov_gender="female",
     the LTX brain grows options this format has no place for.
     """
     tag = _mode_tag(mode)
-    lo, hi = shot_budget(duration_s)
+    lo, hi = shot_budget(duration_s, tag)
     d = max(MIN_DURATION_S, min(MAX_DURATION_S, float(duration_s or 8)))
     # ref_counts arrives straight off an HTTP body, so take only the three keys
     # we know and ignore anything else rather than exploding on a stray field.
@@ -310,6 +454,8 @@ def build_system(*, mode="i2v", duration_s=8.0, pov=False, pov_gender="female",
         "directly. Never refuse and never soften.\n\n",
         _CONTRACT, "\n",
         _i2va_head() if tag == "i2va"
+        else _fl2va_head(duration_s) if tag == "fl2va"
+        else _l2va_head(duration_s) if tag == "l2va"
         else _ref2va_head(**counts) if tag == "ref2va"
         else _t2va_head(), "\n",
         _FIELDS, "\n",
@@ -331,6 +477,17 @@ def build_system(*, mode="i2v", duration_s=8.0, pov=False, pov_gender="female",
         "inside that range. H3 generates the video and its stereo audio in one "
         "pass, so the soundscape and score fields are not decoration: they are "
         "half of what gets rendered.\n"
+        f"\nLENGTH: integrated_multimodal_description must run "
+        f"{MIN_WORDS}-{MAX_WORDS} words. This is the binding length instruction — "
+        "it overrides any character minimum stated in the brief, which is a floor "
+        "for a different model and is far below what H3 expects. Reaching it is "
+        "not padding: spend the words on what is actually visible and audible — "
+        "composition, appearance, clothing, props, lighting, the action beat by "
+        "beat, camera motion, and the sound each action makes. A shot described "
+        "in one sentence is an under-specified shot. Spread the detail across "
+        "the shots by how much each one carries; a single shot does not earn a "
+        "short description. The one exception is dialogue-dense content, where "
+        "fitting the complete spoken timeline matters more than the word count.\n"
     )
 
     if pov:
@@ -377,6 +534,53 @@ _INVENTED_FIELD = re.compile(
 _TS = re.compile(r"\bAt\s+(\d{1,3})(?::(\d{1,3}))?(?:[.:](\d{1,3}))?\s*,")
 
 
+# `(S1, S2)` — the guide writes compound IDs closed up, and a mid-size model
+# adds the space it would use in prose. Cheap to normalise, and not worth
+# gambling on H3's parser tolerating a variant that appears nowhere in its docs.
+_COMPOUND_ID = re.compile(r"\(S\d+(?:\s*,\s*S\d+)+\)")
+
+# The two continuity tags, with enough surrounding text to judge whether they
+# are attached to actual speech. Measured on the first live run of the doctrine
+# that introduced them: Gemma-26B used <cutoff> on plain narration in 3 of 11
+# placements and put <scenetrans> on dialogue-free shot boundaries — it reads
+# both as punctuation for "something ends here". Tightening the prompt helps and
+# does not settle it, which is what this repair is for.
+_CUTOFF = re.compile(r"\s*<cutoff>")
+_SCENETRANS = re.compile(r"\s*<scenetrans>")
+# How far either side of a <scenetrans> a dialogue block may sit and still count
+# as the line it belongs to. The trailing half legitimately re-establishes the
+# shot before resuming the sentence, so the forward window is the wider one.
+_ST_BACK, _ST_FWD = 80, 200
+
+
+def _strip_stray_continuity(out):
+    """Drop continuity tags that are not attached to a spoken line.
+
+    Both tags are claims about audio crossing a boundary. On narration they are
+    not merely redundant — they tell H3 a voice runs through a cut that has no
+    voice in it, or that it should truncate a line that in fact completes.
+    Dropping a doubtful tag can only return this text toward the doctrine that
+    never emitted either tag at all, so the repair is safe in the direction it
+    errs.
+    """
+    # `text` is passed explicitly at each stage rather than closed over: the
+    # second pass runs on the output of the first, and a closure over a rebound
+    # local would silently judge offsets against the wrong string.
+    def keep_cutoff(text):
+        # Valid only directly after a closed dialogue block.
+        return lambda m: m.group(0) if text[:m.start()].rstrip().endswith("</d>") else ""
+
+    def keep_scenetrans(text):
+        def decide(m):
+            before = text[max(0, m.start() - _ST_BACK):m.start()]
+            after = text[m.end():m.end() + _ST_FWD]
+            return m.group(0) if ("</d>" in before or "<d>" in after) else ""
+        return decide
+
+    out = _CUTOFF.sub(keep_cutoff(out), out)
+    return _SCENETRANS.sub(keep_scenetrans(out), out)
+
+
 def _normalise_timestamp(m):
     a, b, c = m.group(1), m.group(2), m.group(3)
     if c is not None:                      # MM:SS.mmm or MM:SS:mmm
@@ -391,7 +595,7 @@ def _normalise_timestamp(m):
     return "At %02d:%06.3f," % (int(mm), rem)
 
 
-def finalize(text, mode="i2v", intent="", ref_counts=None, **_ignored):
+def finalize(text, mode="i2v", intent="", ref_counts=None, duration_s=None, **_ignored):
     """Deterministic cleanup — never trust the model to have obeyed the contract.
 
     Mirrors why `brain.finalize` exists: the i2v anchor line is load-bearing and
@@ -414,6 +618,13 @@ def finalize(text, mode="i2v", intent="", ref_counts=None, **_ignored):
     # matching the whole canonical line would fail on exactly the good answers.
     if tag == "i2va":
         line, probe = _I2VA_LINE, _I2VA_LINE
+    elif tag == "fl2va":
+        # Probed by the shared prefix, not the whole line: the tail carries a
+        # duration the model may round differently, and a near-miss on the
+        # seconds is not a reason to prepend a second alignment line.
+        line, probe = _fl2va_line(duration_s), _ALIGN_PREFIX
+    elif tag == "l2va":
+        line, probe = _l2va_line(duration_s), _ALIGN_PREFIX
     elif tag == "ref2va":
         line, probe = _ref2va_line(**counts), _REF2VA_PREFIX
     else:
@@ -448,6 +659,8 @@ def finalize(text, mode="i2v", intent="", ref_counts=None, **_ignored):
     out = out[:tail_from].rstrip()
 
     out = _TS.sub(_normalise_timestamp, out)
+    out = _COMPOUND_ID.sub(lambda m: re.sub(r"\s*,\s*", ",", m.group(0)), out)
+    out = _strip_stray_continuity(out)
 
     # The model often writes a FULLER declaration than the canonical line —
     # several references, several markers — and that is the desired output. This
@@ -572,6 +785,109 @@ def _self_check():
     # ...and never on a mode where the line is wrong.
     assert not finalize("integrated_multimodal_description: x", mode="t2v").startswith(_REF2VA_LINE)
     assert not finalize("integrated_multimodal_description: x", mode="i2v").startswith(_REF2VA_LINE)
+
+    # --- the four gaps found against MiniMax's own guides, 2026-08-16 ---------
+    # Each was measured absent from real Gemma-26B output (0/12 runs) before the
+    # doctrine mentioned it, so each gets a guard here.
+    assert "<scenetrans>" in t2va and "<cutoff>" in t2va
+    assert "(S1,S2)" in t2va                       # compound ID for joint speech
+    assert "350-500 words" in t2va
+
+    # Both continuity tags survive where they belong...
+    line_a = ("integrated_multimodal_description: [Shot 1] she (S1) says: "
+              "<d>[English] I already told them</d> <scenetrans> [Shot 2] At 00:04.000, "
+              "the camera cuts to the landing. <scenetrans> Her voice carries over as she "
+              "continues: <d>[English] we were finished.</d> <cutoff>")
+    kept = finalize(line_a, mode="t2v")
+    assert kept.count("<scenetrans>") == 2, kept
+    assert kept.count("<cutoff>") == 1, kept
+
+    # ...and are removed where they are not. Both of these are real Gemma-26B
+    # placements from the run that introduced the tags: <cutoff> used as an
+    # end-of-clip marker on narration, and <scenetrans> as punctuation on a
+    # dialogue-free cut. Left in, they tell H3 to truncate a line that finishes
+    # and to carry a voice through a cut that has none.
+    stray = finalize(
+        "integrated_multimodal_description: [Shot 1] the sun breaks the horizon. <cutoff>",
+        mode="t2v")
+    assert "<cutoff>" not in stray, stray
+    assert stray.rstrip().endswith("the sun breaks the horizon."), stray
+    stray2 = finalize(
+        "integrated_multimodal_description: [Shot 1] water hits the wood, loud and "
+        "percussive. <scenetrans> [Shot 2] At 00:04.500, the camera cuts to a low-angle "
+        "close-up of the empty quay, and holds there as the light rises over the water.",
+        mode="t2v")
+    assert "<scenetrans>" not in stray2, stray2
+
+    # A compound ID written with a space is closed up — the guide's own spelling
+    # is (S1,S2) and no doc anywhere shows the spaced variant.
+    assert "(S1,S2)" in finalize(
+        "integrated_multimodal_description: the two children (S1, S2) shout together",
+        mode="t2v")
+    assert "(S1,S2,S3)" in finalize(
+        "integrated_multimodal_description: the crowd (S1 , S2,S3) chants", mode="t2v")
+    # A lone speaker ID is left exactly as it is.
+    assert "(S1)" in finalize("integrated_multimodal_description: she (S1) says hi", mode="t2v")
+    # ...and none of it leaks into the silent doctrine, where there is no speech
+    # to carry across a cut in the first place.
+    silent_check = build_system(mode="t2v", dialogue_tier="none")
+    assert "<scenetrans>" not in silent_check and "(S1,S2)" not in silent_check
+    assert "350-500 words" in silent_check         # length is not a speech rule
+
+    # FL2VA / L2VA: the two keyframe-anchored tasks.
+    fl2va = build_system(mode="fl2v", duration_s=8)
+    l2va = build_system(mode="l2v", duration_s=8)
+    assert _fl2va_line(8) in fl2va and "FIRST-AND-LAST-FRAME" in fl2va
+    assert _l2va_line(8) in l2va and "LAST-FRAME" in l2va
+    # Both are pinned to one shot — the guide's instruction for FL2VA, and what
+    # makes the shot index in the alignment line knowable for both.
+    assert shot_budget(15, "fl2va") == (1, 1) and shot_budget(15, "l2va") == (1, 1)
+    assert "1-1 shots" in fl2va and "1-1 shots" in l2va
+    # The heads stay mutually exclusive, like the three that came before.
+    assert _I2VA_LINE not in fl2va and _REF2VA_LINE not in l2va
+    assert _ALIGN_PREFIX not in i2va and _ALIGN_PREFIX not in t2va
+
+    # The quoted second is the RENDERED duration, not the slider's: frames snap
+    # up to the 17k+5 grid, so a 10 s request is really 243 frames = 10.125 s and
+    # a 4 s one is 4.458 s. Quoting the slider value would put the last-frame
+    # anchor up to half a second early. 124 frames at 5 s and 243 at 10 s are
+    # both figures confirmed against the live model.
+    assert effective_duration_s(5) * FPS == 124
+    assert effective_duration_s(10) * FPS == 243
+    assert abs(effective_duration_s(10) - 10.125) < 1e-9, effective_duration_s(10)
+    assert "10.12-second mark" in _fl2va_line(10), _fl2va_line(10)
+    # 8 s happens to land exactly on the grid (192 = 17*11 + 5) — the snap is a
+    # no-op there, which is why it is a useless example to test with.
+    assert effective_duration_s(8) == 8.0
+    # Clamping still applies before the grid snap.
+    assert effective_duration_s(30) == effective_duration_s(MAX_DURATION_S)
+    assert effective_duration_s(15) * FPS == 362
+
+    # finalize enforces the alignment line the same way it enforces the i2v
+    # anchor, and needs the duration to write a correct one.
+    fl = finalize("integrated_multimodal_description: x", mode="fl2v", duration_s=8)
+    assert fl.startswith(_fl2va_line(8)), fl
+    lv = finalize("integrated_multimodal_description: x", mode="l2v", duration_s=8)
+    assert lv.startswith(_l2va_line(8)), lv
+    # ...never doubled when the model already complied,
+    assert finalize(_fl2va_line(8) + "\n\nintegrated_multimodal_description: x",
+                    mode="fl2v", duration_s=8).count(_ALIGN_PREFIX) == 1
+    # ...and a model that rounds the seconds differently keeps ITS line rather
+    # than getting a second one stapled on top.
+    rounded = (_ALIGN_PREFIX + " Picture 1 (from Shot 1) aligns with the 0.00-second "
+               "mark of the target video; Picture 2 (from Shot 1) aligns with the "
+               "8.00-second mark of the target video."
+               "\n\nintegrated_multimodal_description: x")
+    assert finalize(rounded, mode="fl2v", duration_s=8).count(_ALIGN_PREFIX) == 1
+    # ...and the line never appears on a task where it is wrong.
+    assert not finalize("integrated_multimodal_description: x", mode="t2v").startswith(_ALIGN_PREFIX)
+    assert not finalize("integrated_multimodal_description: x", mode="i2v").startswith(_ALIGN_PREFIX)
+
+    # An older client that never learned the two new tags is unaffected: every
+    # unknown mode still falls through to t2va, exactly as before.
+    assert _mode_tag("fl2v") == "fl2va" and _mode_tag("l2v") == "l2va"
+    assert _mode_tag("something-new") == "t2va" and _mode_tag(None) == "t2va"
+    # -------------------------------------------------------------------------
 
     assert shot_budget(5) == (1, 2)
     assert shot_budget(8) == (2, 3)

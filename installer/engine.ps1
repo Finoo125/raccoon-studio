@@ -1,5 +1,6 @@
 #Requires -Version 5.1
 param([Parameter(Position=0)][string]$Verb='status', [switch]$DryRun, [switch]$WithControlNet,
+      [switch]$WithSageAttention,
       [ValidateSet('','auto','nvidia','amd','cpu')][string]$Gpu='')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
@@ -114,6 +115,10 @@ function Invoke-Install {
   # Always pass an explicit ControlNet flag: the engine runs headless (GUI/update),
   # so the installer must never fall through to its interactive prompt.
   $psArgs += $(if ($WithControlNet) { '-WithControlNet' } else { '-SkipControlNet' })
+  # Same rule for SageAttention. Passing Skip here does NOT strip it from an
+  # install that already has it - the installer treats "already installed" as a
+  # standing yes, so updates keep the extra (and refresh its wheel).
+  $psArgs += $(if ($WithSageAttention) { '-WithSageAttention' } else { '-SkipSageAttention' })
   # Same reason, for every other question the installer might ask. A flag per
   # prompt does not scale and missing one hangs the GUI on a question nobody can
   # see (the AMD/ROCm offer did exactly that), so state the condition once.
@@ -131,12 +136,44 @@ function Invoke-Install {
   & powershell.exe @psArgs; if ($LASTEXITCODE -ne 0) { Emit-Fail 'install' "see $script:LogFile"; exit 1 }
   Emit-Done 'install'
 }
+# Add/remove the optional SageAttention extra on an install that already exists,
+# without the full reinstall an `install` would run. Both are one bare word out,
+# like `status`, so the launcher can ask before it draws the checkbox.
+function Get-SageState { if (Test-SageInstalled) { 'installed' } else { 'not-installed' } }
+function Invoke-InstallSage {
+  # Check first: without it, powershell.exe -File on a missing path prints its own
+  # localised complaint to stderr and the launcher shows a bare "see <log>".
+  $inst = Join-Path $env:RACCOON_ROOT 'install-windows.ps1'
+  if (-not (Test-Path $inst)) { Emit-Fail 'install-sage' 'Raccoon Studio is not installed here.'; exit 1 }
+  $psArgs = @('-ExecutionPolicy','Bypass','-NoProfile','-File',$inst,'-SageOnly','-NonInteractive')
+  if ($DryRun) { $psArgs += '-DryRun' }
+  & powershell.exe @psArgs; if ($LASTEXITCODE -ne 0) { Emit-Fail 'install-sage' "see $script:LogFile"; exit 1 }
+}
+function Invoke-RemoveSage {
+  Emit-Progress 1 1 'Removing SageAttention'
+  if (-not $DryRun -and (Test-Path $ComfyPy)) {
+    # Local EAP downgrade, same as Invoke-Update: pip writes progress to stderr,
+    # and under WinPS 5.1 a 2>&1 redirect with EAP=Stop turns that into a fatal
+    # NativeCommandError even on success. Without this the uninstall works but
+    # DONE| is never emitted, so the launcher's progress bar sits at 50% forever.
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+      # triton-windows stays: it is a general-purpose dependency other packs may
+      # have pulled in, and removing it could break something we did not install.
+      & $ComfyPy -m pip uninstall -y sageattention 2>&1 | ForEach-Object { Write-RsLog "[pip] $_" }
+    } finally { $ErrorActionPreference = $eap }
+  }
+  Emit-Done 'remove-sage'
+}
 switch ($Verb) {
   'status'       { Get-RsStatus }
   'check-update' { Get-UpdateState }
+  'sage-status'  { Get-SageState }
   'start'        { Invoke-Start }
   'stop'         { Invoke-Stop }
   'update'       { Invoke-Update }
   'install'      { Invoke-Install }
-  default        { [Console]::Error.WriteLine('usage: engine.ps1 {install|start|stop|update|status|check-update} [-DryRun]'); exit 2 }
+  'install-sage' { Invoke-InstallSage }
+  'remove-sage'  { Invoke-RemoveSage }
+  default        { [Console]::Error.WriteLine('usage: engine.ps1 {install|install-sage|remove-sage|start|stop|update|status|check-update|sage-status} [-DryRun]'); exit 2 }
 }

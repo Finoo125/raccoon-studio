@@ -28,6 +28,30 @@ export interface VideoGenerationParams {
   inputImageWidth?: number
   inputImageHeight?: number
   /**
+   * MiniMax H3 only: the frame the clip must **end** on, uploaded to ComfyUI's
+   * input dir. Optional, and deliberately not its own `mode`.
+   *
+   * H3's base checkpoint is FL2VA — first-**and-last**-frame — and its node
+   * takes `first_frame` and `last_frame` as two independent optional inputs.
+   * Which of MiniMax's three documented tasks a render is therefore falls out
+   * of which slots are filled, so a second image slot buys two modes where a
+   * fourth mode button would have bought one:
+   *
+   * | `inputImage` | `endImage` | task  | what it does                      |
+   * |--------------|------------|-------|-----------------------------------|
+   * | yes          | —          | I2VA  | animate forward (unchanged)       |
+   * | yes          | yes        | FL2VA | travel from one frame to the other|
+   * | —            | yes        | L2VA  | converge onto a known final frame |
+   *
+   * `h3Task()` is the single reader of that table; nothing else should infer
+   * the mode from these two fields. LTX has no `last_frame` input, so the slot
+   * is offered for H3 only.
+   */
+  endImage?: string
+  /** Pixel size of `endImage`, used for framing when there is no start image. */
+  endImageWidth?: number
+  endImageHeight?: number
+  /**
    * MiniMax H3 `ref2v` only: filenames already uploaded to ComfyUI's input dir,
    * one per UI slot. **Sparse** — a cleared slot is `undefined` and the slot
    * after it keeps its position in this array.
@@ -72,6 +96,18 @@ export interface VideoGenerationParams {
   fps: number
   /** Negative = randomise (resolved to a concrete int at build). */
   seed: number
+  /**
+   * MiniMax H3 only: apply fal's realism-people adapter, which restores the skin
+   * texture H3 renders away (pores, capillaries, stubble) instead of masking it
+   * with film grain.
+   *
+   * Off by default and gated on the 125 MB file being installed, like the Turbo
+   * tiers — the builder must never name a LoRA that is not on disk, because
+   * ComfyUI rejects the whole prompt at validation rather than degrading.
+   * Turning it on also injects the adapter's required trigger word into the
+   * prompt (`withRealismTrigger`).
+   */
+  realismLora?: boolean
   /** Render-time negative-prompt inputs on the prompt node. */
   pov?: boolean
   povGender?: 'female' | 'male'
@@ -93,12 +129,25 @@ export interface VideoGenerationParams {
    */
   rife?: boolean
   /**
-   * MiniMax H3 only: Turbo LoRA at a reduced step count instead of the 20-step
-   * base. Presented as "Draft mode" — it is for finding prompts and seeds, not
-   * for clips you keep. Ignored by the LTX builders, which have their own
-   * distillation LoRA baked in.
+   * MiniMax H3 only: which distillation LoRA to render with, instead of the
+   * 20-step base. `'draft'` is 6 steps of throwaway preview for finding prompts
+   * and seeds; `'fast'` is lightx2v's 8-step v1.0, good enough to keep. See
+   * `H3_TURBO` for what each tier actually sets.
+   *
+   * `true` is the pre-two-tier spelling of `'draft'` and must keep resolving —
+   * it is persisted in form state and baked into saved Director runs. Read it
+   * through `h3TurboTier()`, never as truthiness.
+   *
+   * Ignored by the LTX builders, which have their own distillation LoRA baked in.
    */
-  turbo?: boolean
+  turbo?: boolean | 'draft' | 'fast'
+  /**
+   * MiniMax H3 reference mode only: ref2va's own Turbo LoRA is installed, so a
+   * Turbo render may use it in place of the fl2v one. Set by the form from
+   * ComfyUI's model list — a per-machine fact, not a user choice, which is why
+   * there is no control for it.
+   */
+  ref2vTurbo?: boolean
   /**
    * MiniMax H3 only: a light film-grain pass on the finished frames, the same
    * node the image families use. Reintroduces the high-frequency skin texture

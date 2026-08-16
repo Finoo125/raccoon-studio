@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { TOUR_EVENT } from '@/lib/tour'
 import type { AppSettings } from '@/lib/settings/settings'
+import { useKiosk } from '@/app/providers'
 
 interface PathsBlock { modelsDir: string | null; outputDir: string | null; logsDir: string | null; projectsDir: string | null }
 
 export default function SettingsForm() {
+  const kiosk = useKiosk()
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [paths, setPaths] = useState<PathsBlock | null>(null)
   const [saving, setSaving] = useState(false)
@@ -113,9 +115,13 @@ export default function SettingsForm() {
                 <Button size="icon" variant="ghost" className="h-7 w-7" title="Copy" onClick={() => { void navigator.clipboard.writeText(val); toast.success('Copied') }}>
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" title="Open folder" onClick={() => void openFolder(val)}>
-                  <FolderOpen className="h-3.5 w-3.5" />
-                </Button>
+                {/* Copy stays useful on a hosted pod — the path is real, it is
+                    just on the container. Opening it there is not. */}
+                {!kiosk && (
+                  <Button size="icon" variant="ghost" className="h-7 w-7" title="Open folder" onClick={() => void openFolder(val)}>
+                    <FolderOpen className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </>
             )}
           </div>

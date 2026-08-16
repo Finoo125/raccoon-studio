@@ -32,6 +32,33 @@ emit_warn() { printf 'WARN|%s\n' "$1"; _log "[WARN] $1"; }
 emit_done() { printf 'DONE|%s\n' "$1"; _log "[DONE] $1"; }
 emit_fail() { printf 'FAIL|%s|%s\n' "$1" "$2"; _log "[FAIL] $1: $2"; }
 
+# ── SageAttention (optional extra) — WINDOWS ONLY, deliberately ───────────────
+# The Windows installer ships prebuilt SageAttention 2.2 wheels (see lib.ps1).
+# There is no equivalent to ship here, and the two candidates are both worse than
+# not offering it:
+#
+#   * woct0rdho's builds, which lib.ps1 pins, are win_amd64 only. Every release
+#     in that repo is tagged "-windows" and carries no linux asset (checked
+#     2026-08-13) - so there is nothing to point a URL at.
+#   * PyPI's `sageattention` is stuck at 1.0.6: a pure-Triton implementation, not
+#     the INT8+FP8 CUDA kernels 2.2 uses, and the version carrying the reported
+#     failures on compute capability 12.x. Installing that and calling it the
+#     same feature would hand Linux users something slower under a name that
+#     promises the Windows numbers.
+#
+# Building 2.2 from source needs the CUDA toolkit and ~20 minutes of nvcc, which
+# is not something an end-user installer should do behind a checkbox.
+#
+# So: the flag simply never turns on here. reserve-vram.py needs no special case
+# for that - it probes for an importable package and finds none. Anyone who
+# builds their own wheel into the venv gets picked up automatically.
+#
+# To add Linux later: pin a wheel URL and give sage_installed() a body, then
+# mirror install_sageattention from install-windows.ps1. Note the Windows
+# measurement will NOT carry over - that 1.37x was against a torch build with no
+# flash attention, and Linux torch ships it, so the baseline there is faster.
+sage_installed() { return 1; }
+
 # ── GPU detection ─────────────────────────────────────────────────────────────
 # AMD cards AMD's own ROCm matrix covers for PyTorch: gfx1100/1101 (discrete
 # RDNA3) and gfx1200/1201 (RDNA4). RX 6000/5000 (RDNA2/RDNA1), Vega, and the

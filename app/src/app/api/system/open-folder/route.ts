@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { isInsideAllowedRoot } from '@/lib/system/paths'
+import { isKiosk } from '@/lib/system/kiosk'
 import { log } from '@/lib/logging/logger'
 
 /**
@@ -11,6 +12,17 @@ import { log } from '@/lib/logging/logger'
  * Linux xdg-open.
  */
 export async function POST(req: NextRequest) {
+  // A hosted pod has no desktop to open anything on: xdg-open in a headless
+  // container either fails or, worse, succeeds into nothing. The UI hides the
+  // buttons, but the endpoint refuses on its own — a hidden control is not an
+  // absent one, and this spawns a process.
+  if (isKiosk()) {
+    return NextResponse.json(
+      { error: 'Not available on a hosted pod — this server has no desktop. Use the download button instead.' },
+      { status: 403 },
+    )
+  }
+
   let body: { path?: string; reveal?: boolean }
   try {
     body = (await req.json()) as { path?: string; reveal?: boolean }

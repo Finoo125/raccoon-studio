@@ -830,7 +830,7 @@ export default function ModelsPage() {
       {/* MiniMax H3 video models */}
       <VideoModelSection
         title="MiniMax H3 (Video)"
-        blurb="Video with natively synced stereo audio, 24 fps. All four files are required — the audio VAE included, or clips come out silent. ~42.5 GB total; needs ComfyUI 0.30.0 or newer."
+        blurb="Video with natively synced stereo audio, 24 fps. The first four files are required — the audio VAE included, or clips come out silent — and total ~42.5 GB; the rest are optional and each unlocks one mode in the video form. Needs ComfyUI 0.30.0 or newer."
         assets={MINIMAX_H3_ASSETS}
         keyPrefix={MINIMAX_H3_PRESET.id}
         states={states}

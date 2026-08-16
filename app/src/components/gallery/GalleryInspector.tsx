@@ -14,8 +14,10 @@ import { useGalleryStore } from '@/lib/gallery/store'
 import { useSendToVideo } from '@/lib/generation/useSendToVideo'
 import { useRouter } from 'next/navigation'
 import { serializeGalleryLoras } from '@/lib/gallery/lora-transfer'
+import { useKiosk } from '@/app/providers'
 
 export default function GalleryInspector() {
+  const kiosk = useKiosk()
   const { selected, images, setSelected, toggleFavorite, removeImages } = useGalleryStore()
   const { sendToVideo, busy: videoBusy } = useSendToVideo()
   const router = useRouter()
@@ -272,14 +274,18 @@ export default function GalleryInspector() {
               <Heart className={`h-4 w-4 ${selected.favorite ? 'fill-rose-500 text-rose-500' : ''}`} />
               {selected.favorite ? 'Favorited' : 'Favorite'}
             </Button>
-            <Button
-              variant="outline"
-              className="h-11 flex-col gap-1 text-xs"
-              onClick={() => void handleOpenFolder()}
-            >
-              <FolderOpen className="h-4 w-4" />
-              Open folder
-            </Button>
+            {/* Not on a hosted pod: the folder is on a headless container, so
+                "Save image" below is the only way to get the file out. */}
+            {!kiosk && (
+              <Button
+                variant="outline"
+                className="h-11 flex-col gap-1 text-xs"
+                onClick={() => void handleOpenFolder()}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Open folder
+              </Button>
+            )}
             <Button
               variant="outline"
               className="h-11 flex-col gap-1 text-xs"

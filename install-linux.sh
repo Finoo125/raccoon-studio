@@ -173,6 +173,12 @@ show_driver_update_help() {
 spinner_start() {
   spinner_stop
   local msg="$1"
+  # ponytail: no TTY, no animation. Into a file (container boot log, the GUI
+  # engine's pipe) the animation is 12 frames a second of \r noise — a 10-minute
+  # install wrote 13 KB of ⠋ into the RunPod boot log a user is meant to read —
+  # and it costs a subshell plus a `sleep` every 80ms for the whole install.
+  # One line per step is what a log wants.
+  if [ ! -t 1 ]; then printf '  ·  %s\n' "$msg"; return; fi
   local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
   local i=0
   (
@@ -792,8 +798,12 @@ main() {
     fi
     case "$DISTRO_FAMILY" in
       debian)
+        # ${SUDO:+...} because SUDO is EMPTY when we are already root (containers,
+        # a root shell). Writing '"$SUDO"' -E unconditionally left the pipeline as
+        # `| -E bash -`, which the shell tries to execute as a command named -E:
+        # exit 127, and the install dies at step 4 on every root install.
         spin_run "Installing Node.js 22 via NodeSource" \
-          bash -c 'curl -fsSL https://deb.nodesource.com/setup_22.x | '"$SUDO"' -E bash - && '"$SUDO"' apt-get install -y nodejs'
+          bash -c 'curl -fsSL https://deb.nodesource.com/setup_22.x | '"${SUDO:+$SUDO -E}"' bash - && '"$SUDO"' apt-get install -y nodejs'
         ;;
       arch) spin_run "Installing nodejs via pacman" $SUDO pacman -Sy --noconfirm --needed nodejs npm ;;
       fedora) spin_run "Installing nodejs via dnf" $SUDO dnf install -y nodejs npm ;;

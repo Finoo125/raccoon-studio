@@ -12,6 +12,15 @@ param(
     [switch] $NoDesktopShortcut,
     [switch] $WithControlNet,
     [switch] $SkipControlNet,
+    # Optional SageAttention extra (NVIDIA only). Same With/Skip shape as
+    # ControlNet above. An install that already has it keeps it without either
+    # flag - see the reconcile note on Install-SageAttention.
+    [switch] $WithSageAttention,
+    [switch] $SkipSageAttention,
+    # Install ONLY SageAttention into an existing install, then exit. This is what
+    # the launcher's "add it later" path runs, so that turning on a 67 MB extra
+    # does not re-clone 20-odd node packs to get there.
+    [switch] $SageOnly,
     # Set by the engine (GUI / update): never block on a question. See Test-CanAsk.
     [switch] $NonInteractive,
     # Which acceleration stack to install for.
@@ -628,6 +637,119 @@ function Install-OnnxRuntime([string]$Vendor) {
     }
 }
 
+# ── SageAttention (optional, NVIDIA only) ──────────────────────────────────────
+# INT8 attention kernels. ComfyUI picks them up via --use-sage-attention, which
+# the launcher adds only when the package actually imports — see
+# installer/reserve-vram.py, where both the flag and the measurements live.
+#
+# Non-fatal throughout, deliberately: this is an accelerator, and an install that
+# fails to get it must still be a working install that renders at normal speed.
+# The one thing that would NOT degrade gracefully is a half-install (sageattention
+# present, triton missing), because ComfyUI re-raises that at startup instead of
+# exiting — so a failed triton is followed by removing sageattention again.
+#
+# Every path that leaves SageAttention unavailable funnels through here, so the
+# user always learns WHY and always learns it does not matter much. The question
+# is asked only where a human can answer it: a headless/GUI run emits WARN| and
+# carries on, because a prompt nobody can see is how v1.0.27 hung the launcher at
+# 7% on the ROCm offer (see Test-CanAsk).
+#
+# Default is yes. Someone who ticked an optional accelerator and hit a snag
+# almost never means "throw away the whole install", so the safe key - and the
+# one they get by hitting Enter, or by not being asked at all - is to continue.
+function Confirm-SageUnavailable([string]$Reason) {
+    Write-Warn "SageAttention is not available: $Reason"
+    Write-Host ''
+    Write-Host '  This only affects SPEED, not what the studio can do.' -ForegroundColor Cyan
+    Write-Host '  Image generation, video generation, face swap and everything else' -ForegroundColor Gray
+    Write-Host '  work exactly the same without it - video rendering is just slower' -ForegroundColor Gray
+    Write-Host '  (on our test machine a 15 s clip took 10 min instead of 7.5 min).' -ForegroundColor Gray
+    Write-Host '  You can try adding it again later from the launcher.' -ForegroundColor Gray
+    Write-Host ''
+    Emit-Warn "SageAttention unavailable ($Reason) - continuing without it"
+    if (-not (Test-CanAsk)) {
+        Write-Info 'Continuing without SageAttention.'
+        return
+    }
+    try {
+        $ans = Read-Host '  Continue the installation without it? [Y/n]'
+    } catch {
+        # No usable console after all - continue rather than die on the question.
+        return
+    }
+    if ($ans -match '^(n|no)$') {
+        Write-Fail 'Stopped at your request. Everything installed so far is kept - re-run this installer to carry on.'
+    }
+    Write-Host ''
+}
+
+function Install-SageAttention([string]$Vendor) {
+    if ($Vendor -ne 'nvidia') {
+        # Not a failure - just not applicable. Only worth a question when the user
+        # actually asked for it; an update quietly re-running does not need one.
+        Confirm-SageUnavailable 'it needs an NVIDIA graphics card'
+        return
+    }
+    if ($DryRun) { Write-Ok '[dry-run] would install SageAttention'; return }
+    # The wheel is built for cu128 + torch >=2.10. Check rather than assume: an
+    # old venv, or a future CUDA bump, would otherwise get a wheel whose kernels
+    # cannot load, and the failure would surface much later as a broken launch.
+    $tv = & $VenvPython -c "import torch,sys; sys.stdout.write(torch.__version__)" 2>$null
+    if (-not $tv) { Confirm-SageUnavailable 'the installed PyTorch version could not be read'; return }
+    Add-Log "[SAGE] torch reports $tv"
+    if ($tv -notmatch '\+cu\d') {
+        Confirm-SageUnavailable "this installation's PyTorch ($tv) is not a CUDA build"
+        return
+    }
+    $mm = [version](($tv -split '\+')[0] -replace '[^0-9\.].*$', '')
+    if ($mm -lt [version]'2.10') {
+        Confirm-SageUnavailable "it needs PyTorch 2.10 or newer, and this installation has $tv"
+        return
+    }
+
+    # $script: scope, and the reason matters: Invoke-WithSpinner runs the block in
+    # a child scope, so a plain $failed set inside would not survive out here. The
+    # question is asked AFTER the spinner finishes - prompting mid-spinner would
+    # interleave a Read-Host with a repainting status line.
+    $script:SageFailed = ''
+    Invoke-WithSpinner 'Installing SageAttention (faster video generation, ~190 MB)' {
+        Add-Log "[CMD] uv pip install $script:SageTritonPkg"
+        & $uvExe pip install --python $VenvPython $script:SageTritonPkg 2>&1 |
+            Add-Content -Path $LogFile -Encoding UTF8
+        if ($LASTEXITCODE -ne 0) {
+            $script:SageFailed = 'the Triton dependency could not be downloaded'
+        } else {
+            Add-Log '[CMD] uv pip install sageattention (pinned wheel)'
+            & $uvExe pip install --python $VenvPython $script:SageWheelUrl 2>&1 |
+                Add-Content -Path $LogFile -Encoding UTF8
+            if ($LASTEXITCODE -ne 0) { $script:SageFailed = 'the download failed' }
+        }
+        # Prove it imports, with the same broad catch reserve-vram.py uses at
+        # launch. "pip said OK" is not the question; "will ComfyUI start with the
+        # flag" is - and a wheel built for another PyTorch installs perfectly and
+        # then fails to load.
+        if (-not $script:SageFailed) {
+            $probe = & $VenvPython -c "import sageattention; print('ok')" 2>&1 | Select-Object -Last 1
+            if ("$probe".Trim() -ne 'ok') {
+                Add-Log "[SAGE] import probe failed: $probe"
+                $script:SageFailed = 'it installed but will not load on this system'
+            }
+        }
+        # Leave nothing half-installed either way: a lone sageattention with no
+        # working Triton is WORSE than neither, because ComfyUI re-raises that at
+        # startup instead of degrading - see the note above this function.
+        if ($script:SageFailed) {
+            & $uvExe pip uninstall --python $VenvPython sageattention 2>&1 |
+                Add-Content -Path $LogFile -Encoding UTF8
+        }
+    }
+    if ($script:SageFailed) {
+        Confirm-SageUnavailable $script:SageFailed
+    } else {
+        Write-Ok 'SageAttention ready - video generation will use it automatically'
+    }
+}
+
 # Visual Studio C++ Build Tools — some video node packs (notably the NVIDIA RTX
 # super-res) compile native extensions and need a C++ toolchain. Non-fatal.
 function Install-BuildTools {
@@ -934,6 +1056,30 @@ Write-Banner
 # Explicit switches win; the GUI/engine always passes one, so headless runs never
 # prompt. An interactive console run asks once, up front. Default is skip — the
 # Models page can download them any time later.
+# ── Optional SageAttention (~190 MB, NVIDIA only) ─────────────────────────────
+# Same three-way shape as ControlNet below, plus one extra rule that matters more
+# than it looks: an install that ALREADY has SageAttention keeps it, ahead of any
+# -SkipSageAttention. The engine passes Skip on every headless update, so without
+# that ordering every update would quietly strip the extra back out. It also
+# makes updates self-healing across a CUDA/torch bump: the pinned wheel is
+# reinstalled, so the one that matches the new torch replaces the old one.
+$InstallSage = $false
+if ($WithSageAttention)  { $InstallSage = $true }
+elseif (Test-SageInstalled) { $InstallSage = $true }
+elseif (-not $SkipSageAttention) {
+    try {
+        if (Test-CanAsk) {
+            Write-Host '  Optional: SageAttention - faster video generation (~190 MB download).' -ForegroundColor Cyan
+            Write-Host '  Measured on an RTX 5090: a 15 s MiniMax H3 clip renders 1.37x faster' -ForegroundColor DarkGray
+            Write-Host '  (10 min -> 7.5 min). Longer clips gain more; image generation is unaffected.' -ForegroundColor DarkGray
+            Write-Host '  NVIDIA RTX 30/40/50 series only. You can add it later from the launcher.' -ForegroundColor DarkGray
+            $ans = Read-Host '  Install it now? [y/N]'
+            if ($ans -match '^(y|yes)$') { $InstallSage = $true }
+            Write-Host ''
+        }
+    } catch {}
+}
+
 $InstallCnModels = $false
 if ($WithControlNet) { $InstallCnModels = $true }
 elseif (-not $SkipControlNet) {
@@ -950,6 +1096,36 @@ elseif (-not $SkipControlNet) {
 }
 
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
+
+# ── -SageOnly: add the extra to an existing install and stop ──────────────────
+# The launcher's "enable it later" path. Everything the full install does before
+# this point is either a question or a prerequisite check, so nothing is skipped
+# that this step depends on. Emits the same PROGRESS/DONE lines as the other
+# verbs so the launcher's progress bar works unchanged.
+if ($SageOnly) {
+    Emit-Progress 1 2 'Installing SageAttention'
+    if (-not (Test-Path $VenvPython)) {
+        Emit-Fail 'install-sage' 'Raccoon Studio is not installed yet - run the installer first.'
+        exit 1
+    }
+    $uvExe = Get-ExePath 'uv'
+    if (-not $uvExe) {
+        Emit-Fail 'install-sage' 'uv is missing - run Reinstall from the launcher first.'
+        exit 1
+    }
+    # The venv's own torch build decides this, not the card in the box: that is
+    # what the wheel has to match, and it is already recorded on disk.
+    Install-SageAttention (Get-InstalledGpuVendor)
+    # DONE, not FAIL, when it could not be installed: the operation ran and the
+    # studio is fine: only the optional speed-up is missing, and
+    # Confirm-SageUnavailable has already emitted a WARN| line saying why. A FAIL
+    # here would paint the launcher red over a working installation.
+    Emit-Progress 2 2 $(if (Test-SageInstalled) { 'SageAttention ready' }
+                        else { 'Not installed - the studio works normally, video is just slower' })
+    Emit-Done 'install-sage'
+    exit 0
+}
+
 Write-SysInfo
 
 # ── Step 1: GPU ───────────────────────────────────────────────────────────────
@@ -1686,6 +1862,11 @@ Write-Ok 'LTX 2.3 video nodes ready'
 
 # Must come after every pack above — see Install-OnnxRuntime for why order matters.
 Install-OnnxRuntime $GpuVendor
+
+# Optional, and last of the Python packages on purpose: it depends on the torch
+# installed in step 10, and nothing else depends on it. A failure here is a
+# warning, never a failed install.
+if ($InstallSage) { Install-SageAttention $GpuVendor }
 
 # ── Step 13: App Node.js deps ─────────────────────────────────────────────────
 Write-Step 'Installing Raccoon Studio app dependencies'

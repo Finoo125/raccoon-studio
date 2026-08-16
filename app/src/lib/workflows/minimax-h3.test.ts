@@ -8,7 +8,10 @@ import {
   H3_FPS,
   ORIENTATIONS,
   H3_STEPS,
+  H3_TURBO,
   H3_TURBO_LORA,
+  H3_REF2V_TURBO_LORA,
+  h3TurboTier,
   H3_RIFE_FPS,
   H3_TURBO_STRENGTH,
   H3_GRAIN_INTENSITY,
@@ -16,7 +19,13 @@ import {
   H3_REF_BUDGET,
   h3RefCount,
   compactRefs,
+  h3Task,
+  H3_REALISM_LORA,
+  H3_REALISM_STRENGTH,
+  H3_REALISM_TRIGGER,
+  withRealismTrigger,
 } from './minimax-h3'
+import { MINIMAX_H3_ASSETS } from '@/lib/models/minimax-h3-assets'
 import type { VideoGenerationParams } from '@/types/video-workflow'
 import type { ComfyUIPromptNode } from '@/types/comfyui'
 
@@ -278,6 +287,90 @@ function modelChain(wf: Record<string, ComfyUIPromptNode>): string[] {
     ref = next as [string, number]
   }
 }
+
+describe('MiniMax H3 Turbo tiers', () => {
+  it('reads the legacy `true` as Draft, so saved sessions and Director runs survive', () => {
+    expect(h3TurboTier(true)).toBe('draft')
+    expect(h3TurboTier('draft')).toBe('draft')
+    expect(h3TurboTier('fast')).toBe('fast')
+    expect(h3TurboTier(false)).toBeNull()
+    expect(h3TurboTier(undefined)).toBeNull()
+    // The alias the pre-two-tier callers import still resolves to Draft's file.
+    expect(H3_TURBO_LORA).toBe(H3_TURBO.draft.lora)
+    expect(H3_STEPS.turbo).toBe(H3_TURBO.draft.steps)
+    expect(H3_TURBO_STRENGTH).toBe(H3_TURBO.draft.strength)
+  })
+
+  it('renders each tier at its own LoRA, steps and shift — never a mix', () => {
+    for (const tier of ['draft', 'fast'] as const) {
+      const wf = build({ turbo: tier })
+      const p = H3_TURBO[tier]
+      expect(nodeOf(wf, 'BasicScheduler')!.inputs.steps).toBe(p.steps)
+      expect(modelChain(wf)).toContain(`lora:${p.lora}@${p.strength}`)
+      const shift = nodeOf(wf, 'MiniMaxH3SigmaShift')!
+      expect(shift.inputs.shift_video).toBe(p.shift.video)
+      expect(shift.inputs.shift_audio).toBe(p.shift.audio)
+    }
+  })
+
+  it('holds the Fast profile to lightx2v 8-step v1.0 at their published figures', () => {
+    // A distilled LoRA is only correct at the schedule it was distilled for, so
+    // these four move together or not at all. audio 3 is lightx2v's figure and
+    // is deliberately NOT Draft's 6, which belongs to the drbaph workflow.
+    expect(H3_TURBO.fast).toEqual({
+      // drbaph's rank-21 resize of the same 8-step v1.0 weights: 327 MB rather
+      // than 1.96 GB, measured equivalent over 3 seeds. Matched loosely on the
+      // parts that identify the distillation, because which *build* of it we
+      // ship is a download-size decision and has changed once already — the
+      // schedule figures below are what must not drift.
+      lora: expect.stringMatching(/^minimax_h3_fl2v_turbo_8step_v1\.0_comfyui.*\.safetensors$/),
+      steps: 8,
+      strength: 0.75,
+      shift: { video: 12, audio: 3 },
+    })
+  })
+
+  it('ships the Fast LoRA the catalog actually downloads', () => {
+    // The builder naming a file the catalog does not offer is the failure this
+    // guards: ComfyUI rejects the whole prompt at validation, and the only clue
+    // is a 400 naming a LoRA the user was never given a way to install.
+    expect(MINIMAX_H3_ASSETS.map((a) => a.name)).toContain(H3_TURBO.fast.lora)
+    expect(MINIMAX_H3_ASSETS.map((a) => a.name)).toContain(H3_TURBO.draft.lora)
+  })
+
+  it('swaps to the ref2v LoRA only in reference mode, and only once confirmed installed', () => {
+    const chain = (over: Partial<VideoGenerationParams>) =>
+      modelChain(build({ turbo: 'fast', refImages: ['a.png'], ...over })).join(' ')
+
+    // Confirmed present: ref2va's own distillation, at the tier's strength.
+    expect(chain({ mode: 'ref2v', ref2vTurbo: true })).toContain(
+      `lora:${H3_REF2V_TURBO_LORA}@${H3_TURBO.fast.strength}`,
+    )
+    // Absent: degrade to the fl2v LoRA rather than name a file ComfyUI would
+    // reject at validation.
+    expect(chain({ mode: 'ref2v' })).toContain(`lora:${H3_TURBO.fast.lora}`)
+    // Installed but not in reference mode: the ref2v weights are the wrong
+    // shape for the fl2va checkpoint, so the flag must not leak across modes.
+    expect(chain({ mode: 't2v', ref2vTurbo: true })).toContain(`lora:${H3_TURBO.fast.lora}`)
+  })
+
+  it('seed hunt upgrades "no Turbo" to Draft but honours an explicit Fast pick', () => {
+    expect(nodeOf(build({ seedHunt: true, turbo: false }), 'BasicScheduler')!.inputs.steps).toBe(
+      H3_TURBO.draft.steps,
+    )
+    expect(nodeOf(build({ seedHunt: true, turbo: 'fast' }), 'BasicScheduler')!.inputs.steps).toBe(
+      H3_TURBO.fast.steps,
+    )
+  })
+
+  it('every tier LoRA is downloadable from the Models page', () => {
+    // A profile naming a file with no download entry is a dead button: the tier
+    // could never turn itself on, because the install check would never pass.
+    const downloadable = new Set(MINIMAX_H3_ASSETS.map((a) => a.name))
+    for (const p of Object.values(H3_TURBO)) expect(downloadable).toContain(p.lora)
+    expect(downloadable).toContain(H3_REF2V_TURBO_LORA)
+  })
+})
 
 describe('MiniMax H3 Turbo mode', () => {
   it('is off by default: 20 steps, no LoRA, no sigma shift', () => {
@@ -692,6 +785,161 @@ describe('MiniMax H3 video and audio references', () => {
       expect(nodeOf(wf, 'GetVideoComponents')).toBeUndefined()
       expect(nodeOf(wf, 'LoadAudio')).toBeUndefined()
     }
+  })
+})
+
+describe('h3Task — which MiniMax task the filled slots describe', () => {
+  it('reads the frame slots, not a mode the user picks', () => {
+    const t = (over: Partial<VideoGenerationParams>) => h3Task(base({ mode: 'i2v', ...over }))
+    expect(t({ inputImage: 's.png' })).toBe('i2v')
+    expect(t({ inputImage: 's.png', endImage: 'e.png' })).toBe('fl2v')
+    expect(t({ endImage: 'e.png' })).toBe('l2v')
+    // A half-filled i2v form is still t2v, which is what the builder already did.
+    expect(t({})).toBe('t2v')
+  })
+
+  it('never lets an end frame change t2v or reference mode', () => {
+    // ref2v runs a different checkpoint whose node has no last_frame at all, and
+    // t2v deliberately owns no image — a stale endImage surviving a mode switch
+    // must not silently promote either of them to a keyframe task.
+    expect(h3Task(base({ mode: 'ref2v', endImage: 'e.png' }))).toBe('ref2v')
+    expect(h3Task(base({ mode: 't2v', endImage: 'e.png' }))).toBe('t2v')
+  })
+})
+
+describe('minimaxH3Workflow.buildPrompt — end frame', () => {
+  const loadImages = (wf: Record<string, ComfyUIPromptNode>) =>
+    Object.values(wf).filter((n) => n.class_type === 'LoadImage')
+
+  it('wires both frames for fl2v, in their own loaders', () => {
+    const wf = build({ mode: 'i2v', inputImage: 's.png', endImage: 'e.png' })
+    const c = nodeOf(wf, 'MiniMaxH3ImageToVideo')!.inputs
+    expect(c.first_frame).toBeDefined()
+    expect(c.last_frame).toBeDefined()
+    expect(c.first_frame).not.toEqual(c.last_frame)
+    expect(loadImages(wf).map((n) => n.inputs.image).sort()).toEqual(['e.png', 's.png'])
+    expect(danglingLinks(wf)).toEqual([])
+  })
+
+  it('drops the first frame entirely for l2v', () => {
+    // The node's `first_frame` is optional, and feeding it a placeholder would
+    // tell the model to open on that image — the exact opposite of l2v.
+    const wf = build({ mode: 'i2v', endImage: 'e.png' })
+    const c = nodeOf(wf, 'MiniMaxH3ImageToVideo')!.inputs
+    expect(c.first_frame).toBeUndefined()
+    expect(c.last_frame).toBeDefined()
+    expect(loadImages(wf)).toHaveLength(1)
+    expect(loadImages(wf)[0].inputs.image).toBe('e.png')
+    expect(danglingLinks(wf)).toEqual([])
+  })
+
+  it('leaves a plain i2v graph exactly as it was', () => {
+    // The end-frame loader is allocated inside the branch that needs it, so a
+    // render that predates this feature keeps its node ids and stays in
+    // ComfyUI's execution cache.
+    const wf = build({ mode: 'i2v', inputImage: 's.png' })
+    expect(nodeOf(wf, 'MiniMaxH3ImageToVideo')!.inputs.last_frame).toBeUndefined()
+    expect(loadImages(wf)).toHaveLength(1)
+  })
+
+  it('ignores an end frame in t2v and reference mode', () => {
+    for (const mode of ['t2v', 'ref2v'] as const) {
+      const wf = build({ mode, endImage: 'e.png', refImages: mode === 'ref2v' ? ['r.png'] : undefined })
+      const c = nodeOf(wf, 'MiniMaxH3ReferenceToVideo')?.inputs
+        ?? nodeOf(wf, 'MiniMaxH3ImageToVideo')!.inputs
+      expect(c.last_frame).toBeUndefined()
+      expect(danglingLinks(wf)).toEqual([])
+    }
+  })
+
+  it('frames from the end image when it is the only anchor', () => {
+    const c = nodeOf(build({ mode: 'i2v', endImage: 'e.png', endImageWidth: 1080, endImageHeight: 1920 }),
+      'MiniMaxH3ImageToVideo')!.inputs
+    expect((c.width as number) / (c.height as number)).toBeCloseTo(9 / 16, 1)
+  })
+
+  it('lets the start frame win the aspect when the pair disagrees', () => {
+    // A mismatched pair has to resolve to one shape; the opening is what the
+    // viewer sees first, so it decides.
+    const c = nodeOf(build({
+      mode: 'i2v',
+      inputImage: 's.png', inputImageWidth: 1920, inputImageHeight: 1080,
+      endImage: 'e.png', endImageWidth: 1080, endImageHeight: 1920,
+    }), 'MiniMaxH3ImageToVideo')!.inputs
+    expect((c.width as number) / (c.height as number)).toBeCloseTo(16 / 9, 1)
+  })
+})
+
+describe('realism adapter', () => {
+  const loraNames = (wf: Record<string, ComfyUIPromptNode>) =>
+    Object.values(wf)
+      .filter((n) => n.class_type === 'LoraLoaderModelOnly')
+      .map((n) => n.inputs.lora_name)
+
+  it('is absent unless explicitly asked for', () => {
+    // Off by default and opt-in only: naming a LoRA that is not on disk fails
+    // ComfyUI's validation for the whole prompt rather than degrading.
+    expect(loraNames(build({}))).not.toContain(H3_REALISM_LORA)
+    expect(loraNames(build({ realismLora: false }))).not.toContain(H3_REALISM_LORA)
+    expect(nodeOf(build({}), 'MiniMaxH3ImageToVideo')!.inputs.prompt)
+      .not.toContain(H3_REALISM_TRIGGER)
+  })
+
+  it('loads at the measured strength, not the author’s headline 1.0', () => {
+    const node = Object.values(build({ realismLora: true })).find(
+      (n) => n.class_type === 'LoraLoaderModelOnly' && n.inputs.lora_name === H3_REALISM_LORA,
+    )!
+    expect(node.inputs.strength_model).toBe(H3_REALISM_STRENGTH)
+    expect(H3_REALISM_STRENGTH).toBe(0.7)
+  })
+
+  it('stacks with a Turbo tier rather than replacing it', () => {
+    // The product requirement: Realistic skin has to work while Draft or Fast
+    // is on, so both LoRAs must appear in one chain.
+    for (const turbo of ['draft', 'fast'] as const) {
+      const names = loraNames(build({ realismLora: true, turbo }))
+      expect(names).toContain(H3_TURBO[turbo].lora)
+      expect(names).toContain(H3_REALISM_LORA)
+      // Turbo first — a distillation is the base the style rides on.
+      expect(names.indexOf(H3_TURBO[turbo].lora)).toBeLessThan(names.indexOf(H3_REALISM_LORA))
+    }
+  })
+
+  it('leaves the graph valid and still core-only', () => {
+    const wf = build({ realismLora: true, turbo: 'fast' })
+    expect(danglingLinks(wf)).toEqual([])
+    // Everything the sampler reads must come off the end of the patched chain,
+    // or the realism weights silently do nothing.
+    const guiderModel = nodeOf(wf, 'BasicGuider')!.inputs.model as [string, number]
+    const schedModel = nodeOf(wf, 'BasicScheduler')!.inputs.model as [string, number]
+    expect(guiderModel[0]).toBe(schedModel[0])
+  })
+})
+
+describe('withRealismTrigger', () => {
+  it('puts the trigger above the fields, not above the alignment line', () => {
+    // The first line of an i2v/fl2v prompt is a mandatory alignment instruction
+    // in MiniMax's guide; displacing it would break the frame anchoring.
+    const anchor = 'For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.'
+    const out = withRealismTrigger(`${anchor}\n\nintegrated_multimodal_description: [Shot 1] x`)
+    expect(out.split('\n')[0]).toBe(anchor)
+    expect(out.indexOf(H3_REALISM_TRIGGER)).toBeLessThan(out.indexOf('integrated_multimodal_description:'))
+  })
+
+  it('prepends when there is no field block to sit above', () => {
+    expect(withRealismTrigger('a woman walks').startsWith(`${H3_REALISM_TRIGGER}\n\n`)).toBe(true)
+  })
+
+  it('never doubles a trigger the prompt already carries', () => {
+    // Re-rendering a saved prompt, or a user who typed it themselves.
+    const once = withRealismTrigger('integrated_multimodal_description: x')
+    expect(withRealismTrigger(once)).toBe(once)
+    expect(once.match(new RegExp(H3_REALISM_TRIGGER, 'g'))).toHaveLength(1)
+  })
+
+  it('reaches the conditioning node when the adapter is on', () => {
+    const p = nodeOf(build({ realismLora: true }), 'MiniMaxH3ImageToVideo')!.inputs.prompt as string
+    expect(p).toContain(H3_REALISM_TRIGGER)
   })
 })
 

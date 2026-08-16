@@ -32,6 +32,16 @@ export interface ModelAsset {
   url?: string
   /** Where it comes from — a repo id, or a hint for manual acquisition. */
   source: string
+  /**
+   * Unlocks one extra mode rather than being needed to render at all.
+   *
+   * Declared here so nothing has to infer it. The live suite's "is the model
+   * installed?" gates used to spell the required set as "the catalog minus the
+   * one file I know is optional", which silently turns every new optional entry
+   * into a reason to skip the render — and a skipped live test looks exactly
+   * like a passing one.
+   */
+  optional?: true
 }
 
 export const LTX23_ASSETS: ModelAsset[] = [

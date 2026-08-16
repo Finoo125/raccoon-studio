@@ -109,6 +109,56 @@ describe('buildEnhanceArgs — which doctrine the node picks', () => {
   it.each(['t2v', 'i2v', 'ref2v', 'director'] as const)('passes %s through as the video mode', (mode) => {
     expect(args({ params: { mode } }).videoMode).toBe(mode)
   })
+
+  // On H3 the mode the user picked is not the task that runs: filling the end
+  // frame slot turns i2v into fl2v or l2v, and each has its own mandatory
+  // alignment line in MiniMax's guide. Sending plain 'i2v' would produce a
+  // prompt anchored to a first frame the render does not have.
+  const h3 = (params: Partial<VideoGenerationParams>) =>
+    args({ workflowId: 'minimax-h3', params: { mode: 'i2v', ...params } })
+
+  it('derives the H3 keyframe task from the filled slots', () => {
+    expect(h3({ inputImage: 's.png' }).videoMode).toBe('i2v')
+    expect(h3({ inputImage: 's.png', endImage: 'e.png' }).videoMode).toBe('fl2v')
+    expect(h3({ endImage: 'e.png' }).videoMode).toBe('l2v')
+  })
+
+  it('leaves LTX on the mode it was given — it has no last-frame input', () => {
+    expect(args({ workflowId: 'ltx23', params: { mode: 'i2v', endImage: 'e.png' } }).videoMode)
+      .toBe('i2v')
+  })
+})
+
+describe('buildEnhanceArgs — what the vision pass sees for a keyframe task', () => {
+  const h3 = (params: Partial<VideoGenerationParams>) =>
+    buildEnhanceArgs({
+      settings: SETTINGS,
+      workflowId: 'minimax-h3',
+      imageB64: 'START-B64',
+      endImageB64: 'END-B64',
+      params: { ...PARAMS, mode: 'i2v', ...params },
+    })
+
+  it('shows fl2v both frames, start first — the doctrine numbers them in that order', () => {
+    expect(h3({ inputImage: 's.png', endImage: 'e.png' }).imageB64)
+      .toEqual(['START-B64', 'END-B64'])
+  })
+
+  it('shows l2v only the end frame, which is the only image that exists', () => {
+    expect(h3({ endImage: 'e.png' }).imageB64).toBe('END-B64')
+  })
+
+  it('still shows plain i2v its single source image', () => {
+    expect(h3({ inputImage: 's.png' }).imageB64).toBe('START-B64')
+  })
+
+  it('drops an empty half rather than sending a blank image', () => {
+    // The end frame can be set in params a tick before its base64 lands.
+    expect(buildEnhanceArgs({
+      settings: SETTINGS, workflowId: 'minimax-h3', imageB64: 'START-B64',
+      params: { ...PARAMS, mode: 'i2v', inputImage: 's.png', endImage: 'e.png' },
+    }).imageB64).toEqual(['START-B64'])
+  })
 })
 
 describe('buildEnhanceArgs — the rest is passed through', () => {

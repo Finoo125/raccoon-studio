@@ -13,7 +13,15 @@ import { uploadImageBlob } from '@/lib/generation/upload'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
 import { useVideoForm } from './video-form-context'
 import { videoWorkflows, isLtxWorkflow, supportsSeedHunt } from '@/lib/workflows/video-index'
-import { H3_RIFE_FPS, H3_REF_BUDGET, H3_REF_MAX, h3RefCount, compactRefs } from '@/lib/workflows/minimax-h3'
+import {
+  H3_RIFE_FPS,
+  H3_REF_BUDGET,
+  H3_REF_MAX,
+  h3RefCount,
+  h3TurboTier,
+  compactRefs,
+  type H3TurboTier,
+} from '@/lib/workflows/minimax-h3'
 import { useAddonLock, LTX_DIRECTOR_ADDON } from '@/lib/addons/useAddonLock'
 import { PATREON_PAGE } from '@/lib/addons/membership'
 import Link from 'next/link'
@@ -24,6 +32,36 @@ export const RESOLUTION_TIERS = [
   { id: 'medium', label: '900p', hint: '~1.4 MP — a third fewer pixels than Full HD, most of the detail.' },
   { id: 'low', label: '720p', hint: '~0.9 MP — less than half the pixels. Much faster, and keeps 16 GB cards out of shared GPU memory.' },
 ] as const
+
+/**
+ * MiniMax H3 speed tiers, slowest first so the list reads as a dial. `id` is
+ * the `turbo` param value; step counts and strengths live in `H3_TURBO`.
+ *
+ * The two Turbo tiers are separate optional downloads, so `download` is the
+ * copy shown when the tier's LoRA is not on disk — a tier stays visible and
+ * disabled rather than hidden, since someone who cannot see it cannot decide
+ * they want the file.
+ */
+const H3_SPEED_TIERS: { id: false | H3TurboTier; label: string; hint: string; download: string }[] = [
+  {
+    id: false,
+    label: 'Full',
+    hint: '20 steps, no distillation — the best this model renders, and the slowest.',
+    download: '',
+  },
+  {
+    id: 'draft',
+    label: 'Draft',
+    hint: 'For testing prompts and finding seeds only — roughly 3× faster, and visibly worse than a Full render (plastic-looking skin, over-sharp grain). Once a prompt and seed look right, switch back to Full and render the real clip.',
+    download: 'Adds the 4-step Turbo LoRA (620 MB)',
+  },
+  {
+    id: 'fast',
+    label: 'Fast',
+    hint: 'lightx2v 8-step distillation — roughly 2× faster than Full and close enough in quality to keep. Start here if Full is too slow; drop to Draft only while you are still hunting for a prompt.',
+    download: 'Adds the lightx2v 8-step Turbo LoRA (2 GB)',
+  },
+]
 
 export function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -168,7 +206,7 @@ export function ModelSwitch() {
 export function BriefPanel() {
   const {
     workflow, params, set, settings, onSettingChange, models, options,
-    collapsed, setCollapsed, seedPreview, setSeedPreview, setImageB64, setParams,
+    collapsed, setCollapsed, seedPreview, setSeedPreview, setImageB64, setEndImageB64, setParams,
     enh, enhanceDisabledReason, handleEnhance, handleRefine,
   } = useVideoForm()
 
@@ -234,7 +272,12 @@ export function BriefPanel() {
         </div>
       ) : (
         <div className="space-y-2">
-          <SectionLabel>Source image</SectionLabel>
+          {/* H3's conditioning node takes an optional last frame as well as a
+              first one, so the end slot is offered there and only there — LTX
+              has no equivalent input. Which of MiniMax's three frame-anchored
+              tasks runs is derived from which slots are filled (`h3Task`), so
+              this is two extra abilities without a fourth mode button. */}
+          <SectionLabel>{isLtxWorkflow(workflow.id) ? 'Source image' : 'Start frame'}</SectionLabel>
           <SourceImageInput
             value={params.inputImage}
             onChange={(filename) => { set('inputImage', filename); setSeedPreview(null) }}
@@ -242,6 +285,24 @@ export function BriefPanel() {
             onDims={(d) => setParams((p) => ({ ...p, inputImageWidth: d?.w, inputImageHeight: d?.h }))}
             previewUrl={seedPreview}
           />
+          {!isLtxWorkflow(workflow.id) && (
+            <>
+              <SectionLabel>End frame — optional</SectionLabel>
+              <SourceImageInput
+                value={params.endImage}
+                onChange={(filename) => set('endImage', filename)}
+                onB64={setEndImageB64}
+                onDims={(d) => setParams((p) => ({ ...p, endImageWidth: d?.w, endImageHeight: d?.h }))}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                {params.endImage && params.inputImage
+                  ? 'The clip travels from the start frame to the end frame as one continuous shot.'
+                  : params.endImage
+                    ? 'With no start frame the clip is built backwards — it opens somewhere plausible and lands on this image.'
+                    : 'Add one to say where the clip must finish. Leave it empty to just animate forward.'}
+              </p>
+            </>
+          )}
         </div>
       )}
 
@@ -358,29 +419,38 @@ export function RenderPanel() {
       </div>
       )}
 
-      {/* Draft mode (H3 only) — the Turbo LoRA at 6 steps. Named for what it is
-          FOR, not what it does: the output is visibly worse than a normal
-          render, so it is a tool for finding a prompt and a seed, not for
-          producing a clip you keep. Off by default. */}
+      {/* Speed (H3 only) — which distillation LoRA renders the clip, or none.
+          Named for the axis rather than the weights: the two tiers differ in
+          what the output is FOR, not in a number anyone tunes. Off by default,
+          and a tier whose LoRA is not on disk stays visible but disabled —
+          someone who cannot see the option cannot decide they want it. */}
       {!isLtx && (
-        <div className={`rounded-xl border border-border bg-muted/20 p-3 space-y-2 ${turboReady ? '' : 'opacity-60'}`}>
-          <label className={`flex items-center gap-2 text-sm ${turboReady ? '' : 'cursor-not-allowed'}`}>
-            <input
-              type="checkbox"
-              checked={params.turbo === true}
-              disabled={!turboReady}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('turbo', e.target.checked)}
-              className="h-4 w-4 accent-primary disabled:cursor-not-allowed"
-            />
-            <span className="font-medium">Draft mode</span>
-            <span className="text-xs text-muted-foreground">
-              {turboReady ? 'fast preview — lower quality' : 'unavailable — not installed'}
-            </span>
-          </label>
+        <div className="space-y-2">
+          <SectionLabel>Speed</SectionLabel>
+          <div className="grid grid-cols-3 gap-2">
+            {H3_SPEED_TIERS.map((t) => {
+              const ready = t.id === false || turboReady[t.id]
+              return (
+                <Button
+                  key={String(t.id)}
+                  variant={(h3TurboTier(params.turbo) ?? false) === t.id ? 'default' : 'outline'}
+                  className={`h-9 text-sm${ready ? '' : ' opacity-60'}`}
+                  title={ready ? undefined : `${t.download} — install it on the Models page`}
+                  onClick={() => { if (ready) set('turbo', t.id) }}
+                >
+                  {t.label}
+                </Button>
+              )
+            })}
+          </div>
           <p className="text-xs text-muted-foreground">
-            {turboReady
-              ? 'For testing prompts and finding seeds only — roughly 3× faster, and visibly worse than a normal render (plastic-looking skin, over-sharp grain). Once a prompt and seed look right, turn this off and render the real clip.'
-              : 'Adds the MiniMax H3 Turbo LoRA (620 MB) for fast, lower-quality drafts while you test prompts and seeds — install it on the Models page to enable this.'}
+            {(() => {
+              const tier = h3TurboTier(params.turbo) ?? false
+              const t = H3_SPEED_TIERS.find((x) => x.id === tier)!
+              return tier !== false && !turboReady[tier as H3TurboTier]
+                ? `Not installed. ${t.download} — add it on the Models page to enable this.`
+                : t.hint
+            })()}
           </p>
         </div>
       )}
@@ -440,11 +510,12 @@ export function RenderPanel() {
             as the finished look and reject a perfectly good seed. */}
         {!isLtx && huntCount > 0 && (
           <p className="rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
-            Candidates render in <strong>Draft mode</strong>, so they will look rougher than the
-            final clip — judge the <em>composition and motion</em>, not the detail. The seed you
-            pick is then rendered again at full quality with Draft mode off.
-            {!turboReady && (
-              <> <strong className="text-destructive">Needs the Turbo LoRA</strong> — install it on
+            Candidates always render distilled — at <strong>Draft</strong> speed, or at{' '}
+            <strong>Fast</strong> if that is what you picked above — so they will look rougher than
+            the final clip. Judge the <em>composition and motion</em>, not the detail. The seed you
+            pick is then rendered again at the speed set above.
+            {!turboReady.draft && !turboReady.fast && (
+              <> <strong className="text-destructive">Needs a Turbo LoRA</strong> — install one on
               the Models page, or the candidates cost a full render each.</>
             )}
           </p>
@@ -456,7 +527,7 @@ export function RenderPanel() {
 }
 
 function AdvancedBody() {
-  const { params, set, setParams, faceIdReady, lastJobSeed, workflow } = useVideoForm()
+  const { params, set, setParams, faceIdReady, realismReady, lastJobSeed, workflow } = useVideoForm()
   // FaceID is LTX-only; the LoRA stack, Seed and RIFE now exist on both graphs.
   const isLtx = isLtxWorkflow(workflow.id)
   const rifeOn = isLtx ? params.rife !== false : params.rife === true
@@ -561,6 +632,30 @@ function AdvancedBody() {
         </div>
       )}
 
+      {/* Realistic skin (H3 only) — fal's realism adapter. Sits directly above
+          film grain on purpose: grain *masks* smooth skin, this repairs it, and
+          seeing them together is what tells you which one you actually want. */}
+      {!isLtx && (
+        <div className={`space-y-2 ${realismReady ? '' : 'opacity-60'}`}>
+          <SectionLabel>Realistic skin</SectionLabel>
+          <label className={`flex items-center gap-2 text-sm ${realismReady ? '' : 'cursor-not-allowed'}`}>
+            <input
+              type="checkbox"
+              checked={params.realismLora === true}
+              disabled={!realismReady}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('realismLora', e.target.checked)}
+              className="h-4 w-4 accent-primary disabled:cursor-not-allowed"
+            />
+            <span className="font-medium">Use the realism adapter</span>
+          </label>
+          <p className="text-xs text-muted-foreground">
+            {realismReady
+              ? 'Restores pores, fine lines and stubble that the model otherwise renders away, so faces hold up in close-up. Best on people; it does nothing for a shot with nobody in it. Works alongside Draft and Fast.'
+              : 'Needs the 125 MB realism adapter — install it on the Models page.'}
+          </p>
+        </div>
+      )}
+
       {/* Film grain (H3 only for now) — the same RES4LYF node and 0.04 intensity
           the Krea2 / Z-Image paths use, so clips read like the stills do. */}
       {!isLtx && (
@@ -574,10 +669,10 @@ function AdvancedBody() {
             {params.filmGrain !== false ? 'Grain on — softer, film-like' : 'Grain off — model output as-is'}
           </Button>
           <p className="text-xs text-muted-foreground">
-            On by default. Adds back the fine skin texture the model smooths away, so faces
-            read less plastic. Costs roughly 125&nbsp;ms per frame (~35&nbsp;s on a 10&nbsp;s
-            clip). It will not fix over-sharpening — for that, lower Draft mode&rsquo;s
-            strength.
+            On by default, and a different job from Realistic skin above: grain lays texture
+            over the whole frame, the adapter rebuilds the skin itself. Costs roughly
+            125&nbsp;ms per frame (~35&nbsp;s on a 10&nbsp;s clip). Neither will fix
+            over-sharpening — for that, lower Draft mode&rsquo;s strength.
           </p>
         </div>
       )}

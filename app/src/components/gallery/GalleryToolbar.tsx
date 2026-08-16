@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useGalleryStore } from '@/lib/gallery/store'
+import { useKiosk } from '@/app/providers'
 
 interface Props {
   onRefresh: () => void
@@ -23,6 +24,8 @@ export default function GalleryToolbar({ onRefresh, loading }: Props) {
   const allModels = distinct(images.map((i) => i.metadata.model))
   const allSamplers = distinct(images.map((i) => i.metadata.sampler))
   const allDims = distinct(images.map((i) => (i.metadata.width && i.metadata.height ? `${i.metadata.width}x${i.metadata.height}` : undefined)))
+
+  const kiosk = useKiosk()
 
   const openImagesFolder = async () => {
     if (!imagesDir) {
@@ -182,17 +185,20 @@ export default function GalleryToolbar({ onRefresh, loading }: Props) {
         Favorites
       </Button>
 
-      {/* Open images folder */}
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-8 px-3 gap-1.5"
-        onClick={() => void openImagesFolder()}
-        title="Open the images folder"
-      >
-        <FolderOpen className="h-3.5 w-3.5" />
-        Folder
-      </Button>
+      {/* Open images folder — never on a hosted pod, where the folder is on a
+          headless container rather than on the machine looking at this page. */}
+      {!kiosk && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 px-3 gap-1.5"
+          onClick={() => void openImagesFolder()}
+          title="Open the images folder"
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+          Folder
+        </Button>
+      )}
 
       {/* Update / rescan */}
       <Button
