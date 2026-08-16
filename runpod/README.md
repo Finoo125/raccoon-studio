@@ -56,13 +56,19 @@ datacenter connection makes that faster than pulling a pre-built image would be,
 and it means an update is available the moment it is published, with nothing to
 re-download.
 
-Measured on a community RTX 3090:
+Measured on community RTX 3090s:
 
 | | |
 |---|---|
-| First boot: ComfyUI, PyTorch (CUDA 12.8), 25 pinned node packs, 3.6 GB of default models, then a production build of the app | **~6 minutes** |
+| First boot: ComfyUI, PyTorch (CUDA 12.8), 25 pinned node packs, 3.6 GB of default models, then a production build of the app | **6 minutes on a fast machine, 25+ on a slow one** |
 | Later boots: the volume already has all of that, so only the container's own packages are reinstalled | **~2 minutes** |
 | On disk afterwards | ~16 GB (11 GB of it PyTorch and its CUDA libraries) |
+
+That first-boot spread is not the GPU — it is the individual machine's route to
+HuggingFace, and it varies by a factor of five between two pods of the same
+model in the same cloud. The install page shows which file it is on, so a slow
+first boot is visibly working rather than hung. If it matters to you, terminate
+and redeploy: you will usually land on a different host.
 
 Everything mutable lives under `/workspace` — the install itself, models,
 output, input, settings, prompt presets, wildcards, Director projects, face

@@ -306,6 +306,19 @@ detect_distro() {
   esac
 }
 
+# ── Model downloads ────────────────────────────────────────────────────────────
+# curl's --retry only covers a request that FAILS. A transfer that connects and
+# then sits at 0 B/s is not a failure, so it hangs forever, holding the whole
+# install on one file with nothing on screen but a step name — a frozen
+# progress page on a hosted pod, a frozen spinner on a desktop. --speed-limit
+# with --speed-time turns a stall into an error, which is the thing --retry can
+# then actually act on.
+#
+# 2 KB/s over 60 s is deliberately far below any working connection: the files
+# here are hundreds of MB and a genuinely slow route still passes (a 402 MB
+# model at 0.7 MB/s is fine, and was measured), while a dead socket does not.
+CURL_DL=(curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --speed-limit 2048 --speed-time 60)
+
 # ── Sudo ───────────────────────────────────────────────────────────────────────
 SUDO=""
 ensure_sudo() {
@@ -985,7 +998,7 @@ main() {
   if [ ! -f "$FR_DIR/codeformer-v0.1.0.pth" ]; then
     run mkdir -p "$FR_DIR"
     spin_run "Downloading CodeFormer face-restore model" \
-      curl -fL --retry 3 -o "$FR_DIR/codeformer-v0.1.0.pth" \
+      "${CURL_DL[@]}" -o "$FR_DIR/codeformer-v0.1.0.pth" \
         https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/codeformer-v0.1.0.pth \
       || { warn "CodeFormer download failed (ReActor fetches it on first use)"; rm -f "$FR_DIR/codeformer-v0.1.0.pth"; }
   fi
@@ -996,7 +1009,7 @@ main() {
   if [ ! -f "$FR_DIR/GPEN-BFR-1024.onnx" ]; then
     run mkdir -p "$FR_DIR"
     spin_run "Downloading GPEN-BFR-1024 face-restore model" \
-      curl -fL --retry 3 -o "$FR_DIR/GPEN-BFR-1024.onnx" \
+      "${CURL_DL[@]}" -o "$FR_DIR/GPEN-BFR-1024.onnx" \
         https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/GPEN-BFR-1024.onnx \
       || { warn "GPEN-BFR-1024 download failed — grab it from the Models page (face swap needs it)"; rm -f "$FR_DIR/GPEN-BFR-1024.onnx"; }
   fi
@@ -1024,7 +1037,7 @@ main() {
     if [ ! -f "$sdest" ]; then
       run mkdir -p "$COMFYUI_DIR/models/$sdir"
       spin_run "Downloading face-swap model: $sname" \
-        curl -fL --retry 3 -o "$sdest" "$surl" \
+        "${CURL_DL[@]}" -o "$sdest" "$surl" \
         || { warn "$sname download failed — install it from the Models page before using face swap"; rm -f "$sdest"; }
     fi
   done
@@ -1036,7 +1049,7 @@ main() {
   if [ ! -f "$BUFFALO_DIR/det_10g.onnx" ]; then
     run mkdir -p "$BUFFALO_DIR"
     if spin_run "Downloading buffalo_l face-analysis pack (290 MB)" \
-         curl -fL --retry 3 -o "$BUFFALO_DIR/buffalo_l.zip" \
+         "${CURL_DL[@]}" -o "$BUFFALO_DIR/buffalo_l.zip" \
            https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/buffalo_l.zip
     then
       spin_run "Extracting buffalo_l face-analysis pack" \
@@ -1055,13 +1068,13 @@ main() {
   run mkdir -p "$UPSCALE_DIR"
   if [ ! -f "$UPSCALE_DIR/4x-UltraSharp.pth" ]; then
     spin_run "Downloading 4x-UltraSharp upscale model" \
-      curl -fL --retry 3 -o "$UPSCALE_DIR/4x-UltraSharp.pth" \
+      "${CURL_DL[@]}" -o "$UPSCALE_DIR/4x-UltraSharp.pth" \
         https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth \
       || { warn "4x-UltraSharp download failed (grab it via the Models tab, or turn Upscale off)"; rm -f "$UPSCALE_DIR/4x-UltraSharp.pth"; }
   fi
   if [ ! -f "$UPSCALE_DIR/4x-AnimeSharp.pth" ]; then
     spin_run "Downloading 4x-AnimeSharp upscale model" \
-      curl -fL --retry 3 -o "$UPSCALE_DIR/4x-AnimeSharp.pth" \
+      "${CURL_DL[@]}" -o "$UPSCALE_DIR/4x-AnimeSharp.pth" \
         https://huggingface.co/Kim2091/AnimeSharp/resolve/main/4x-AnimeSharp.pth \
       || { warn "4x-AnimeSharp download failed (grab it via the Models tab, or turn Upscale off)"; rm -f "$UPSCALE_DIR/4x-AnimeSharp.pth"; }
   fi
@@ -1076,7 +1089,7 @@ main() {
   if [ ! -f "$BBOX_DIR/face_yolov8m.pt" ]; then
     run mkdir -p "$BBOX_DIR"
     spin_run "Downloading face_yolov8m detector (detailer)" \
-      curl -fL --retry 3 -o "$BBOX_DIR/face_yolov8m.pt" \
+      "${CURL_DL[@]}" -o "$BBOX_DIR/face_yolov8m.pt" \
         https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8m.pt \
       || { warn "face_yolov8m download failed (grab it via the Models tab, or turn Detailer off)"; rm -f "$BBOX_DIR/face_yolov8m.pt"; }
   fi
@@ -1084,7 +1097,7 @@ main() {
   if [ ! -f "$SAM_DIR/sam_vit_b_01ec64.pth" ]; then
     run mkdir -p "$SAM_DIR"
     spin_run "Downloading SAM ViT-B segmenter (detailer)" \
-      curl -fL --retry 3 -o "$SAM_DIR/sam_vit_b_01ec64.pth" \
+      "${CURL_DL[@]}" -o "$SAM_DIR/sam_vit_b_01ec64.pth" \
         https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth \
       || { warn "SAM model download failed (grab it via the Models tab, or turn Detailer off)"; rm -f "$SAM_DIR/sam_vit_b_01ec64.pth"; }
   fi
@@ -1127,7 +1140,7 @@ main() {
     if [ ! -f "$ddir/$fname" ]; then
       run mkdir -p "$ddir"
       spin_run "Downloading ControlNet preprocessor weight: $fname" \
-        curl -fL --retry 3 -o "$ddir/$fname" "$url" \
+        "${CURL_DL[@]}" -o "$ddir/$fname" "$url" \
         || { warn "$fname download failed — it will be fetched on first ControlNet use instead"; rm -f "$ddir/$fname"; }
     fi
   done
@@ -1137,7 +1150,7 @@ main() {
   if [ ! -f "$CN_DIR/controlnet-union-sdxl-promax.safetensors" ]; then
     run mkdir -p "$CN_DIR"
     spin_run "Downloading ControlNet Union SDXL ProMax" \
-      curl -fL --retry 3 -o "$CN_DIR/controlnet-union-sdxl-promax.safetensors" \
+      "${CURL_DL[@]}" -o "$CN_DIR/controlnet-union-sdxl-promax.safetensors" \
         https://huggingface.co/xinsir/controlnet-union-sdxl-1.0/resolve/main/diffusion_pytorch_model_promax.safetensors \
       || { warn "ControlNet Union download failed (grab it via the Models tab)"; rm -f "$CN_DIR/controlnet-union-sdxl-promax.safetensors"; }
   fi
@@ -1147,7 +1160,7 @@ main() {
   if [ ! -f "$IPA_DIR/ip-adapter-plus_sdxl_vit-h.safetensors" ]; then
     run mkdir -p "$IPA_DIR"
     spin_run "Downloading IP-Adapter Plus SDXL ViT-H" \
-      curl -fL --retry 3 -o "$IPA_DIR/ip-adapter-plus_sdxl_vit-h.safetensors" \
+      "${CURL_DL[@]}" -o "$IPA_DIR/ip-adapter-plus_sdxl_vit-h.safetensors" \
         https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors \
       || { warn "IP-Adapter Plus download failed (grab it via the Models tab)"; rm -f "$IPA_DIR/ip-adapter-plus_sdxl_vit-h.safetensors"; }
   fi
@@ -1158,7 +1171,7 @@ main() {
   if [ ! -f "$CV_DIR/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors" ]; then
     run mkdir -p "$CV_DIR"
     spin_run "Downloading CLIP ViT-H-14 vision encoder (IP-Adapter)" \
-      curl -fL --retry 3 -o "$CV_DIR/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors" \
+      "${CURL_DL[@]}" -o "$CV_DIR/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors" \
         https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors \
       || { warn "CLIP ViT-H download failed (grab it via the Models tab)"; rm -f "$CV_DIR/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"; }
   fi
@@ -1171,7 +1184,7 @@ main() {
   if [ ! -f "$MP_DIR/$ZFUN" ]; then
     run mkdir -p "$MP_DIR"
     spin_run "Downloading Z-Image Fun Union ControlNet" \
-      curl -fL --retry 3 -o "$MP_DIR/$ZFUN" \
+      "${CURL_DL[@]}" -o "$MP_DIR/$ZFUN" \
         "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/$ZFUN" \
       || { warn "Z-Image Fun ControlNet download failed (grab it via the Models tab)"; rm -f "$MP_DIR/$ZFUN"; }
   fi
@@ -1186,7 +1199,7 @@ main() {
   if [ ! -f "$VAE_DIR/sdxl_vae.safetensors" ]; then
     run mkdir -p "$VAE_DIR"
     spin_run "Downloading SDXL fp16-fix VAE" \
-      curl -fL --retry 3 -o "$VAE_DIR/sdxl_vae.safetensors" \
+      "${CURL_DL[@]}" -o "$VAE_DIR/sdxl_vae.safetensors" \
         https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl.vae.safetensors \
       || { warn "SDXL VAE download failed (grab it via the Models tab)"; rm -f "$VAE_DIR/sdxl_vae.safetensors"; }
   fi
