@@ -65,13 +65,25 @@ async function withProxy(env, fn) {
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  // Kept because the credential banner is printed AFTER "listening", so tests
+  // that read it need the whole stream, not just the readiness line.
+  let stdout = '';
+  child.stdout.on('data', (d) => { stdout += d; });
   await new Promise((res, rej) => {
     const t = setTimeout(() => rej(new Error('proxy did not start')), 10000);
     child.stdout.on('data', (d) => { if (String(d).includes('listening')) { clearTimeout(t); res(); } });
     child.on('exit', (c) => { clearTimeout(t); rej(new Error('proxy exited ' + c)); });
   });
   const base = `http://127.0.0.1:${port}`;
-  try { return await fn({ base, port, seen: up.seen }); }
+  const awaitLog = async (needle, ms = 5000) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      if (stdout.includes(needle)) return stdout;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`log never contained ${needle}:\n${stdout}`);
+  };
+  try { return await fn({ base, port, seen: up.seen, awaitLog }); }
   finally { child.kill(); up.close(); }
 }
 
@@ -226,18 +238,45 @@ test('rotating x-forwarded-for is still stopped by the global counter', () =>
     assert.equal(r.status, 429, 'a forged header must not buy unlimited guesses');
   }));
 
-test('a generated password is printed when RACCOON_PASSWORD is unset', async () => {
-  const [port, nextPort, comfyPort] = [await freePort(), await freePort(), await freePort()];
-  const child = spawn(process.execPath, [PROXY], {
-    env: { ...process.env, RACCOON_PROXY_PORT: String(port), RACCOON_NEXT_PORT: String(nextPort),
-           RACCOON_COMFY_PORT: String(comfyPort), RACCOON_PASSWORD: '', RACCOON_SESSION_SECRET: SECRET },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const out = await new Promise((res, rej) => {
-    let buf = '';
-    const t = setTimeout(() => rej(new Error('no banner')), 10000);
-    child.stdout.on('data', (d) => { buf += d; if (buf.includes('generated one for you')) { clearTimeout(t); res(buf); } });
-  });
-  child.kill();
-  assert.match(out, /RACCOON_PASSWORD was not set/);
-});
+// RunPod DROPS empty env values when a template is created, so shipping
+// RACCOON_PASSWORD="" leaves no field in the deploy form for a user to fill in.
+// The public template ships a visible placeholder instead — which must never be
+// accepted as a password, or every pod deployed from it would share one.
+for (const [label, value] of [
+  ['unset', ''],
+  ['only whitespace', '   '],
+  ['the placeholder', 'change-me'],
+  ['a padded, upper-case placeholder', '  CHANGE_ME  '],
+  ['an angle-bracket placeholder', '<your password>'],
+]) {
+  test(`RACCOON_PASSWORD ${label}: a random password is generated, and the placeholder itself is refused`, () =>
+    withProxy({ RACCOON_PASSWORD: value }, async ({ base, awaitLog }) => {
+      const out = await awaitLog('generated one:');
+      // The password line of the banner box: '│' then exactly six spaces.
+      const printed = out.match(/│ {6}(\S+)/)?.[1];
+      assert.ok(printed && printed.length >= 8, `no password in the banner:\n${out}`);
+
+      const good = await login(base, USER, printed);
+      assert.match(cookieFrom(good), /^rs_session=/, 'the printed password must work');
+
+      if (value.trim()) {
+        const bad = await login(base, USER, value.trim());
+        assert.equal(bad.status, 401, 'the placeholder must never be a working password');
+        assert.equal(cookieFrom(bad), '', 'a refused login must mint no cookie');
+      }
+    }));
+}
+
+test('a real password is used verbatim, and is not mistaken for a placeholder', () =>
+  withProxy({ RACCOON_PASSWORD: 'passwordless-monkey-42' }, async ({ base }) => {
+    const r = await login(base, USER, 'passwordless-monkey-42');
+    assert.match(cookieFrom(r), /^rs_session=/);
+  }));
+
+// A password pasted into a console field with a stray space either side should
+// still let its owner in, rather than locking them out of their own pod.
+test('surrounding whitespace in RACCOON_PASSWORD is trimmed', () =>
+  withProxy({ RACCOON_PASSWORD: '  hunter2  ' }, async ({ base }) => {
+    const r = await login(base, USER, 'hunter2');
+    assert.match(cookieFrom(r), /^rs_session=/);
+  }));

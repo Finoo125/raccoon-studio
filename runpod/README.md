@@ -33,9 +33,11 @@ two, export and terminate.
 2. Pick an **RTX 4090 or 5090**. Both work; the 5090 is roughly twice the price
    and noticeably faster on video. Anything with 24 GB is comfortable; 16 GB
    works with the low-VRAM options in the UI.
-3. Set **`RACCOON_PASSWORD`** in the environment variables. If you leave it
-   blank a random password is generated and printed in the pod log — the pod is
-   never unprotected, but you will have to go and read the log to get in.
+3. Replace the **`RACCOON_PASSWORD`** placeholder (`change-me`) with a real
+   password. Leave it as the placeholder — or blank — and a random password is
+   generated and printed in the pod log instead: the pod is never unprotected
+   and never shares a password with anyone else's, but you will have to go and
+   read the log to get in.
 4. Open the **HTTP 8080** link. It shows a live install log with a progress bar,
    and turns into the login page by itself when the studio is ready.
 
@@ -44,7 +46,7 @@ two, export and terminate.
 | Container disk | 30 GB |
 | Volume disk | 100 GB at `/workspace` (the install itself takes ~16 GB) |
 | Exposed HTTP port | 8080 |
-| `RACCOON_PASSWORD` | **set this** |
+| `RACCOON_PASSWORD` | **change this** — it ships as `change-me`, which is treated as unset |
 | `RACCOON_USERNAME` | optional, defaults to `raccoon` |
 | `RACCOON_SESSION_SECRET` | optional; without it a pod restart logs you out |
 

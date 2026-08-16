@@ -18,8 +18,19 @@ const USER = process.env.RACCOON_USERNAME || 'raccoon';
 // A public template with a fixed default password would give every deployment on
 // earth the same credentials. Generate-and-log means a pod is never unprotected
 // and never predictable.
-const GENERATED = !process.env.RACCOON_PASSWORD;
-const PASS = process.env.RACCOON_PASSWORD || crypto.randomBytes(9).toString('base64url');
+//
+// The placeholder exists because RunPod *drops empty env values* when a template
+// is created: shipping RACCOON_PASSWORD="" means the field is simply absent from
+// the deploy form, and nobody can fill in a variable they cannot see. So the
+// template ships a visible placeholder instead, and anything still equal to it
+// counts as unset — the field is discoverable, and leaving it untouched is
+// exactly as safe as leaving it blank was.
+const PLACEHOLDER = /^(change[-_ ]?me|your[-_ ]?password|password|<.*>)$/i;
+// Trimmed, because a stray space pasted into a console field would otherwise
+// become part of the password and lock the user out of their own pod.
+const RAW_PASS = (process.env.RACCOON_PASSWORD ?? '').trim();
+const GENERATED = !RAW_PASS || PLACEHOLDER.test(RAW_PASS);
+const PASS = GENERATED ? crypto.randomBytes(9).toString('base64url') : RAW_PASS;
 // No secret => a new one per boot, so a restart logs everyone out. That is the
 // safe default; set RACCOON_SESSION_SECRET to keep sessions across restarts.
 const SECRET = process.env.RACCOON_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
@@ -273,9 +284,10 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`[proxy] listening on 0.0.0.0:${PORT} -> next ${NEXT.port}, comfyui ${COMFY.port}`);
   console.log(`[proxy] username: ${USER}`);
   if (GENERATED) {
+    const why = RAW_PASS ? 'is still the placeholder' : 'was not set';
     console.log('');
     console.log('  ┌─────────────────────────────────────────────────────────┐');
-    console.log('  │  RACCOON_PASSWORD was not set — generated one for you:  │');
+    console.log(`  │  RACCOON_PASSWORD ${(why + ' — generated one:').padEnd(38)}│`);
     console.log(`  │      ${PASS.padEnd(49)}│`);
     console.log('  │  Set RACCOON_PASSWORD in the template to choose it.     │');
     console.log('  └─────────────────────────────────────────────────────────┘');
