@@ -38,17 +38,60 @@ two, export and terminate.
    generated and printed in the pod log instead: the pod is never unprotected
    and never shares a password with anyone else's, but you will have to go and
    read the log to get in.
-4. Open the **HTTP 8080** link. It shows a live install log with a progress bar,
+4. Optionally set one or more **`DOWNLOAD_*`** variables to `yes` to have your
+   models fetched during boot — see the table below.
+5. Open the **HTTP 8080** link. It shows a live install log with a progress bar,
    and turns into the login page by itself when the studio is ready.
 
 | Setting | Value |
 |---|---|
-| Container disk | 30 GB |
-| Volume disk | 100 GB at `/workspace` (the install itself takes ~16 GB) |
+| Container disk | 100 GB |
+| Volume disk | 400 GB at `/workspace` (the install itself takes ~16 GB; models are what fill the rest) |
 | Exposed HTTP port | 8080 |
 | `RACCOON_PASSWORD` | **change this** — it ships as `change-me`, which is treated as unset |
 | `RACCOON_USERNAME` | optional, defaults to `raccoon` |
 | `RACCOON_SESSION_SECRET` | optional; without it a pod restart logs you out |
+
+### Picking your models at deploy time
+
+The pod installs no checkpoints of its own — out of the box you get a working
+studio and an empty model shelf. Set any of these to **`yes`** in the deploy form
+and that group is downloaded during boot, before ComfyUI starts, so it is ready
+at your first login instead of after a trip to the Models page. Every one
+defaults to `no`.
+
+| Environment variable | Downloads | Size |
+|---|---|---|
+| `DOWNLOAD_KREA2_TURBO` | Krea2 Turbo — fast 8-step, the everyday model | ~18 GB |
+| `DOWNLOAD_KREA2_RAW` | Krea2 RAW — full 52-step base, highest fidelity | ~18 GB |
+| `DOWNLOAD_Z_IMAGE_TURBO` | Z Image Turbo | ~20 GB |
+| `DOWNLOAD_ANIMA` | Anima — anime-style text-to-image | ~5 GB |
+| `DOWNLOAD_ANIMA_TURBO` | Anima Turbo — same look, ~3× fewer steps | ~5 GB |
+| `DOWNLOAD_ERNIE_TURBO` | Ernie Image Turbo — fast photorealism | ~29 GB |
+| `DOWNLOAD_SDXL` | Stable Diffusion XL base 1.0 | ~7 GB |
+| `DOWNLOAD_PONY` | Pony Diffusion V6 XL | ~7 GB |
+| `DOWNLOAD_ILLUSTRIOUS` | Illustrious XL v0.1 | ~7 GB |
+| `DOWNLOAD_LTX_VIDEO` | LTX 2.3 video — checkpoint, text encoder, DMD + motion LoRAs, upscaler | ~45 GB |
+| `DOWNLOAD_MINIMAX_H3` | MiniMax H3 video + synced audio, with both Turbo tiers and the realism adapter | ~42 GB |
+| `DOWNLOAD_CONTROLNET` | ControlNet + IP-Adapter reference models | ~9 GB |
+
+Notes:
+
+- **Groups share files.** Both Krea2 models run on the same text encoder and
+  VAE, the three SDXL-family checkpoints share one VAE — asking for both Krea2
+  models costs one extra checkpoint, not two full sets.
+- **Nothing is re-downloaded.** A file already on the volume is skipped, so
+  leaving these on `yes` costs nothing on later boots. Turning one on later and
+  restarting fetches just that group.
+- **A failed download is not a failed pod.** It warns in the log, the studio
+  comes up regardless, and you can retry from the Models page.
+- **They lengthen the first boot, a lot.** ~45 GB at a typical 45–60 MB/s is
+  around 15 minutes; on a badly-routed host it can be far worse (see below). The
+  install page names the file it is on, so you can watch it move.
+- The video groups take what a render actually needs plus the small extras that
+  are on by default. The heavyweight one-mode extras — LTX's FaceID and IC-LoRAs,
+  H3's 21 GB reference-to-video checkpoint — stay a deliberate click on the
+  Models page. So do the Krea2 style LoRAs and everything under Face Swap.
 
 ### Why the first boot takes a few minutes
 
@@ -168,9 +211,9 @@ rather than leaving you with a dead pod.
 is the ComfyUI WebSocket. Check the pod log for `[proxy] listening`; if the
 proxy is up, look at `/workspace/logs/comfyui.log`.
 
-**A red banner about missing models** — the pod installs the models the default
-workflows need by name, but checkpoints are downloaded from the Models page.
-Fetch one there first.
+**A red banner about missing models** — the pod installs the support files the
+default workflows need, but no checkpoint unless you asked for one. Set a
+`DOWNLOAD_*` variable before deploying, or fetch one from the Models page now.
 
 **Logs** live in `/workspace/logs/` — `boot.log` (this boot), `boot.previous.log`
 (the one before), `comfyui.log` and `app.log`.

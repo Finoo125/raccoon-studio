@@ -20,6 +20,127 @@ REPO="${RACCOON_REPO:-https://github.com/Finoo125/raccoon-studio}"
 BRANCH="${RACCOON_BRANCH:-main}"
 WORKSPACE="${RACCOON_WORKSPACE:-/workspace}"
 
+# ── Optional model groups ─────────────────────────────────────────────────────
+# One env var per group in the RunPod deploy form, "no" unless the user says
+# otherwise. They are fetched below, after install-linux.sh has built the models
+# tree and before the studio (and therefore ComfyUI) starts, so a group is
+# already installed at the first login instead of needing a trip to the Models
+# page. Every file is skipped when it is already on the volume, which is what
+# makes leaving these on "yes" free on every later boot.
+#
+# ponytail: a flat table rather than reading the app's own catalog. That catalog
+# is a `use client` TSX module, so reaching it from sh would mean a build step on
+# the pod for a few dozen URLs. installer/tests/test_boot.sh cross-checks every
+# URL here against the catalog instead, so this copy cannot drift in silence.
+MODEL_GROUPS='krea2-turbo krea2-raw z-image-turbo anima anima-turbo ernie-turbo
+sdxl pony illustrious ltx-video minimax-h3'
+
+# Shared across both Krea2 presets and both Anima ones — listed once, and every
+# file is skipped if present, so asking for both costs one checkpoint extra.
+# The four Krea2 filenames are KREA2_REFUSAL_LORA / KREA2_PROJECTOR_LORA in
+# app/src/lib/workflows/krea2.ts: the builder asks ComfyUI for exactly these
+# names, so a rename here is a silent generation failure.
+_krea2_shared() { cat <<'EOF'
+text_encoders|qwen3vl_4b_fp8_scaled.safetensors|https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors
+vae|qwen_image_vae.safetensors|https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors
+loras|Krea2_TextFusion_Refusal_Reduction.safetensors|https://huggingface.co/Kutches/Kr3a/resolve/main/Krea2_TextFusion_Refusal_Reduction.safetensors
+loras|krea2_projector_scale.safetensors|https://huggingface.co/Beinsezii/Krea-2-Turbo-Projector-Scale-LoRA-Diffusers/resolve/main/pytorch_lora_weights.safetensors
+EOF
+}
+_anima_shared() { cat <<'EOF'
+text_encoders|qwen_3_06b_base.safetensors|https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors
+vae|qwen_image_vae.safetensors|https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors
+EOF
+}
+# The fp16-fix VAE every SDXL-family checkpoint decodes through (SDXL_FIX_VAE in
+# lib/workflows/sdxl.ts) — without it the colours come out washed out.
+_sdxl_vae() {
+  echo 'vae|sdxl_vae.safetensors|https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl.vae.safetensors'
+}
+
+# folder|filename|url, one per line. The filename is what ComfyUI's loader nodes
+# expect and is not always the source file's own name — the rename happens on
+# the way in, exactly as the Models page's download route does it.
+group_files() {
+  case "$1" in
+    krea2-turbo)
+      echo 'diffusion_models|krea2_turbo_fp8_scaled.safetensors|https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_fp8_scaled.safetensors'
+      _krea2_shared ;;
+    krea2-raw)
+      echo 'diffusion_models|krea2_raw_fp8_scaled.safetensors|https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_raw_fp8_scaled.safetensors'
+      _krea2_shared ;;
+    z-image-turbo) cat <<'EOF'
+diffusion_models|z_image_turbo_bf16.safetensors|https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors
+text_encoders|qwen_3_4b.safetensors|https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors
+vae|ae.safetensors|https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors
+EOF
+      ;;
+    anima)
+      echo 'diffusion_models|anima-aesthetic-v1.1.safetensors|https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors'
+      _anima_shared ;;
+    anima-turbo)
+      echo 'diffusion_models|anima-turbo-v1.0.safetensors|https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.0.safetensors'
+      _anima_shared ;;
+    ernie-turbo) cat <<'EOF'
+diffusion_models|ernie-image-turbo.safetensors|https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/diffusion_models/ernie-image-turbo.safetensors
+text_encoders|ministral-3-3b.safetensors|https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/text_encoders/ministral-3-3b.safetensors
+text_encoders|ernie-image-prompt-enhancer.safetensors|https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/text_encoders/ernie-image-prompt-enhancer.safetensors
+vae|flux2-vae.safetensors|https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/vae/flux2-vae.safetensors
+EOF
+      ;;
+    sdxl)
+      echo 'checkpoints|sd_xl_base_1.0.safetensors|https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors'
+      _sdxl_vae ;;
+    pony)
+      echo 'checkpoints|ponyDiffusionV6XL_v6StartWithThisOne.safetensors|https://huggingface.co/LyliaEngine/Pony_Diffusion_V6_XL/resolve/main/ponyDiffusionV6XL_v6StartWithThisOne.safetensors'
+      _sdxl_vae ;;
+    illustrious)
+      echo 'checkpoints|Illustrious-XL-v0.1.safetensors|https://huggingface.co/OnomaAIResearch/Illustrious-xl-early-release-v0/resolve/main/Illustrious-XL-v0.1.safetensors'
+      _sdxl_vae ;;
+    # Video: what a render actually needs, plus the small extras the form turns
+    # on by default when present. Deliberately NOT the multi-GB one-mode extras
+    # (LTX FaceID and the IC-LoRAs; H3's 21 GB ref2v checkpoint and its LoRA) —
+    # those stay a deliberate click on the Models page rather than 25 GB nobody
+    # asked for. The gated/manual-import entries in the catalog cannot be
+    # fetched unattended at all.
+    ltx-video) cat <<'EOF'
+checkpoints|ltx2310eros1.4.safetensors|https://huggingface.co/TenStrip/LTX2.3-10Eros/resolve/main/10Eros_v1.4_fp8mixed_learned.safetensors
+text_encoders|gemma-3-12b-it-ablit-norms-biproj-fp8mixed.safetensors|https://huggingface.co/TenStrip/LTX2.3-10Eros/resolve/main/text_encoders/gemma-3-12b-it-ablit-norms-biproj-fp8mixed.safetensors
+loras|LTX2.3_DMD_reshaped_r256.safetensors|https://huggingface.co/TenStrip/LTX2.3_DMD_Lora/resolve/main/LTX2.3_DMD_reshaped_r256.safetensors
+loras|VBVR-I2V-390K-R32.safetensors|https://huggingface.co/LiconStudio/Ltx2.3-VBVR-lora-I2V/resolve/main/Ltx2.3-Licon-VBVR-I2V-390K-R32.safetensors
+latent_upscale_models|ltx-2.3-spatial-upscaler-x2-1.1.safetensors|https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
+vae|taeltx2_3.safetensors|https://huggingface.co/DouraVITA/ltx-ugc-bundle/resolve/main/vae/taeltx2_3.safetensors
+EOF
+      ;;
+    minimax-h3) cat <<'EOF'
+diffusion_models|minimax_h3_fl2va_pruned_int8_convrot.safetensors|https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors
+text_encoders|qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors|https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+vae|minimax_h3_video_vae_fp16.safetensors|https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors
+vae|minimax_h3_audio_vae_fp32.safetensors|https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors
+loras|minimax_h3_turbo_4step_ckpt500_pruned_comfyui.safetensors|https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/main/minimax_h3_turbo_4step_ckpt500_pruned_comfyui.safetensors
+loras|minimax_h3_fl2v_turbo_8step_v1.0_comfyui_resized_avg_rank_21_bf16.safetensors|https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/main/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_resized_avg_rank_21_bf16.safetensors
+loras|h3-realism-people-t2v-i2v-r2v.safetensors|https://huggingface.co/fal/MiniMax-H3-Realism-People-LoRA/resolve/main/h3-realism-people-t2v-i2v-r2v.safetensors
+EOF
+      ;;
+  esac
+}
+
+# `krea2-turbo` -> `DOWNLOAD_KREA2_TURBO`. The trailing `-` in the first set and
+# `_` in the second are literal, so the id's dashes become underscores.
+group_var() { printf 'DOWNLOAD_%s' "$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"; }
+
+# Anything but an explicit yes is a no — a typo must not spend an hour of GPU
+# time on a 42 GB download.
+group_wanted() {
+  eval "_v=\${$(group_var "$1"):-no}"
+  case "$(printf '%s' "$_v" | tr 'A-Z' 'a-z')" in
+    y|yes|1|true|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# ── end model group table ── (installer/tests/test_boot.sh sources exactly this
+# block, from MODEL_GROUPS to here, to test the table without running an install)
+
 # No volume means nothing survives a stop, including a 20-minute install. Say so
 # loudly and keep going on the container disk — the entrypoint repeats the
 # warning for the app's own paths.
@@ -49,6 +170,54 @@ export UV_CACHE_DIR="$WORKSPACE/.cache/uv" \
 mkdir -p "$WORKSPACE/.cache"
 
 say() { printf '[boot] %s\n' "$*"; }
+
+# Fetch every file of every group the deploy form asked for. Writes into
+# ComfyUI's own models tree, which is either a real directory the entrypoint has
+# not linked to the volume yet (first boot) or already a symlink onto it (every
+# boot after) — both land on the volume, so nothing is re-downloaded.
+#
+# Non-fatal throughout: a dead mirror must cost one model, not the whole studio.
+download_groups() {
+  _want=
+  for _g in $MODEL_GROUPS; do group_wanted "$_g" && _want="$_want $_g"; done
+  [ -n "$_want" ] || return 0
+
+  # Deduplicated across groups: Krea2 Turbo and RAW share four files, the three
+  # SDXL-family checkpoints share a VAE. Without this the second group would
+  # re-check them one by one for nothing.
+  _rows=$(for _g in $_want; do group_files "$_g"; done | sort -u)
+  _n=$(printf '%s\n' "$_rows" | wc -l | tr -d ' ')
+  say "Model groups:$_want ($_n files)"
+
+  _i=0
+  printf '%s\n' "$_rows" | while IFS='|' read -r _folder _name _url; do
+    [ -n "$_url" ] || continue
+    _i=$((_i + 1))
+    _dir="$ROOT/comfyui/ComfyUI/models/$_folder"
+    mkdir -p "$_dir"
+    if [ -f "$_dir/$_name" ]; then
+      say "have $_name"
+      continue
+    fi
+    # ponytail: no live byte counter — curl's own meter is \r-based and would
+    # turn the log (and the progress page that tails it) into one endless line.
+    # A PROGRESS line per file is what install-linux.sh's own model step does,
+    # and it is enough to tell a slow route from a hung one, because the file
+    # count advances. The stall guard below is what catches a genuinely dead
+    # socket: --retry alone never fires on one that connects and sends nothing.
+    printf 'PROGRESS|%s|%s|%s|Downloading %s\n' "$_i" "$_n" "$((_i * 100 / _n))" "$_name"
+    _t=$(date +%s)
+    if curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 \
+         --speed-limit 2048 --speed-time 60 -sS \
+         -o "$_dir/$_name.tmp" "$_url"; then
+      mv -f "$_dir/$_name.tmp" "$_dir/$_name"
+      say "got $_name ($(du -h "$_dir/$_name" 2>/dev/null | cut -f1)) in $(( $(date +%s) - _t ))s"
+    else
+      rm -f "$_dir/$_name.tmp"
+      say "WARNING: $_name failed to download — get it from the Models page instead"
+    fi
+  done
+}
 
 # ── Minimal dependencies ──────────────────────────────────────────────────────
 # Bare ubuntu has none of these. The template's start command installs them too
@@ -109,9 +278,15 @@ install_all() {
   # --gpu=nvidia: nvidia-smi exists on the pod, but pinning it keeps a CPU pod
   # from silently installing the CPU stack onto a volume a GPU pod will reuse.
   # --skip-controlnet: ~9 GB the Models page fetches on demand, matching the
-  # desktop installer's own opt-in default.
-  RS_FROM_ENGINE=1 bash install-linux.sh --gpu=nvidia --skip-controlnet || return 1
+  # desktop installer's own opt-in default. DOWNLOAD_CONTROLNET=yes opts back in
+  # through the installer's own step rather than a second copy of those URLs.
+  CN_FLAG=--skip-controlnet
+  group_wanted controlnet && CN_FLAG=--with-controlnet
+  RS_FROM_ENGINE=1 bash install-linux.sh --gpu=nvidia "$CN_FLAG" || return 1
   say "install-linux.sh done at +$(( $(date +%s) - T0 ))s"
+
+  download_groups
+  say "model groups done at +$(( $(date +%s) - T0 ))s"
 
   # The installer never builds — desktop installs run `next dev`. A rented GPU
   # over a WAN deserves the production build, so do it here, onto the volume.
