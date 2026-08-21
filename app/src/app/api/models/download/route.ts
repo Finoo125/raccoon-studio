@@ -100,6 +100,16 @@ export async function POST(req: NextRequest) {
             if (hops > 5) { reject(new Error('Too many redirects')); return }
 
             const proto = targetUrl.startsWith('https') ? https : http
+
+            // Armed BEFORE the response, because the response callback is not
+            // guaranteed to fire: a server that accepts the connection and
+            // never flushes headers would otherwise be watched by nothing.
+            // Re-stamped from the bytes below, so "slow" and "dead" stay
+            // distinguishable — see the comment on STALL_MS.
+            let lastDataAt = Date.now()
+            let watchdog: ReturnType<typeof setInterval> | undefined
+            const stopWatchdog = () => { if (watchdog) clearInterval(watchdog) }
+
             const req = proto.get(targetUrl, { signal: abort.signal }, (res) => {
               const { statusCode, headers } = res
 
@@ -120,7 +130,12 @@ export async function POST(req: NextRequest) {
               let lastPct = -1
               let lastSentBytes = 0
 
+              res.on('end', stopWatchdog)
+              res.on('close', stopWatchdog)
+              res.on('error', stopWatchdog)
+
               res.on('data', (chunk: Buffer) => {
+                lastDataAt = Date.now()
                 received += chunk.length
                 if (total > 0) {
                   const pct = Math.round((received / total) * 100)
@@ -151,14 +166,21 @@ export async function POST(req: NextRequest) {
               // huggingface.co.
               res.on('error', (err) => reject(new Error(describeDownloadError(err, targetUrl))))
             })
-            req.on('error', (err) => reject(new Error(describeDownloadError(err, targetUrl))))
-            // Socket-inactivity, not total duration: a slow-but-moving transfer
-            // keeps resetting this, a stalled one does not.
-            req.setTimeout(STALL_MS, () => {
-              req.destroy(
-                new Error(`Download stalled — no data for ${Math.round(STALL_MS / 1000)}s (${targetUrl})`),
+            req.on('error', (err) => { stopWatchdog(); reject(new Error(describeDownloadError(err, targetUrl))) })
+            watchdog = setInterval(() => {
+              if (Date.now() - lastDataAt < STALL_MS) return
+              stopWatchdog()
+              // Settle explicitly rather than relying on destroy() to surface
+              // the error: with a response in flight it may land on `res`, on
+              // `req`, or be swallowed, and an unsettled promise here is the
+              // original hang all over again. reject() after settling is a
+              // no-op, so doing both is safe.
+              const err = new Error(
+                `Download stalled — no data for ${Math.round(STALL_MS / 1000)}s (${targetUrl})`,
               )
-            })
+              req.destroy(err)
+              reject(err)
+            }, Math.max(250, Math.floor(STALL_MS / 4)))
           }
 
           doRequest(url)
