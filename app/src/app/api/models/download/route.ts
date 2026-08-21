@@ -96,32 +96,40 @@ export async function POST(req: NextRequest) {
         fileStream = out
 
         await new Promise<void>((resolve, reject) => {
+          // ONE watchdog for the whole transfer, owned here rather than by each
+          // hop. Per-hop guards are what shipped broken twice: `doRequest`
+          // recurses on a redirect, and the abandoned request kept an armed
+          // guard watching a timestamp nothing could refresh, so it shot the
+          // live transfer down at exactly STALL_MS. Every HuggingFace URL
+          // redirects to a CDN, so that was the normal path, not an edge case.
+          //
+          // Owned by the Promise also means no exit — success, redirect, HTTP
+          // error, socket error, write error — can leave one running.
+          let lastDataAt = Date.now()
+          let watchdog: ReturnType<typeof setInterval> | undefined
+          const stopWatchdog = () => { if (watchdog) { clearInterval(watchdog); watchdog = undefined } }
+          const settle = (fn: () => void) => { stopWatchdog(); fn() }
+
           const doRequest = (targetUrl: string, hops = 0) => {
-            if (hops > 5) { reject(new Error('Too many redirects')); return }
+            if (hops > 5) { settle(() => reject(new Error('Too many redirects'))); return }
 
             const proto = targetUrl.startsWith('https') ? https : http
-
-            // Armed BEFORE the response, because the response callback is not
-            // guaranteed to fire: a server that accepts the connection and
-            // never flushes headers would otherwise be watched by nothing.
-            // Re-stamped from the bytes below, so "slow" and "dead" stay
-            // distinguishable — see the comment on STALL_MS.
-            let lastDataAt = Date.now()
-            let watchdog: ReturnType<typeof setInterval> | undefined
-            const stopWatchdog = () => { if (watchdog) clearInterval(watchdog) }
 
             const req = proto.get(targetUrl, { signal: abort.signal }, (res) => {
               const { statusCode, headers } = res
 
               if (statusCode === 301 || statusCode === 302 || statusCode === 307 || statusCode === 308) {
-                // Location may be relative — resolve it against the current URL.
+                // The shared watchdog keeps running across the hop and is
+                // re-stamped by the CDN's bytes; a redirect that never leads
+                // anywhere therefore still trips it.
+                lastDataAt = Date.now()
                 if (headers.location) { doRequest(new URL(headers.location, targetUrl).toString(), hops + 1) }
-                else reject(new Error('Redirect without Location header'))
+                else settle(() => reject(new Error('Redirect without Location header')))
                 return
               }
 
               if (statusCode !== 200) {
-                reject(new Error(`HTTP ${statusCode}`))
+                settle(() => reject(new Error(`HTTP ${statusCode}`)))
                 return
               }
 
@@ -156,30 +164,33 @@ export async function POST(req: NextRequest) {
                 out.close()
                 fs.renameSync(tmpFile!, destFile)
                 tmpFile = undefined
-                resolve()
+                settle(resolve)
               })
-              out.on('error', reject)
+              out.on('error', (err) => settle(() => reject(err)))
               // Both network paths report which host failed: a bare
               // "connect ETIMEDOUT <ip>" cannot tell a blocked HuggingFace from a
               // dead link in our own catalogue. `targetUrl` is the hop that
               // failed, so a blocked CDN is distinguishable from a blocked
               // huggingface.co.
-              res.on('error', (err) => reject(new Error(describeDownloadError(err, targetUrl))))
+              res.on('error', (err) => settle(() => reject(new Error(describeDownloadError(err, targetUrl)))))
             })
-            req.on('error', (err) => { stopWatchdog(); reject(new Error(describeDownloadError(err, targetUrl))) })
+            req.on('error', (err) => settle(() => reject(new Error(describeDownloadError(err, targetUrl)))))
+
+            // Armed before the response, because the response callback is not
+            // guaranteed to fire at all: a server that accepts the connection
+            // and never flushes headers is exactly the hang this exists to
+            // catch, and an in-response guard would never arm for it.
+            stopWatchdog()
             watchdog = setInterval(() => {
               if (Date.now() - lastDataAt < STALL_MS) return
-              stopWatchdog()
               // Settle explicitly rather than relying on destroy() to surface
               // the error: with a response in flight it may land on `res`, on
               // `req`, or be swallowed, and an unsettled promise here is the
-              // original hang all over again. reject() after settling is a
-              // no-op, so doing both is safe.
+              // original hang all over again.
               const err = new Error(
                 `Download stalled — no data for ${Math.round(STALL_MS / 1000)}s (${targetUrl})`,
               )
-              req.destroy(err)
-              reject(err)
+              settle(() => { req.destroy(err); reject(err) })
             }, Math.max(250, Math.floor(STALL_MS / 4)))
           }
 

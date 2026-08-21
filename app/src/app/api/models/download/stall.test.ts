@@ -22,8 +22,10 @@ import { NextRequest } from 'next/server'
 
 let silent: http.Server
 let trickle: http.Server
+let redirector: http.Server
 let silentUrl: string
 let trickleUrl: string
+let redirectUrl: string
 let tmp: string
 const TRICKLE_CHUNKS = 15
 const TRICKLE_GAP_MS = 200
@@ -53,11 +55,21 @@ beforeAll(async () => {
   })
   await new Promise<void>((r) => trickle.listen(0, '127.0.0.1', r))
   trickleUrl = `http://127.0.0.1:${(trickle.address() as { port: number }).port}/slow.safetensors`
+
+  // Every HuggingFace URL 302s to a CDN, so the redirect path IS the normal
+  // path for real downloads — and it is where both shipped guards leaked.
+  redirector = http.createServer((_req, res) => {
+    res.writeHead(302, { location: trickleUrl })
+    res.end()
+  })
+  await new Promise<void>((r) => redirector.listen(0, '127.0.0.1', r))
+  redirectUrl = `http://127.0.0.1:${(redirector.address() as { port: number }).port}/redirected.safetensors`
 })
 
 afterAll(() => {
   silent.close()
   trickle.close()
+  redirector.close()
   fs.rmSync(tmp, { recursive: true, force: true })
   delete process.env.COMFYUI_MODELS_DIR
   delete process.env.RACCOON_DOWNLOAD_STALL_MS
@@ -97,6 +109,26 @@ describe('/api/models/download watchdog', () => {
     expect(body, 'a progressing download was killed as stalled').not.toMatch(/stalled/i)
     expect(body).toMatch(/"type":"done"/)
     expect(fs.statSync(path.join(tmp, 'loras', 'slow.safetensors')).size)
+      .toBe(1024 * TRICKLE_CHUNKS)
+  }, 30_000)
+
+  /**
+   * The bug that shipped TWICE, in 1.2.4 and again in 1.2.5.
+   *
+   * `doRequest` recurses on a redirect, and the abandoned request kept its
+   * armed guard. That guard watched a timestamp nothing could refresh — the
+   * redirect response was all it would ever see — so it shot the live transfer
+   * down at exactly STALL_MS. Only files slower than that window died, which is
+   * why small models were fine and every large one failed.
+   *
+   * Both earlier tests pass without a redirect in sight, which is exactly how
+   * this reached production twice.
+   */
+  it('survives a redirect into a slow transfer', async () => {
+    const body = await run(redirectUrl, 'redirected.safetensors')
+    expect(body, 'the abandoned pre-redirect request killed the download').not.toMatch(/stalled/i)
+    expect(body).toMatch(/"type":"done"/)
+    expect(fs.statSync(path.join(tmp, 'loras', 'redirected.safetensors')).size)
       .toBe(1024 * TRICKLE_CHUNKS)
   }, 30_000)
 })
