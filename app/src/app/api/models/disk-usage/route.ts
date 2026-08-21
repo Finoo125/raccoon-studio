@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
 
-const MODEL_EXT = /\.(safetensors|ckpt|pt|pth|bin|gguf)$/i
+// `.onnx` belongs here: the whole face-swap stack (inswapper, hyperswap
+// 1a/1b/1c, GPEN-BFR-1024) is ONNX, and leaving it out made ~1.9 GB of models
+// invisible to the Manage-models panel — unlistable, undeletable, and missing
+// from the reported disk total. Found on a pod where those files ship inside
+// the image, so the download route correctly reported "already exists" for
+// files this scanner then claimed were not there.
+const MODEL_EXT = /\.(safetensors|ckpt|pt|pth|bin|gguf|onnx)$/i
 
 interface FileEntry { name: string; path: string; sizeBytes: number; mtime: string }
 

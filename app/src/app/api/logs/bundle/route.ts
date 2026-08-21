@@ -3,6 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { getLogsDir } from '@/lib/system/paths'
+import { getComfyUIDir } from '@/lib/comfyui/server-state'
+import { pythonPackages } from '@/lib/logging/python-packages'
 import { comboOptions } from '@/lib/models/installed'
 import {
   buildSupportBundle,
@@ -137,6 +139,7 @@ export async function GET() {
     paths,
     comfyui,
     logs,
+    pythonPackages: pythonPackages(getComfyUIDir()),
   })
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)

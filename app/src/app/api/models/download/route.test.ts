@@ -17,8 +17,16 @@ const silentResponse = Object.assign(new EventEmitter(), {
 // Signature matters: the route calls get(url, options, callback), so a
 // two-arg mock hands the options object to cb() and the whole stream errors
 // out before the heartbeat can prove anything.
+// The returned object stands in for http.ClientRequest, so it must carry the
+// members the route actually calls on it — `setTimeout` (the stall guard) and
+// `destroy`. A bare EventEmitter here throws inside the route and kills the
+// stream before a single heartbeat is emitted, which reads as "the heartbeat
+// broke" rather than "the double is incomplete".
 const https = {
-  get: vi.fn((_url: unknown, _opts: unknown, cb: (r: unknown) => void) => { cb(silentResponse); return new EventEmitter() }),
+  get: vi.fn((_url: unknown, _opts: unknown, cb: (r: unknown) => void) => {
+    cb(silentResponse)
+    return Object.assign(new EventEmitter(), { setTimeout: vi.fn(), destroy: vi.fn() })
+  }),
 }
 
 vi.mock('https', () => ({ default: https, ...https }))

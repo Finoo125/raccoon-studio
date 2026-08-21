@@ -7,6 +7,29 @@ import { describeDownloadError } from '@/lib/models/download-error'
 
 const MODELS_DIR = process.env.COMFYUI_MODELS_DIR ?? ''
 
+/**
+ * No bytes for this long and the transfer is dead — give up so the user sees an
+ * error instead of a progress bar that never moves again.
+ *
+ * A connection that opens and then delivers nothing is not a *failure*: node's
+ * https.get has no idle timeout, so it waits forever, and this route's 15 s SSE
+ * heartbeat keeps the client looking healthy the whole time. install-linux.sh
+ * hit exactly this and got `--speed-limit 2048 --speed-time 60` in aa86077;
+ * this route is its sibling and never got the same guard.
+ *
+ * Note the installer's guard is a *rate* floor and this is a *zero-byte* one,
+ * deliberately. A pod download that looked stalled turned out to be running at
+ * 2.5 MB/s — 10-20x slower than its neighbours but very much alive — and
+ * killing that would be wrong. Only a transfer delivering literally nothing is
+ * unambiguously dead.
+ *
+ * It matters most on a hosted pod, where this route is the ONLY way in: the
+ * edge rejects request bodies over ~500 MiB, so there is no upload fallback.
+ *
+ * The env override exists so the stall can be tested in milliseconds.
+ */
+const STALL_MS = Number(process.env.RACCOON_DOWNLOAD_STALL_MS ?? 60_000)
+
 type SSEEvent =
   | { type: 'progress'; value?: number; receivedBytes: number; totalBytes: number }
   | { type: 'done'; alreadyExists?: boolean }
@@ -77,7 +100,7 @@ export async function POST(req: NextRequest) {
             if (hops > 5) { reject(new Error('Too many redirects')); return }
 
             const proto = targetUrl.startsWith('https') ? https : http
-            proto.get(targetUrl, { signal: abort.signal }, (res) => {
+            const req = proto.get(targetUrl, { signal: abort.signal }, (res) => {
               const { statusCode, headers } = res
 
               if (statusCode === 301 || statusCode === 302 || statusCode === 307 || statusCode === 308) {
@@ -127,7 +150,15 @@ export async function POST(req: NextRequest) {
               // failed, so a blocked CDN is distinguishable from a blocked
               // huggingface.co.
               res.on('error', (err) => reject(new Error(describeDownloadError(err, targetUrl))))
-            }).on('error', (err) => reject(new Error(describeDownloadError(err, targetUrl))))
+            })
+            req.on('error', (err) => reject(new Error(describeDownloadError(err, targetUrl))))
+            // Socket-inactivity, not total duration: a slow-but-moving transfer
+            // keeps resetting this, a stalled one does not.
+            req.setTimeout(STALL_MS, () => {
+              req.destroy(
+                new Error(`Download stalled — no data for ${Math.round(STALL_MS / 1000)}s (${targetUrl})`),
+              )
+            })
           }
 
           doRequest(url)

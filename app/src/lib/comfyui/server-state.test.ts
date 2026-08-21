@@ -128,10 +128,23 @@ describe('buildStartCommand', () => {
     })
   })
 
-  it('runs the script directly on POSIX (spawned with shell:true by the caller)', () => {
+  // Never `{ cmd: scriptPath }`. The script's execute bit cannot be relied on:
+  // this repo is developed on Windows (no execute bit) and publish.ps1 mirrors
+  // it with Copy-Item, so installer/start-comfyui-core.sh shipped as mode 644
+  // and `sh -c <non-executable>` exits 126 — which took out the Start button and
+  // Repair on every Linux install, RunPod included. Naming the interpreter is
+  // what makes that unregressable.
+  it('invokes the script through bash on POSIX, not by its execute bit', () => {
     expect(state.buildStartCommand('/home/me/start-comfyui.sh', 'linux')).toEqual({
-      cmd: '/home/me/start-comfyui.sh',
-      args: [],
+      cmd: 'bash',
+      args: ['/home/me/start-comfyui.sh'],
+    })
+  })
+
+  it('keeps a path containing spaces in one argument', () => {
+    expect(state.buildStartCommand('/home/my user/start-comfyui.sh', 'linux')).toEqual({
+      cmd: 'bash',
+      args: ['/home/my user/start-comfyui.sh'],
     })
   })
 })

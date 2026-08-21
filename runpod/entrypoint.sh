@@ -68,6 +68,55 @@ export DIRECTOR_PROJECTS_DIR="$WORKSPACE/director"
 # missing when that lands. Do not treat a pod as already hardened against them.
 export RACCOON_KIOSK=1
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+# DynamicVRAM OFF on a pod, unless the deployer says otherwise.
+#
+# ComfyUI's DynamicVRAM kills the whole process here the moment it stages a
+# large model — no traceback, no OOM, the log simply stops mid-line. Measured
+# 2026-08-21 on an A40 48 GB, same graph each way:
+#
+#   model                     staged     ON            OFF
+#   MiniMax H3 text encoder   14956 MB   process died  renders (1.51 MB, 410 s)
+#   Z-Image Turbo (Lumina2)   11738 MB   process died  renders (2422 KB)
+#   SDXL / Anima / Krea2      <= 4896 MB renders       renders
+#
+# So with the shipped default, ALL MiniMax H3 video and Z-Image are dead on this
+# template, and they fail in the worst possible way: the app cannot restart
+# ComfyUI afterwards, so one render bricks the pod until it is restarted.
+#
+# The cost is real and known — the legacy loader keeps a full CPU-side copy of
+# every model, which is exactly why the desktop default is ON (a 64 GB box hit
+# 100% host RAM during video). A pod is a different machine: this one has 50 GB
+# for the container and sat at ~90% (much of it reclaimable page cache) while
+# rendering H3 to completion. Losing two model families is worse than being
+# tight on RAM.
+#
+# Desktop installs are untouched: they never source this file. Not tiered in
+# reserve-vram.py either, because only this hardware has been measured — a 5090
+# renders H3 with DynamicVRAM ON. Set RACCOON_DYNAMIC_VRAM=1 in the deploy form
+# to get the old behaviour back.
+export RACCOON_DYNAMIC_VRAM="${RACCOON_DYNAMIC_VRAM:-0}"
+# Pinned memory OFF on a pod too, and this one is not covered by the RAM tier.
+#
+# ComfyUI pins up to 40% of RAM, and pinned pages are NON-RECLAIMABLE — the OS
+# can never take them back under pressure. In a container that is fatal: memory
+# climbs across renders until the cgroup kills ComfyUI, which looks exactly like
+# the DynamicVRAM crash above (log stops, no traceback, no OOM message).
+#
+# Measured 2026-08-21, same three renders (Krea2 -> H3 -> Krea2) each way on a
+# 50 GB container:
+#
+#   pinning ON   Krea2 died once the H3 + face-swap renders were resident
+#   pinning OFF  all three passed; container peaked at 98% and RECOVERED
+#                to 57%, because page cache can be reclaimed and pins cannot
+#
+# reserve-vram.py's tier does NOT cover this even after it learned to read the
+# cgroup ceiling (af2b1a0): the corrected reading is 50 GiB, which is above the
+# 33 GiB threshold, so it would keep pinning. That threshold was calibrated on
+# bare metal, where 40% pinned still leaves the box usable — here the same
+# container also holds Next, the proxy, and page cache for 240+ GB of models.
+# Rather than bend a measured desktop tier around one pod shape, a pod says so
+# for itself. RACCOON_PINNED_MEMORY=1 restores the old behaviour.
+export RACCOON_PINNED_MEMORY="${RACCOON_PINNED_MEMORY:-0}"
 
 # install-linux.sh writes app/.env.local pointing at container-local paths, and
 # in this app .env.local takes precedence over the process environment — so the

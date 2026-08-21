@@ -153,6 +153,17 @@ export interface BundleInput {
   }
   /** Log filename → full text, already read off disk. */
   logs: Record<string, string>
+  /**
+   * Python packages in ComfyUI's venv, `name==version`.
+   *
+   * Not decoration: ComfyUI's own text stack is built on `transformers`, and
+   * pinned-versions.txt pins git revisions of node packs — NOT pip packages —
+   * so a fresh install takes whatever the index served that day. A live pod hit
+   * `MistralConverter.__init__() missing 1 required positional argument:
+   * 'vocab_file'` loading Ernie's text encoder, and the one number needed to
+   * diagnose it was not recoverable from a bundle. Now it is.
+   */
+  pythonPackages?: string[]
 }
 
 function heading(title: string): string {
@@ -178,6 +189,10 @@ export function buildSupportBundle(input: BundleInput): string {
   ]
 
   out.push(heading('App'), kv(input.app))
+  if (input.pythonPackages?.length) {
+    out.push(heading(`Python packages (${input.pythonPackages.length})`))
+    out.push(input.pythonPackages.map((l) => `  ${l}`).join('\n'))
+  }
   out.push(heading('Configuration'), kv(input.paths))
 
   out.push(heading('ComfyUI'))

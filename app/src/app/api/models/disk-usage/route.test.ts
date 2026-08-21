@@ -23,6 +23,19 @@ describe('/api/models/disk-usage', () => {
     expect(loras.sizeBytes).toBe(100)
   })
 
+  // The face-swap models are all ONNX and were silently invisible here.
+  it('counts .onnx models — the whole face-swap stack is ONNX', async () => {
+    fs.mkdirSync(path.join(tmp, 'hyperswap'), { recursive: true })
+    fs.mkdirSync(path.join(tmp, 'facerestore_models'), { recursive: true })
+    fs.writeFileSync(path.join(tmp, 'hyperswap', 'hyperswap_1c_256.onnx'), Buffer.alloc(400))
+    fs.writeFileSync(path.join(tmp, 'facerestore_models', 'GPEN-BFR-1024.onnx'), Buffer.alloc(285))
+    const json = await (await GET()).json()
+    expect(json.total.count).toBe(2)
+    expect(json.total.sizeBytes).toBe(685)
+    const hs = json.subfolders.find((s: { subfolder: string }) => s.subfolder === 'hyperswap')
+    expect(hs.count).toBe(1)
+  })
+
   it('returns empty when the dir is unset', async () => {
     delete process.env.COMFYUI_MODELS_DIR
     const json = await (await GET()).json()

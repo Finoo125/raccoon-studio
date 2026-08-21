@@ -193,7 +193,7 @@ write_start_comfyui_stub() { # path
 # raccoon-start-version: $START_SCRIPT_VERSION
 # Generated stub. All logic lives in installer/start-comfyui-core.sh, which is
 # tracked so \`git pull\` updates it. Safe to delete — rebuilt on next launch.
-exec "\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)/installer/start-comfyui-core.sh"
+exec bash "\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)/installer/start-comfyui-core.sh"
 STUB
   chmod +x "$1"
 }

@@ -426,9 +426,18 @@ export function getStartScriptPath(): string | null {
  * PowerShell (.ps1) script must run through powershell.exe — `cmd /c foo.ps1`
  * opens it in Notepad via the file association rather than executing it — while
  * .bat/.cmd go through cmd.exe (and forward slashes are normalised to back-
- * slashes for cmd). POSIX runs the executable script directly (the caller spawns
- * it with `shell: true`). Shared by the start and update (restart) routes; the
+ * slashes for cmd). POSIX runs it through `bash` explicitly, and NOT via the
+ * shell: relying on the script's execute bit is what broke every Linux start
+ * path (see below), and going through a shell would also split any path
+ * containing a space. Shared by the start and update (restart) routes; the
  * platform is injectable so both branches are testable on one OS.
+ *
+ * Why not just `chmod +x` the script: this repo is developed on Windows, where
+ * the execute bit does not exist, and `scripts/publish.ps1` builds the public
+ * mirror with `Copy-Item` — so the bit is lost on every release no matter how
+ * often it is restored. `installer/start-comfyui-core.sh` shipped as mode 644
+ * in the public repo, and `sh -c <non-executable>` exits 126 "Permission
+ * denied". Invoking the interpreter by name cannot regress that way.
  */
 export function buildStartCommand(
   scriptPath: string,
@@ -440,7 +449,7 @@ export function buildStartCommand(
       ? { cmd: 'powershell.exe', args: ['-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', winPath] }
       : { cmd: 'cmd.exe', args: ['/c', winPath] }
   }
-  return { cmd: scriptPath, args: [] }
+  return { cmd: 'bash', args: [scriptPath] }
 }
 
 /**
@@ -459,7 +468,9 @@ export function comfyUISpawnOptions(platform: NodeJS.Platform = process.platform
   return {
     detached: platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: platform !== 'win32',
+    // No shell anywhere: buildStartCommand now names the interpreter, so a
+    // shell would only add a layer that mangles paths containing spaces.
+    shell: false,
     windowsHide: true,
   }
 }

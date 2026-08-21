@@ -901,14 +901,24 @@ main() {
   info "Progress is shown below. Do not close the terminal."
   if [ "$DRY_RUN" != 1 ]; then
     printf '\n'
-    "$UV" pip install --python "$VENV_DIR/bin/python" \
+    # The grep is a DISPLAY filter and must not decide whether the install
+    # worked. When everything is already satisfied uv prints "Audited N
+    # packages", which matches none of these patterns - so under `pipefail` the
+    # old `pipeline || fail` reported "PyTorch installation failed" in exactly
+    # the case where there was nothing to do. That is every Repair, every
+    # Update, and every boot of the RunPod thin template, which re-runs this
+    # installer each time. `if !` reads uv's own status instead, and the filter
+    # can no longer fail the pipeline.
+    if ! "$UV" pip install --python "$VENV_DIR/bin/python" \
       torch torchvision torchaudio \
       "${TORCH_ARGS[@]}" \
-      2>&1 | tee -a "$INSTALL_LOG" | grep --line-buffered -E 'Downloading|Installed|error|Error|warning' || {
+      2>&1 | tee -a "$INSTALL_LOG" \
+      | { grep --line-buffered -E 'Downloading|Installed|error|Error|warning' || true; }
+    then
         printf '\n'
         [ "$GPU_VENDOR" = amd ] && log_raw '[AMD] torch rocm wheels : FAILED'
         fail "PyTorch installation failed. See $INSTALL_LOG"
-      }
+    fi
     [ "$GPU_VENDOR" = amd ] && log_raw '[AMD] torch rocm wheels : OK'
     printf '\n'
   fi

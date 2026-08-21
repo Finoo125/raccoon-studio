@@ -20,9 +20,12 @@ describe('comfyUISpawnOptions', () => {
     expect(comfyUISpawnOptions('darwin').detached).toBe(true)
   })
 
-  it('only uses a shell off Windows', () => {
+  // buildStartCommand names the interpreter, so a shell would add nothing but a
+  // word-splitting step that breaks any install path containing a space.
+  it('never uses a shell, on any platform', () => {
     expect(comfyUISpawnOptions('win32').shell).toBe(false)
-    expect(comfyUISpawnOptions('linux').shell).toBe(true)
+    expect(comfyUISpawnOptions('linux').shell).toBe(false)
+    expect(comfyUISpawnOptions('darwin').shell).toBe(false)
   })
 
   it('pipes stdout/stderr so the boot log can capture them', () => {

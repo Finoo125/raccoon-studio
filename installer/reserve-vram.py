@@ -274,20 +274,65 @@ def parse_pin_override(raw):
     return float(raw) != 0
 
 
+CGROUP_PATHS = (
+    ('/sys/fs/cgroup/memory.max', 'max'),                    # cgroup v2
+    ('/sys/fs/cgroup/memory/memory.limit_in_bytes', None),   # cgroup v1
+)
+
+
+def cgroup_limit_gib(_paths=None):
+    """The container's memory ceiling in GiB, or None when not containerised.
+
+    psutil reads /proc/meminfo, which inside a container is the HOST's RAM. On a
+    RunPod pod that is a 10x overstatement: ComfyUI reported a `ram_total` of
+    540 GB while the container was capped at 50 GB. Every RAM-derived decision
+    was therefore taken against a number with no relation to the memory actually
+    available, and the pinned-memory tier below could never fire on a pod.
+
+    Handles both cgroup versions and both spellings of "no limit": v2 writes the
+    literal string `max`, v1 writes a sentinel so large it is plainly not a real
+    quantity.
+    """
+    for path, unlimited in (_paths or CGROUP_PATHS):
+        try:
+            with open(path) as fh:
+                raw = fh.read().strip()
+        except Exception:
+            continue
+        if unlimited is not None and raw == unlimited:
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        gib = value / (1024 ** 3)
+        # v1's "unlimited" is PAGE_COUNTER_MAX, ~8 EiB. Anything absurd is not a
+        # limit; treating it as one would report billions of GiB.
+        if gib > 1024 * 1024:
+            return None
+        return gib
+    return None
+
+
 def total_ram_gib():
-    """Total physical RAM, or None if it can't be determined.
+    """RAM this process may actually use, in GiB, or None if undeterminable.
 
     psutil is a hard ComfyUI dependency (its own pin budget calls it), and this
     always runs under the ComfyUI venv, so this adds nothing to install. Unlike
     total_vram_gib() it needs no torch import, so the RAM half of --tuning-flags
     costs ~50 ms rather than a second 1.5 s torch load.
+
+    The cgroup ceiling wins when it is lower: every tier here cares about what
+    this container may use, not what the physical host happens to have.
     """
     try:
         import psutil
-        return psutil.virtual_memory().total / (1024 ** 3)
+        total = psutil.virtual_memory().total / (1024 ** 3)
     except Exception as exc:
         sys.stderr.write('reserve-vram: could not probe RAM (%s)\n' % exc)
-        return None
+        return cgroup_limit_gib()
+    limit = cgroup_limit_gib()
+    return min(total, limit) if limit is not None else total
 
 
 def resolve_reserve_gb(total_gib):
@@ -444,6 +489,25 @@ def _self_check():
     # RAM tier: pinning stays on where there is RAM to spare, off where there
     # isn't. The 31.7/47.7 pair is the whole point of the threshold sitting
     # above nominal - a "32 GB" box must land on the disable side.
+    # A container's ceiling, not the host's RAM. psutil reads /proc/meminfo,
+    # which on a RunPod pod reported 540 GB against a 50 GB cgroup cap — so the
+    # pinned-memory tier could never fire there, and ComfyUI sized its pin
+    # budget off a number ten times too big.
+    import tempfile, os as _os
+    _d = tempfile.mkdtemp()
+    _v2 = _os.path.join(_d, 'memory.max')
+    _v1 = _os.path.join(_d, 'limit_in_bytes')
+    open(_v2, 'w').write(str(50 * 1024 ** 3))
+    assert abs(cgroup_limit_gib(((_v2, 'max'),)) - 50) < 0.01, 'cgroup v2 limit in GiB'
+    open(_v2, 'w').write('max')
+    assert cgroup_limit_gib(((_v2, 'max'),)) is None, 'cgroup v2 "max" means no limit'
+    # v1 spells "unlimited" as PAGE_COUNTER_MAX, ~8 EiB — not a real quantity.
+    open(_v1, 'w').write('9223372036854771712')
+    assert cgroup_limit_gib(((_v1, None),)) is None, 'v1 sentinel is not a limit'
+    open(_v1, 'w').write(str(24 * 1024 ** 3))
+    assert abs(cgroup_limit_gib(((_v1, None),)) - 24) < 0.01, 'cgroup v1 limit in GiB'
+    assert cgroup_limit_gib(((_os.path.join(_d, 'nope'), None),)) is None, 'absent = not containerised'
+
     assert pinned_memory_flags(31.7) == ['--disable-pinned-memory'], '"32 GB" box reports ~31.7 GiB'
     assert pinned_memory_flags(15.8) == ['--disable-pinned-memory'], '16 GB box, the worst case'
     assert pinned_memory_flags(47.7) == [], '"48 GB" box reports ~47.7 GiB and keeps pinning'
