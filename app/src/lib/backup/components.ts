@@ -1,3 +1,5 @@
+import fs from 'fs'
+import os from 'os'
 import path from 'path'
 
 /**
@@ -96,4 +98,46 @@ export function planComponents(paths: BackupPaths, opts: { includeModels: boolea
   }
 
   return sources
+}
+
+/**
+ * Is `dest` inside one of the folders being backed up?
+ *
+ * Shared with `createArchive`'s refusal so the two can never disagree. tar would
+ * otherwise archive the growing archive into itself, and a delete-after run
+ * would wipe the backup it just wrote.
+ */
+export function insideAnySource(dest: string, sources: BackupSource[]): BackupSource | null {
+  const norm = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p))
+  const d = norm(dest)
+  return sources.find((s) => {
+    const src = norm(s.sourceDir)
+    return d === src || d.startsWith(src + path.sep)
+  }) ?? null
+}
+
+/**
+ * Where a hosted pod puts archives it writes for itself — both the backup it is
+ * about to create and an upload being staged for restore.
+ *
+ * On a pod nobody picks a path, so the server has to, and the obvious choice is
+ * wrong: the app data dir IS a component ("Settings, prompt presets &
+ * wildcards"), so writing there makes the backup contain itself and
+ * `createArchive` rightly refuses. Hence a SIBLING of the data dir — on a pod
+ * that is the volume root, which is roomy and survives a restart.
+ *
+ * The candidate is then checked against the same rule that would reject it,
+ * rather than assumed safe, because the layout is env-driven and a future
+ * install could nest these differently. Falls back to the OS temp dir, which is
+ * never inside the studio's folders — smaller and wiped on restart, but a
+ * working backup beats a correct-looking error.
+ */
+export function stagingDir(dataDir: string, sources: BackupSource[]): string {
+  const candidates = [
+    path.join(path.dirname(dataDir), 'raccoon-backups'),
+    path.join(os.tmpdir(), 'raccoon-backups'),
+  ]
+  const safe = candidates.find((c) => !insideAnySource(c, sources)) ?? candidates[1]
+  fs.mkdirSync(safe, { recursive: true })
+  return safe
 }

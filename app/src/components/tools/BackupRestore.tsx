@@ -42,6 +42,9 @@ async function fetchJob(): Promise<BackupJob | null | undefined> {
  */
 export default function BackupRestore() {
   const kiosk = useKiosk()
+  /** Upload percent while an archive is being sent up to a pod, else null. */
+  const [uploading, setUploading] = useState<number | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const [includeModels, setIncludeModels] = useState(false)
   const [deleteAfter, setDeleteAfter] = useState(false)
   const [job, setJob] = useState<BackupJob | null>(null)
@@ -55,7 +58,9 @@ export default function BackupRestore() {
   const [restartOpen, setRestartOpen] = useState(false)
 
   const running = job?.status === 'running'
-  const busy = running || starting
+  // An upload counts as busy: it ends in a restore, and starting a second one
+  // mid-transfer would fight over the same staged file.
+  const busy = running || starting || uploading !== null
 
   // Reattach to an in-flight (or just-finished) job on mount.
   useEffect(() => {
@@ -149,21 +154,72 @@ export default function BackupRestore() {
     await startJob('/api/backup/create', { destPath: path, includeModels, deleteAfter: false })
   }
 
+  /**
+   * Send the chosen archive up to the pod, then hand its server-side path to
+   * the normal restore flow.
+   *
+   * Chunked deliberately: RunPod's edge 413s any body over ~500 MiB, before our
+   * code sees it, and a backup with gallery media clears that easily. 64 MiB
+   * keeps every request far under the ceiling and gives a usable progress
+   * readout on what can be a long upload.
+   */
+  async function uploadAndPreview(file: File) {
+    const CHUNK = 64 * 1024 * 1024
+    setUploading(0)
+    let serverPath = ''
+    try {
+      for (let offset = 0; offset < file.size; offset += CHUNK) {
+        const res = await fetch(
+          `/api/backup/upload?name=${encodeURIComponent(file.name)}&offset=${offset}`,
+          { method: 'POST', body: file.slice(offset, offset + CHUNK) },
+        )
+        const data = (await res.json()) as { path?: string; size?: number; error?: string }
+        if (!res.ok) throw new Error(data.error ?? `Upload failed (HTTP ${res.status})`)
+        serverPath = data.path ?? serverPath
+        setUploading(Math.round(((offset + CHUNK) / file.size) * 100))
+      }
+      // Size is the cheap end-to-end check that every chunk landed: a truncated
+      // upload would otherwise only surface as a confusing tar error, partway
+      // into a restore that has already started overwriting things.
+      const sizeRes = await fetch(`/api/backup/upload?name=${encodeURIComponent(file.name)}&offset=${file.size}`, {
+        method: 'POST', body: new Blob([]),
+      })
+      const sized = (await sizeRes.json()) as { size?: number; error?: string }
+      if (sized.size !== file.size) {
+        throw new Error(`Upload incomplete — ${sized.size ?? 0} of ${file.size} bytes arrived.`)
+      }
+      await inspectAndPreview(serverPath)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setUploading(null)
+    }
+  }
+
+  async function inspectAndPreview(srcPath: string) {
+    const res = await fetch('/api/backup/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ srcPath }),
+    })
+    const data = (await res.json()) as (InspectResult & { error?: string })
+    if (!res.ok) { toast.error(data.error ?? 'Could not read the backup.'); return }
+    setPreview({ ...data, srcPath })
+  }
+
   async function restore() {
+    // On a pod the "open file" dialog would open on the server, which has no
+    // desktop — the same reason "save as" could not be used for backup. The
+    // archive comes up from the user's own machine instead.
+    if (kiosk) { fileInput.current?.click(); return }
+
     const pick = await fetch('/api/backup/pick-file', { method: 'POST' })
     const { path, error } = (await pick.json()) as { path?: string | null; error?: string }
     if (error) { toast.error(error); return }
     if (!path) return
 
     // Show what the archive actually contains before touching anything.
-    const res = await fetch('/api/backup/inspect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ srcPath: path }),
-    })
-    const data = (await res.json()) as (InspectResult & { error?: string })
-    if (!res.ok) { toast.error(data.error ?? 'Could not read the backup.'); return }
-    setPreview({ ...data, srcPath: path })
+    await inspectAndPreview(path)
   }
 
   async function cancel() {
@@ -247,6 +303,23 @@ export default function BackupRestore() {
         </button>
       </div>
 
+      {/* Upload progress — its own row, because it happens BEFORE any job
+          exists and so has nothing to report through the job poll. */}
+      {uploading !== null && (
+        <div className="space-y-1.5">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[#ffa64d] to-[#f5811e] transition-[width] duration-200"
+              style={{ width: `${Math.min(uploading, 100)}%` }}
+            />
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <UploadCloud className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <span className="flex-1 truncate">Uploading backup to this pod — {Math.min(uploading, 100)}%</span>
+          </div>
+        </div>
+      )}
+
       {/* Progress */}
       {job && (
         <div className="space-y-1.5">
@@ -297,6 +370,23 @@ export default function BackupRestore() {
           restore. Backups keep running even if you close this page — come back any time to check on them.
         </p>
       </div>
+
+      {/* The pod's stand-in for the native open dialog. Hidden and driven by
+          the Restore button so the button keeps behaving identically on both. */}
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".tar"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          // Cleared so choosing the SAME file twice still fires onChange —
+          // otherwise a failed upload cannot be retried without picking
+          // something else first.
+          e.target.value = ''
+          if (f) void uploadAndPreview(f)
+        }}
+      />
 
       {/* Delete-after confirmation */}
       <ConfirmDialog

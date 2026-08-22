@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import fs from 'fs'
 import path from 'path'
 import { resolveBackupPaths, DELETABLE_COMPONENT_IDS } from '@/lib/backup/paths'
-import { planComponents } from '@/lib/backup/components'
+import { planComponents, stagingDir } from '@/lib/backup/components'
 import { startBackupJob } from '@/lib/backup/job'
 import { defaultBackupName } from '@/lib/backup/native-dialog'
 import { isKiosk } from '@/lib/system/kiosk'
-import { getDataDir } from '@/lib/system/paths'
 
 export const runtime = 'nodejs'
 
@@ -23,19 +21,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
+  // A hosted pod has no desktop for a "save as" dialog to open on, and even a
+  // working one would be picking a path on the SERVER while the person is in a
+  // browser somewhere else. So on a pod the server names the file (below, once
+  // the component list is known) and the browser fetches it afterwards from
+  // /api/backup/download. Desktop installs are unchanged: an absent destination
+  // there is still a bug worth a 400.
   let destPath = body.destPath?.trim()
-  if (!destPath) {
-    // A hosted pod has no desktop for a "save as" dialog to open on, and even a
-    // working one would be picking a path on the SERVER while the person is in
-    // a browser somewhere else. So on a pod the server names the file and the
-    // browser fetches it afterwards from /api/backup/download. Desktop installs
-    // are unchanged: an absent destination there is still a bug worth a 400.
-    if (!isKiosk()) {
-      return NextResponse.json({ error: 'No destination was chosen.' }, { status: 400 })
-    }
-    const dir = path.join(getDataDir(), 'backups')
-    fs.mkdirSync(dir, { recursive: true })
-    destPath = path.join(dir, defaultBackupName())
+  if (!destPath && !isKiosk()) {
+    return NextResponse.json({ error: 'No destination was chosen.' }, { status: 400 })
   }
   const paths = resolveBackupPaths()
   if (!paths.outputDir) {
@@ -46,9 +40,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'COMFYUI_MODELS_DIR is not configured — cannot back up models.' }, { status: 400 })
   }
 
+  const sources = planComponents(paths, { includeModels })
+
+  // Deferred to here on purpose: a safe destination depends on which components
+  // are in play, and `includeModels` is only known now.
+  if (!destPath) {
+    destPath = path.join(stagingDir(paths.dataDir, sources), defaultBackupName())
+  }
+
   const job = startBackupJob({
     destPath,
-    sources: planComponents(paths, { includeModels }),
+    sources,
     includesModels: includeModels,
     deleteAfter: !!body.deleteAfter,
     deletableIds: DELETABLE_COMPONENT_IDS,
