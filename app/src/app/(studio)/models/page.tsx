@@ -17,6 +17,9 @@ import { MINIMAX_H3_ASSETS } from '@/lib/models/minimax-h3-assets'
 import { comboOptions } from '@/lib/models/installed'
 import { restartComfyUI } from '@/lib/comfyui/restart'
 import { createTransferTracker } from '@/lib/models/transfer-tracker'
+// Type-only: lib/models/transfers.ts is server code (fs, https) and this import
+// is erased at build, so none of it reaches the browser bundle.
+import type { Transfer } from '@/lib/models/transfers'
 import { KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA, KREA2_KROMA_LORA } from '@/lib/workflows/krea2'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -669,11 +672,20 @@ export default function ModelsPage() {
     void checkReference()
   }, [])
 
-  // In-flight downloads by state key; aborting one cancels its fetch, which the
-  // server sees as a stream teardown and answers by killing the upstream
-  // request and deleting the partial .tmp file.
-  const aborters = useRef(new Map<string, AbortController>())
-  const cancelDownload = (key: string) => aborters.current.get(key)?.abort()
+  // Downloads run on the server now, so the page cannot cancel one by walking
+  // away from it — cancelling is an explicit request. `key` here is the page's
+  // own `preset::file` key; the server keys by the file's real location, which
+  // is what the second half reconstructs.
+  const cancelDownload = (key: string) => {
+    const name = key.split('::').pop()!
+    const t = serverTransfers.current.find((x) => x.name === name && x.status === 'running')
+    if (!t) return
+    void fetch('/api/models/download/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: t.key }),
+    })
+  }
 
   // New model files only reach ComfyUI's pickers when it restarts. Catalogue
   // downloads and Patreon imports both register with one tracker, so a bulk
@@ -681,68 +693,123 @@ export default function ModelsPage() {
   const [restartOpen, setRestartOpen] = useState(false)
   const transfers = useRef(createTransferTracker(() => setRestartOpen(true))).current
 
+  /** Last poll result, so Cancel can turn a page key into a server key. */
+  const serverTransfers = useRef<Transfer[]>([])
+  /** Server keys this page started and has not yet seen settle. Only these get
+   *  a toast and a restart-prompt tick — a revisit must not re-announce a
+   *  download that finished while the page was closed. */
+  const watched = useRef(new Set<string>())
+
+  /**
+   * Fold the server's view of every transfer into the page's per-file state.
+   *
+   * Every state key ends in `::<filename>`, across all the catalogues on this
+   * page, and a transfer knows its filename — so one suffix match covers
+   * presets, LTX, H3 and the detailer without a second mapping to keep in step
+   * with them. Two presets that share a file both light up, which is correct:
+   * it is one file and one download.
+   */
+  const applyTransfers = useCallback((incoming: Transfer[]) => {
+    serverTransfers.current = incoming
+    if (incoming.length) {
+      setStates((s) => {
+        const next = { ...s }
+        for (const t of incoming) {
+          const status: DownloadState['status'] =
+            t.status === 'running' ? 'downloading'
+            : t.status === 'done' ? 'done'
+            : t.status === 'cancelled' ? 'missing'
+            : 'error'
+          for (const key of Object.keys(next)) {
+            if (!key.endsWith(`::${t.name}`)) continue
+            next[key] = {
+              ...next[key],
+              status,
+              progress: t.status === 'done' ? 100 : t.value,
+              received: t.receivedBytes,
+              total: t.totalBytes,
+              error: t.status === 'error' ? t.error : undefined,
+            }
+          }
+        }
+        return next
+      })
+    }
+
+    for (const t of incoming) {
+      if (t.status === 'running' || !watched.current.has(t.key)) continue
+      watched.current.delete(t.key)
+      if (t.status === 'done') toast.success(`${t.name} downloaded`)
+      else if (t.status === 'cancelled') toast.info(`Cancelled ${t.name}`)
+      else toast.error(`Download failed: ${t.error ?? 'Unknown error'}`)
+      // Only a file that actually landed makes ComfyUI's pickers stale.
+      transfers.end(t.status === 'done' && !t.alreadyExists)
+    }
+  }, [transfers])
+
+  /**
+   * Poll for transfer state. This is what makes coming back to the page show a
+   * download in progress rather than an idle list — and it keeps working when
+   * the download was started from a different tab entirely.
+   */
+  useEffect(() => {
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const loop = async () => {
+      let running = false
+      try {
+        const r = await fetch('/api/models/download', { cache: 'no-store' })
+        const { transfers: list } = (await r.json()) as { transfers: Transfer[] }
+        if (stopped) return
+        applyTransfers(list)
+        running = list.some((t) => t.status === 'running')
+      } catch { /* transient — try again on the next tick */ }
+      if (stopped) return
+      // Idle polling stays slow but does not stop: a download started elsewhere
+      // should still show up here.
+      timer = setTimeout(() => void loop(), running ? 1_000 : 5_000)
+    }
+    void loop()
+    return () => { stopped = true; if (timer) clearTimeout(timer) }
+  }, [applyTransfers])
+
+  /**
+   * Ask the server to start a download, then stop caring about this request.
+   *
+   * The old version held the connection for the whole transfer and read SSE off
+   * it, which quietly made the browser the owner: leaving the page aborted the
+   * fetch, and the server answered by deleting the partial file. Now the POST
+   * returns as soon as the job is registered and the poll below reports it, so
+   * a download outlives the page that started it.
+   */
   const handleDownload = async (preset: PresetDefinition, file: ModelFile) => {
     const key = `${preset.id}::${file.name}`
-    const ctrl = new AbortController()
-    aborters.current.set(key, ctrl)
-    transfers.begin()
-    let added = false
     patchState(key, { status: 'downloading', progress: 0, received: 0, total: 0 })
-    toast.info(`Downloading ${file.name}…`)
     try {
       const res = await fetch('/api/models/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: file.url, path: file.path, name: file.name }),
-        signal: ctrl.signal,
       })
-      if (!res.ok) throw new Error(await res.text())
-      if (!res.body) throw new Error('No response stream')
+      const data = (await res.json()) as { transfer?: Transfer; error?: string }
+      if (!res.ok || !data.transfer) throw new Error(data.error ?? `HTTP ${res.status}`)
 
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-      for (;;) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const ev = JSON.parse(line.slice(6)) as {
-              type: string; value?: number; receivedBytes?: number; totalBytes?: number
-              message?: string; alreadyExists?: boolean
-            }
-            if (ev.type === 'progress') {
-              patchState(key, {
-                progress: ev.value ?? 0,
-                received: ev.receivedBytes,
-                total: ev.totalBytes,
-              })
-            } else if (ev.type === 'done') {
-              patchState(key, { status: 'done', progress: 100 })
-              toast.success(`${file.name} downloaded`)
-              // A file that was already on disk is one ComfyUI has seen before.
-              if (!ev.alreadyExists) added = true
-            } else if (ev.type === 'error') {
-              throw new Error(ev.message ?? 'Unknown error')
-            }
-          } catch (e) { if (e instanceof SyntaxError) continue; throw e }
-        }
+      if (data.transfer.status === 'done') {
+        // Already on disk — nothing was fetched, so ComfyUI has seen it and the
+        // restart prompt must not be armed for it.
+        patchState(key, { status: 'done', progress: 100 })
+        return
       }
+      // Settlement, its toast and the restart prompt are all the poll's job now,
+      // because they have to happen even if this page is long gone by then.
+      if (!watched.current.has(data.transfer.key)) {
+        watched.current.add(data.transfer.key)
+        transfers.begin()
+      }
+      toast.info(`Downloading ${file.name}…`)
     } catch (e) {
-      if (ctrl.signal.aborted) {
-        patchState(key, { status: 'missing', progress: 0 })
-        toast.info(`Cancelled ${file.name}`)
-      } else {
-        patchState(key, { status: 'error', error: String(e) })
-        toast.error(`Download failed: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    } finally {
-      aborters.current.delete(key)
-      transfers.end(added)
+      patchState(key, { status: 'error', error: String(e) })
+      toast.error(`Download failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
