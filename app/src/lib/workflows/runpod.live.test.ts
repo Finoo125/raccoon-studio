@@ -57,12 +57,26 @@ const api = (path: string, init: RequestInit = {}) =>
  */
 const SEED = Number(process.env.LIVE_SEED ?? Date.now() % 9_000_000_000)
 
+/**
+ * A portrait, deliberately: these renders are also the source images for the
+ * face-swap and face-model tests, and ReActor needs an actual face. A raccoon
+ * prompt made the face-model build report SUCCESS while writing nothing, which
+ * reads as a broken builder rather than as unusable input.
+ *
+ * `upscale` and `detailer` are OFF, and they default ON when absent. This suite
+ * asks one question — does the family render through the proxy — and the extra
+ * passes are separate features that triple the VRAM. Left on, Z-Image OOMs at
+ * 41 GB of a 44.4 GB budget on a 48 GB card once DynamicVRAM is disabled, so the
+ * family would look broken when only the post-chain is too heavy.
+ */
 const params = (): GenerationParams => ({
-  prompt: 'a raccoon wearing headphones in a recording studio, cinematic lighting',
+  prompt: 'close-up portrait photograph of a woman, natural skin texture, 50mm, soft window light',
   negativePrompt: 'blurry, watermark',
   width: 768,
   height: 768,
   seed: SEED,
+  upscale: false,
+  detailer: false,
 })
 
 describe.skipIf(!LIVE)('RunPod pod — image families', () => {
@@ -97,7 +111,13 @@ describe.skipIf(!LIVE)('RunPod pod — image families', () => {
             // ctx.skip(), never `return`: a returned test is reported as a
             // PASS, so an absent model would look exactly like a good render —
             // the failure mode this whole file exists to rule out.
-            ctx.skip(`weights absent: ${wf.baseModel}`)
+            //
+            // Quote ComfyUI's own message rather than naming wf.baseModel: a
+            // family needs a text encoder and VAE too, so the base model is
+            // usually NOT the missing one, and guessing sent a real
+            // investigation after a file that was present all along.
+            const missing = /Value not in list: (\w+): '([^']+)'/.exec(text)
+            ctx.skip(`ComfyUI rejected the graph — ${missing ? `${missing[1]}='${missing[2]}' not installed` : text.slice(0, 300)}`)
             return
           }
           throw new Error(`${wf.id}: submit failed ${sub.status}: ${text.slice(0, 500)}`)

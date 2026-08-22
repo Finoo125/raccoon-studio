@@ -68,33 +68,46 @@ export DIRECTOR_PROJECTS_DIR="$WORKSPACE/director"
 # missing when that lands. Do not treat a pod as already hardened against them.
 export RACCOON_KIOSK=1
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-# DynamicVRAM OFF on a pod, unless the deployer says otherwise.
+# DynamicVRAM ON by default again (2026-08-22) — except on the one GPU measured
+# to die with it.
 #
-# ComfyUI's DynamicVRAM kills the whole process here the moment it stages a
-# large model — no traceback, no OOM, the log simply stops mid-line. Measured
-# 2026-08-21 on an A40 48 GB, same graph each way:
+# It was blanket-OFF here from 1.2.6, on the strength of a single A40 pod where
+# ComfyUI died the moment DynamicVRAM staged a large model — no traceback, no
+# OOM, the log simply stopping mid-line. Same graph each way, 2026-08-21:
 #
 #   model                     staged     ON            OFF
 #   MiniMax H3 text encoder   14956 MB   process died  renders (1.51 MB, 410 s)
 #   Z-Image Turbo (Lumina2)   11738 MB   process died  renders (2422 KB)
 #   SDXL / Anima / Krea2      <= 4896 MB renders       renders
 #
-# So with the shipped default, ALL MiniMax H3 video and Z-Image are dead on this
-# template, and they fail in the worst possible way: the app cannot restart
-# ComfyUI afterwards, so one render bricks the pod until it is restarted.
+# That generalised one machine to every pod, and it does not hold. Re-tested
+# 2026-08-22 on an RTX 4090 23.5 GB, Secure Cloud US-TX-3, DynamicVRAM verified
+# ON by reading system_stats.argv rather than trusting the env: Krea2 Turbo,
+# Z-Image Turbo and MiniMax H3 all rendered CLEAN — including the exact two that
+# killed the A40. Channel spread 28.5 / 30.5 (corruption band is 90-113), H3 a
+# 4.458 s clip with stereo audio. Pinned memory was ruled out as the hidden
+# variable in the same session: flipping it back ON via podEditJob and re-running
+# both killers still rendered clean, so the crash is absent on a 4090 in BOTH
+# pinning states. Harness: app/src/lib/workflows/runpod-dynvram.live.test.ts.
 #
-# The cost is real and known — the legacy loader keeps a full CPU-side copy of
-# every model, which is exactly why the desktop default is ON (a 64 GB box hit
-# 100% host RAM during video). A pod is a different machine: this one has 50 GB
-# for the container and sat at ~90% (much of it reclaimable page cache) while
-# rendering H3 to completion. Losing two model families is worse than being
-# tight on RAM.
+# So the fault is the A40 (or its host, or Ampere) — not "pods". Turning it off
+# for everyone costs real money: the legacy loader keeps a full CPU-side copy of
+# every model, which is why the desktop default is ON, and with it off Z-Image
+# plus upscale plus detailer OOMs at 41 GB of a 44.4 GB budget on a 48 GB card.
 #
-# Desktop installs are untouched: they never source this file. Not tiered in
-# reserve-vram.py either, because only this hardware has been measured — a 5090
-# renders H3 with DynamicVRAM ON. Set RACCOON_DYNAMIC_VRAM=1 in the deploy form
-# to get the old behaviour back.
-export RACCOON_DYNAMIC_VRAM="${RACCOON_DYNAMIC_VRAM:-0}"
+# The A40 carve-out stays because that crash was a clean A/B and the A40 is the
+# CHEAPEST secure GPU on offer ($0.44/hr), so users will land on it. It is a
+# blocklist of exactly what has been measured to fail, not a guess about
+# generations — remove the case arm once an A40 renders H3 with this on.
+# RACCOON_DYNAMIC_VRAM in the deploy form still overrides in both directions.
+# Anchored deliberately: a bare *A40* also matches "NVIDIA RTX A4000", which is
+# a different card that has never been measured. Match A40 only at end of
+# string, or followed by a space or hyphen (vGPU/MIG profiles read "A40-8Q").
+case "$(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)" in
+  *A40|*"A40 "*|*A40-*) RS_DYNVRAM_DEFAULT=0 ;;
+  *)                    RS_DYNVRAM_DEFAULT=1 ;;
+esac
+export RACCOON_DYNAMIC_VRAM="${RACCOON_DYNAMIC_VRAM:-$RS_DYNVRAM_DEFAULT}"
 # Pinned memory OFF on a pod too, and this one is not covered by the RAM tier.
 #
 # ComfyUI pins up to 40% of RAM, and pinned pages are NON-RECLAIMABLE — the OS
