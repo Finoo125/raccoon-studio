@@ -8,6 +8,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import { useKiosk } from '@/app/providers'
 import { restartComfyUI } from '@/lib/comfyui/restart'
 import type { BackupJob } from '@/lib/backup/job'
 
@@ -40,6 +41,7 @@ async function fetchJob(): Promise<BackupJob | null | undefined> {
  * across tab closes and reloads.
  */
 export default function BackupRestore() {
+  const kiosk = useKiosk()
   const [includeModels, setIncludeModels] = useState(false)
   const [deleteAfter, setDeleteAfter] = useState(false)
   const [job, setJob] = useState<BackupJob | null>(null)
@@ -120,6 +122,20 @@ export default function BackupRestore() {
   }
 
   async function backup() {
+    // On a hosted pod there is no desktop for the native dialog to open on, and
+    // it would be choosing a path on the server anyway — the person is in a
+    // browser somewhere else entirely. Asking produced "No native file dialog
+    // found. Install zenity or kdialog.", which reads as a missing package when
+    // the real answer is that the question does not apply. So: let the server
+    // name the file, and download it when the job finishes.
+    if (kiosk) {
+      // '' rather than a path: the confirm dialog opens on `!== null`, and the
+      // destination genuinely is not known yet.
+      if (deleteAfter) { setConfirmDest(''); return }
+      await startJob('/api/backup/create', { includeModels, deleteAfter: false })
+      return
+    }
+
     // Choose the destination with a native "save as" dialog.
     const pick = await fetch('/api/backup/pick-save', { method: 'POST' })
     const { path, error } = (await pick.json()) as { path?: string | null; error?: string }
@@ -159,6 +175,11 @@ export default function BackupRestore() {
   const statusText = !job ? '' : job.status === 'running'
     ? phaseLabel(job.phase, job.label) +
       (job.filesTotal ? ` — file ${(job.filesDone ?? 0).toLocaleString()} / ${job.filesTotal.toLocaleString()}` : '')
+    // A pod's path is on the server, so quoting it tells the user nothing about
+    // where their backup *is* — it is still in the container. Point at the
+    // download instead, and say the archive is safe on the volume meanwhile.
+    : job.status === 'done' && job.kind === 'backup' && kiosk
+      ? 'Backup ready — saved on this pod’s volume. Download it to keep a copy.'
     : job.status === 'done' && job.kind === 'backup' ? `Saved to ${job.destPath}`
     : job.status === 'done' ? 'Restore complete. Restart the app if pages look stale.'
     : job.status === 'cancelled' ? 'Backup cancelled.'
@@ -248,6 +269,18 @@ export default function BackupRestore() {
                 Cancel
               </button>
             )}
+            {/* A plain link, not a fetch: the browser streams it straight to
+                disk with a progress bar of its own, where reading a multi-GB
+                archive into JS first would blow the tab's memory. */}
+            {kiosk && job.status === 'done' && job.kind === 'backup' && (
+              <a
+                href="/api/backup/download"
+                className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-primary hover:bg-primary/10"
+              >
+                <DownloadCloud className="h-3.5 w-3.5" />
+                Download
+              </a>
+            )}
           </div>
         </div>
       )}
@@ -278,7 +311,14 @@ export default function BackupRestore() {
         destructive
         onConfirm={() => {
           const dest = confirmDest
-          if (dest) void startJob('/api/backup/create', { destPath: dest, includeModels, deleteAfter: true })
+          // `!== null`, not truthiness: on a pod the destination is '' because
+          // the server picks it, and a truthy check would silently do nothing —
+          // the worst outcome here, since the user asked to delete originals.
+          if (dest !== null) {
+            void startJob('/api/backup/create', {
+              destPath: dest || undefined, includeModels, deleteAfter: true,
+            })
+          }
         }}
       />
 

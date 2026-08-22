@@ -83,13 +83,23 @@ describe('entitlement service', () => {
   })
 
   it('a key listing a held-back add-on does not unlock it', async () => {
-    // The whole point of the release gate: an older key that still lists
-    // photo-editor installs fine and grants only what has shipped.
+    // The whole point of the release gate: an older key that still lists an
+    // unreleased add-on installs fine and grants only what has shipped.
+    const { installKey, isFeatureUnlocked } = await load()
+    const r = await installKey(key(['prompt-builder', 'ltx-director']))
+    expect(r.ok && r.features).toEqual(['ltx-director'])
+    expect(await isFeatureUnlocked('prompt-builder')).toBe(false)
+    expect(await isFeatureUnlocked('ltx-director')).toBe(true)
+  })
+
+  // The other half of that gate, and the reason releasing an add-on needs no
+  // re-mint: the same old key starts granting photo-editor the moment its
+  // marker is gone.
+  it('a key minted before Photo Editing shipped now unlocks it', async () => {
     const { installKey, isFeatureUnlocked } = await load()
     const r = await installKey(key(['photo-editor', 'ltx-director']))
-    expect(r.ok && r.features).toEqual(['ltx-director'])
-    expect(await isFeatureUnlocked('photo-editor')).toBe(false)
-    expect(await isFeatureUnlocked('ltx-director')).toBe(true)
+    expect(r.ok && r.features).toEqual(['photo-editor', 'ltx-director'])
+    expect(await isFeatureUnlocked('photo-editor')).toBe(true)
   })
 })
 
@@ -108,8 +118,8 @@ describe('assertEntitled', () => {
     process.env.RACCOON_ENTITLEMENTS_FILE = path.join(dir, 'h.json')
     const { installKey } = await load()
     const { assertEntitled } = await import('./guard')
-    await installKey(key(['photo-editor', 'movie-maker', 'ltx-director']))
-    expect((await assertEntitled('photo-editor'))?.status).toBe(403)
+    await installKey(key(['prompt-builder', 'movie-maker', 'ltx-director']))
+    expect((await assertEntitled('prompt-builder'))?.status).toBe(403)
     expect((await assertEntitled('movie-maker'))?.status).toBe(403)
   })
 })

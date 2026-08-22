@@ -32,8 +32,11 @@ describe('verifyKey', () => {
   it('drops add-ons this build has not released, keeping the rest', () => {
     // Keys minted before an add-on was held back still list it. The signature
     // is genuine, so the key is accepted — but the held-back grant is not.
+    // The held-back example is prompt-builder/movie-maker, NOT photo-editor:
+    // photo-editor shipped 2026-08-22, and reusing it here would have quietly
+    // turned this into a test that the filter does nothing.
     const token = signAddonKey(
-      { ...base, feat: ['photo-editor', 'movie-maker', 'ltx-director'] },
+      { ...base, feat: ['prompt-builder', 'movie-maker', 'ltx-director'] },
       kp.privateKey,
     )
     const r = verifyKey(token, kp.publicKey)
@@ -42,7 +45,7 @@ describe('verifyKey', () => {
   })
 
   it('a key granting only held-back add-ons verifies but unlocks nothing', () => {
-    const token = signAddonKey({ ...base, feat: ['photo-editor'] }, kp.privateKey)
+    const token = signAddonKey({ ...base, feat: ['prompt-builder'] }, kp.privateKey)
     const r = verifyKey(token, kp.publicKey)
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.features).toEqual([])
@@ -53,7 +56,7 @@ describe('verifyKey', () => {
     const r = verifyKey(token, kp.publicKey)
     // Never every add-on in the registry: a wildcard key must not hand out
     // add-ons that are built but deliberately not part of this release.
-    expect(r.ok && r.features.sort()).toEqual(['ltx-director'])
+    expect(r.ok && r.features.sort()).toEqual(['ltx-director', 'photo-editor'])
   })
 
   it('rejects a tampered payload', () => {

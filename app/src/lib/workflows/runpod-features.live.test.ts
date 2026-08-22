@@ -168,13 +168,15 @@ describe.skipIf(!LIVE)('RunPod pod — application features', () => {
   }, 3 * 60_000)
 
   /**
-   * Release-gated, not broken. `lib/features/registry.ts` marks photo-editor
-   * `release: 'soon'`, so 403 is CORRECT here — a 200 would mean a held-back
-   * add-on had escaped into a public release.
+   * Entitlement-gated, not broken. Photo Editing went on sale 2026-08-22, so
+   * this is no longer a release hold-back — but a pod with no unlock key
+   * installed must still get 403. A 200 here would mean a paid add-on is free
+   * to anyone who deploys the template, which is the more expensive bug of the
+   * two and the reason this check survives the add-on shipping.
    */
-  it('photo editor is correctly held back from this release', async () => {
+  it('photo editor still needs an unlock key', async () => {
     const r = await api('/api/photo-edit/save', json({ filename: 'x.png', dataUrl: 'data:,' }))
-    expect(r.status, 'a held-back add-on must not be reachable').toBe(403)
+    expect(r.status, 'a paid add-on must not be reachable without a key').toBe(403)
     console.log('[runpod] OK photo editor correctly gated')
   }, 60_000)
 

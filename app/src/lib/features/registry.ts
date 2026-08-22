@@ -58,7 +58,7 @@ export const FEATURES: FeatureDef[] = [
   { id: 'generate-videos', label: 'Generate Video', href: '/generate-videos', icon: 'Clapperboard',      kind: 'core',  group: 'create' },
   { id: 'gallery',         label: 'Gallery',        href: '/gallery',         icon: 'Images',            kind: 'core',  group: 'create' },
   { id: 'models',          label: 'Models',         href: '/models',          icon: 'Package',           kind: 'core',  group: 'create' },
-  { id: 'photo-editor',    label: 'Photo Editing',  href: '/photo-editing',   icon: 'SlidersHorizontal', kind: 'addon', group: 'studio', release: 'soon' },
+  { id: 'photo-editor',    label: 'Photo Editing',  href: '/photo-editing',   icon: 'SlidersHorizontal', kind: 'addon', group: 'studio' },
   { id: 'prompt-builder',  label: 'Prompt Builder', href: '/prompt-builder',  icon: 'PencilRuler',       kind: 'addon', group: 'studio', release: 'unlisted' },
   { id: 'movie-maker',     label: 'Movie Maker',    href: '/movie',           icon: 'Film',              kind: 'addon', group: 'studio', requires: { models: [] }, release: 'unlisted' },
   // A mode inside Generate Video, not a page — hence navHidden. `href` still

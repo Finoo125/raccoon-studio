@@ -91,17 +91,21 @@ describe('feature registry', () => {
 })
 
 describe('release gating', () => {
-  it('only LTX 2.3 Director is on sale in this release', () => {
-    expect(sellableAddonIds()).toEqual(['ltx-director'])
+  it('Photo Editing and LTX 2.3 Director are on sale', () => {
+    expect(sellableAddonIds()).toEqual(['photo-editor', 'ltx-director'])
   })
 
   it('the Add-ons page lists Photo Editing then LTX 2.3 Director, and nothing else', () => {
     expect(listedAddons().map((f) => f.id)).toEqual(['photo-editor', 'ltx-director'])
   })
 
-  it("Photo Editing is listed as 'soon' — visible, but no key unlocks it", () => {
-    expect(listedAddons().find((f) => f.id === 'photo-editor')!.release).toBe('soon')
-    expect(sellableAddonIds()).not.toContain('photo-editor')
+  // Released 2026-08-22. Keys minted while it was held back listed photo-editor
+  // all along and were filtered down to nothing; removing the marker is what
+  // makes them grant it, with no re-mint. That is the property worth pinning:
+  // a regression here silently un-sells an add-on people have already paid for.
+  it('Photo Editing carries no release marker, so a key unlocks it', () => {
+    expect(listedAddons().find((f) => f.id === 'photo-editor')!.release).toBeUndefined()
+    expect(sellableAddonIds()).toContain('photo-editor')
   })
 
   it('held-back add-ons keep gating their own routes and APIs', () => {
