@@ -11,7 +11,7 @@ AI-powered creative studio built on ComfyUI.
 3. Paste this **one command** and press Enter:
 
 ```bat
-powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1 | iex"
+curl.exe -fsSL -o bootstrap.ps1 https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1 && powershell -ExecutionPolicy Bypass -NoProfile -File bootstrap.ps1
 ```
 
 That installs Git (if needed), clones the repo into a `raccoon-studio` subfolder,
@@ -23,7 +23,7 @@ inside that subfolder (or the Desktop shortcut).
 > instead:
 >
 > ```bat
-> powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1))) -Gpu amd"
+> curl.exe -fsSL -o bootstrap.ps1 https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1 && powershell -ExecutionPolicy Bypass -NoProfile -File bootstrap.ps1 -Gpu amd
 > ```
 
 > Already have the repo cloned? Just run `powershell -ExecutionPolicy Bypass -File bootstrap.ps1`

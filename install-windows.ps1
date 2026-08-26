@@ -491,15 +491,22 @@ function Install-NodeLtsDirect {
     Write-Ok ('Node.js {0} installed' -f $rel.version)
 }
 
-# uv without winget: Astral's official standalone installer. Run in a child
-# PowerShell — the script calls exit on error, which would kill this installer.
+# uv without winget: Astral's official standalone installer. Saved to a file
+# rather than piped into iex — Defender's ML scores a download-cradle command
+# line as Trojan:Win32/Commando.A!ml and kills the process before it runs, so
+# there is no output at all, just exit 5 and a bare "Access is denied". Run in
+# a child PowerShell — the script calls exit on error, which would kill this
+# installer.
 function Install-UvDirect {
     Add-Log '[CMD] astral-sh uv standalone installer'
-    & powershell -NoProfile -ExecutionPolicy Bypass -Command `
-        'irm https://astral.sh/uv/install.ps1 | iex' 2>&1 |
+    $uvPs1 = Join-Path $env:TEMP 'uv-install.ps1'
+    Save-WebFile 'https://astral.sh/uv/install.ps1' $uvPs1 'uv installer'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $uvPs1 2>&1 |
         Add-Content -Path $LogFile -Encoding UTF8
-    Add-Log "[EXIT] $LASTEXITCODE"
-    if ($LASTEXITCODE -ne 0) { throw "the uv installer failed (exit $LASTEXITCODE)" }
+    $code = $LASTEXITCODE
+    Add-Log "[EXIT] $code"
+    Remove-Item $uvPs1 -Force -ErrorAction SilentlyContinue
+    if ($code -ne 0) { throw "the uv installer failed (exit $code)" }
     Write-Ok 'uv installed'
 }
 
@@ -1336,7 +1343,9 @@ else {
     $uvExe = Get-ExePath 'uv'
     if (-not $uvExe) {
         Write-Fail ('uv could not be installed, by winget or directly. Install it with: ' +
-                    'irm https://astral.sh/uv/install.ps1 | iex   then run this installer again.')
+                    'curl.exe -fsSL -o uv-install.ps1 https://astral.sh/uv/install.ps1 && ' +
+                    'powershell -ExecutionPolicy Bypass -File uv-install.ps1   then run this ' +
+                    'installer again.')
     }
 }
 # uv abandons a stalled response after 30s and retries 3 times, and one stalled
