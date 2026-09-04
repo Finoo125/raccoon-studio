@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input'
 import LoraSelector from './LoraSelector'
 import EnhanceSettings from './EnhanceSettings'
 import PromptReview from './PromptReview'
+import { useImagePicker } from './PickImageDialog'
 import { downscaleToB64AndDims } from '@/lib/generation/image-b64'
-import { uploadImageBlob } from '@/lib/generation/upload'
+import { uploadImageBlob, inputViewUrl } from '@/lib/generation/upload'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
 import { useVideoForm } from './video-form-context'
 import { videoWorkflows, isLtxWorkflow, supportsSeedHunt } from '@/lib/workflows/video-index'
@@ -17,9 +18,15 @@ import {
   H3_RIFE_FPS,
   H3_REF_BUDGET,
   H3_REF_MAX,
+  H3_MIN_DURATION_S,
+  H3_MAX_DURATION_S,
+  h3ClampDuration,
+  h3DeliveredSeconds,
   h3RefCount,
   h3TurboTier,
+  h3UsesEros,
   compactRefs,
+  H3_EROS,
   type H3TurboTier,
 } from '@/lib/workflows/minimax-h3'
 import { useAddonLock, LTX_DIRECTOR_ADDON } from '@/lib/addons/useAddonLock'
@@ -60,6 +67,30 @@ const H3_SPEED_TIERS: { id: false | H3TurboTier; label: string; hint: string; do
     label: 'Fast',
     hint: 'lightx2v 8-step distillation — roughly 2× faster than Full and close enough in quality to keep. Start here if Full is too slow; drop to Draft only while you are still hunting for a prompt.',
     download: 'Adds the lightx2v 8-step Turbo LoRA (2 GB)',
+  },
+]
+
+/**
+ * Which H3 checkpoint renders the clip. Both run the same graph through the same
+ * builder, so this is a second row under Model rather than a third Model button
+ * — every H3 mode, doctrine and feature still applies either way.
+ *
+ * `download` is the copy shown when the file is not on disk; like the Speed
+ * tiers, an uninstalled option stays visible and disabled, since someone who
+ * cannot see it cannot decide they want it.
+ */
+const H3_CHECKPOINTS: { id: 'base' | 'eros'; label: string; hint: string; download: string }[] = [
+  {
+    id: 'base',
+    label: 'Standard',
+    hint: 'MiniMax H3 as it ships — 20 steps by default, with the Speed row below to trade quality for time.',
+    download: '',
+  },
+  {
+    id: 'eros',
+    label: '10Eros Max',
+    hint: `An uncensored community finetune (TenStrip, beta4) with adult character grafted in from Wan 2.2, Krea 2 and LTX 2.3. Its own Turbo is already merged into the weights, so it always renders at ${H3_EROS.steps} steps and the Speed row does not apply. Not available in Reference mode.`,
+    download: 'Adds the 10Eros Max checkpoint (21 GB)',
   },
 ]
 
@@ -171,7 +202,7 @@ export function ModeSwitch({ compact = false }: { compact?: boolean }) {
  * prompt are preserved; everything else is the new family's own default.
  */
 export function ModelSwitch() {
-  const { params, setParams } = useVideoForm()
+  const { params, set, setParams, workflow, erosReady } = useVideoForm()
   const choices = MODEL_CHOICES
   if (params.mode === 'director' || choices.length < 2) return null
   const active = choices.find((w) => w.id === params.videoModel) ?? choices[0]
@@ -195,6 +226,40 @@ export function ModelSwitch() {
         ))}
       </div>
       <p className="text-[11px] text-muted-foreground">{active.description}</p>
+
+      {/* Checkpoint (H3 only). Hidden in reference mode, which loads a
+          structurally different checkpoint the finetune has no build of — the
+          builder ignores the flag there anyway, and a control that silently
+          does nothing is worse than no control. */}
+      {!isLtxWorkflow(workflow.id) && params.mode !== 'ref2v' && (
+        <div className="space-y-2 pt-1">
+          <SectionLabel>Checkpoint</SectionLabel>
+          <div className="grid grid-cols-2 gap-2">
+            {H3_CHECKPOINTS.map((c) => {
+              const ready = c.id === 'base' || erosReady
+              return (
+                <Button
+                  key={c.id}
+                  variant={(params.h3Checkpoint ?? 'base') === c.id ? 'default' : 'outline'}
+                  className={`h-9 text-sm${ready ? '' : ' opacity-60'}`}
+                  title={ready ? undefined : `${c.download} — install it on the Models page`}
+                  onClick={() => { if (ready) set('h3Checkpoint', c.id) }}
+                >
+                  {c.label}
+                </Button>
+              )
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {(() => {
+              const c = H3_CHECKPOINTS.find((x) => x.id === (params.h3Checkpoint ?? 'base'))!
+              return c.id !== 'base' && !erosReady
+                ? `Not installed. ${c.download} — add it on the Models page to enable this.`
+                : c.hint
+            })()}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -290,6 +355,7 @@ export function BriefPanel() {
               <SectionLabel>End frame — optional</SectionLabel>
               <SourceImageInput
                 value={params.endImage}
+                previewUrl={params.endImage ? inputViewUrl(params.endImage) : undefined}
                 onChange={(filename) => set('endImage', filename)}
                 onB64={setEndImageB64}
                 onDims={(d) => setParams((p) => ({ ...p, endImageWidth: d?.w, endImageHeight: d?.h }))}
@@ -346,6 +412,9 @@ export function BriefPanel() {
  */
 export function RenderPanel() {
   const { params, set, motionReady, advancedOpen, setAdvancedOpen, huntCount, setHuntCount, workflow, turboReady } = useVideoForm()
+  // The Eros checkpoint has its distillation merged in, so it retires the Speed
+  // row entirely and changes what a seed-hunt candidate costs.
+  const eros = h3UsesEros(params)
   // Stabilised motion and the seed hunt are LTX-graph features; see isLtxWorkflow.
   const isLtx = isLtxWorkflow(workflow.id)
 
@@ -377,20 +446,40 @@ export function RenderPanel() {
         <div className="flex items-center justify-between">
           <SectionLabel>Duration</SectionLabel>
           <span className="text-xs font-mono text-muted-foreground tabular-nums">
-            {params.durationSeconds}s · {params.fps}fps
+            {/* Clamped, not raw: form state persists, so a slider left at 30 s
+                before H3 gained its ceiling would otherwise read "30s" over a
+                render the builder caps at 15. */}
+            {isLtx ? params.durationSeconds : h3ClampDuration(params.durationSeconds)}s · {params.fps}fps
+            {/* A continuation delivers less than it samples: the pinned head
+                comes off the front before saving. Showing only the slider value
+                would over-report the clip by ~0.9 s at every link, and a chain
+                of six would be five seconds shorter than the UI claimed. */}
+            {!isLtx && params.continueFrom && (
+              <span className="text-primary">
+                {' '}→ {h3DeliveredSeconds(params.durationSeconds).toFixed(2)}s kept
+              </span>
+            )}
           </span>
         </div>
+        {/* H3 was trained on 124–362 frames; the slider used to reach 30 s, which
+            is twice that and renders worse for taking twice as long. The builder
+            clamps regardless — this keeps the control from offering a number it
+            will not honour. LTX has no such ceiling. */}
         <input
           type="range"
-          min={2}
-          max={30}
+          min={isLtx ? 2 : H3_MIN_DURATION_S}
+          max={isLtx ? 30 : H3_MAX_DURATION_S}
           step={1}
-          value={params.durationSeconds}
+          value={isLtx ? params.durationSeconds : h3ClampDuration(params.durationSeconds)}
           aria-label="Duration"
           onChange={(e) => set('durationSeconds', Number(e.target.value))}
           className="w-full accent-primary"
         />
-        <p className="text-xs text-muted-foreground">Longer clips take proportionally longer to render.</p>
+        <p className="text-xs text-muted-foreground">
+          {isLtx
+            ? 'Longer clips take proportionally longer to render.'
+            : `Longer clips take proportionally longer to render. H3 was trained on ${H3_MIN_DURATION_S}–${H3_MAX_DURATION_S}s.`}
+        </p>
       </div>
 
       {/* Stabilised motion — deliberately outside Advanced: it is on by default, so
@@ -423,8 +512,11 @@ export function RenderPanel() {
           Named for the axis rather than the weights: the two tiers differ in
           what the output is FOR, not in a number anyone tunes. Off by default,
           and a tier whose LoRA is not on disk stays visible but disabled —
-          someone who cannot see the option cannot decide they want it. */}
-      {!isLtx && (
+          someone who cannot see the option cannot decide they want it. Absent
+          under the Eros checkpoint, whose own distillation is already in the
+          weights — the builder forces `speed` to null there, so every tier
+          would render identically. */}
+      {!isLtx && !eros && (
         <div className="space-y-2">
           <SectionLabel>Speed</SectionLabel>
           <div className="grid grid-cols-3 gap-2">
@@ -478,7 +570,11 @@ export function RenderPanel() {
           its half-res first pass, H3 forces Draft mode — hence the allowlist. */}
       {supportsSeedHunt(workflow.id) && (
       <div className="space-y-2">
-        <SectionLabel>Seed hunt</SectionLabel>
+        {/* Reads "Seed hunt" normally, but a continuation is the case people
+            most want several takes of and least expect the hunt to cover — it
+            does, unchanged: candidates and the promoted keeper all carry
+            `continueFrom`. Naming it here is the whole discoverability fix. */}
+        <SectionLabel>{params.continueFrom ? 'Seed hunt — several takes on the next few seconds' : 'Seed hunt'}</SectionLabel>
         <div className="grid grid-cols-4 gap-2">
           {[0, 2, 3, 4].map((n) => (
             <Button
@@ -503,17 +599,31 @@ export function RenderPanel() {
             ? 'Render one clip straight through.'
             : isLtx
               ? `${huntCount} half-res candidates first, then upscale the one you pick — roughly ${(huntCount * 0.65 + 1).toFixed(1)}× one render.`
-              : `${huntCount} quick drafts that differ only by seed, then the one you pick is re-rendered at full quality — roughly ${(huntCount * 0.42 + 1).toFixed(1)}× one render.`}
+              : eros
+                // 0.84 rather than 0.42: an Eros candidate drops 8 steps to 6,
+                // where a stock one drops 20 to 6. Solving the measured 0.42 for
+                // the fixed overhead (text encode, preprocess, both decodes)
+                // puts it at ~4.1 steps' worth, which is what makes the shorter
+                // cut so much less of a saving.
+                ? `${huntCount} takes that differ only by seed, then the one you pick is re-rendered — roughly ${(huntCount * 0.84 + 1).toFixed(1)}× one render.`
+                : `${huntCount} quick drafts that differ only by seed, then the one you pick is re-rendered at full quality — roughly ${(huntCount * 0.42 + 1).toFixed(1)}× one render.`}
         </p>
         {/* The candidate/final quality gap is H3-specific and surprising enough
             that it has to be said outright: people will otherwise read a draft
             as the finished look and reject a perfectly good seed. */}
-        {!isLtx && huntCount > 0 && (
+        {!isLtx && eros && huntCount > 0 && (
+          <p className="rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+            Candidates render at {H3_EROS.huntSteps} steps instead of {H3_EROS.steps}, so they are
+            close to the clip you will keep — a touch rougher, but near enough to judge on.
+          </p>
+        )}
+        {!isLtx && !eros && huntCount > 0 && (
           <p className="rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
             Candidates always render distilled — at <strong>Draft</strong> speed, or at{' '}
             <strong>Fast</strong> if that is what you picked above — so they will look rougher than
-            the final clip. Judge the <em>composition and motion</em>, not the detail. The seed you
-            pick is then rendered again at the speed set above.
+            the final clip. Judge the <em>composition and motion</em>, not the detail. When you
+            pick one, the candidate grid asks whether to render it at full quality (20 steps)
+            or Fast (8 steps) — the Speed row above only governs the candidates.
             {!turboReady.draft && !turboReady.fast && (
               <> <strong className="text-destructive">Needs a Turbo LoRA</strong> — install one on
               the Models page, or the candidates cost a full render each.</>
@@ -673,6 +783,27 @@ function AdvancedBody() {
             over the whole frame, the adapter rebuilds the skin itself. Costs roughly
             125&nbsp;ms per frame (~35&nbsp;s on a 10&nbsp;s clip). Neither will fix
             over-sharpening — for that, lower Draft mode&rsquo;s strength.
+          </p>
+        </div>
+      )}
+
+      {/* RCAS sharpen (H3 only) — AMD's contrast-adaptive filter. Off by
+          default: unlike grain this is taste, not a corrective. */}
+      {!isLtx && (
+        <div className="space-y-2">
+          <SectionLabel>Sharpen</SectionLabel>
+          <Button
+            variant={params.sharpen === true ? 'default' : 'outline'}
+            className="h-9 w-full text-sm"
+            onClick={() => set('sharpen', params.sharpen !== true)}
+          >
+            {params.sharpen === true ? 'Sharpen on — crisper edges' : 'Sharpen off'}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            A contrast-adaptive pass that lifts edge definition without the halos an
+            ordinary sharpen leaves. It raises the detail that is already there — it
+            cannot recover what the sampler dropped, so reach for more steps first if
+            the clip is mushy rather than soft. Stacks with grain.
           </p>
         </div>
       )}
@@ -899,6 +1030,11 @@ function ReferencePanel() {
           </p>
           <SourceImageInput
             value={images[i]}
+            // A slot can hold a name this browser never uploaded (a "send as
+            // reference", a restored form), and the uploader only keeps an
+            // object URL for its own uploads — without this the slot reads as
+            // empty while holding a live reference.
+            previewUrl={images[i] ? inputViewUrl(images[i]) : undefined}
             onChange={(filename) => setSlot('refImages', i, filename)}
             // Only the first slot feeds the enhancer's vision pass; it takes one image.
             onB64={(b64) => { if (i === 0) setImageB64(b64) }}
@@ -1019,6 +1155,7 @@ export function SourceImageInput({
   const [uploading, setUploading] = useState(false)
 
   const { isDragging, dragProps } = useFileDrop((file) => void handleFile(file))
+  const { openPicker, pickerDialog } = useImagePicker(inputRef, (file) => void handleFile(file))
 
   async function handleFile(file: File) {
     setUploading(true)
@@ -1083,9 +1220,10 @@ export function SourceImageInput({
             if (f) void handleFile(f)
           }}
         />
+        {pickerDialog}
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
+          onClick={openPicker}
           disabled={uploading || disabled}
           title={disabled ? disabledHint : undefined}
           className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
@@ -1102,6 +1240,50 @@ export function SourceImageInput({
           <p className="mt-1 text-xs text-muted-foreground">The clip&apos;s resolution follows this image — drag &amp; drop supported.</p>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Shown only while the form is set to continue an existing clip.
+ *
+ * Continuing is a mode the user entered from somewhere else (the gallery, the
+ * result inspector), so the form has to say so — otherwise the next Generate
+ * silently chains onto a clip they may have stopped thinking about.
+ *
+ * It stays set after a render on purpose: pressing Generate again re-rolls
+ * *this* link rather than extending the chain, which is the regenerate the
+ * feature needs. Crucially that re-roll continues from the same clip it always
+ * did — never from the take just rejected — so a bad link cannot drag the rest
+ * of the chain off course. Extending happens by hitting Continue on the new
+ * clip, which is a deliberate second act.
+ */
+export function ContinuationBanner() {
+  const { params, set } = useVideoForm()
+  if (!params.continueFrom) return null
+  const name = params.continueFrom.split('/').pop() ?? params.continueFrom
+  return (
+    <div className="rounded-lg border border-primary/40 bg-primary/10 p-3 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold text-foreground">Continuing a clip</p>
+          <p className="mt-0.5 truncate font-mono text-muted-foreground" title={params.continueFrom}>
+            {name}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => set('continueFrom', undefined)}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" /> Clear
+        </button>
+      </div>
+      <p className="mt-2 text-muted-foreground">
+        The last second of that clip is pinned to the start of this one, then trimmed off, so the
+        motion and sound carry across the join. Generate again to re-roll this continuation — it
+        always continues from the same clip, never from a take you rejected.
+      </p>
     </div>
   )
 }

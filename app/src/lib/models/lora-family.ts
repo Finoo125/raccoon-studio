@@ -11,7 +11,7 @@ import { selectionIsStale } from './installed'
  * enough to rule out (`sd15`, `flux` match no workflow, so they get filtered
  * out of every picker rather than offered and failing at validation).
  */
-export type LoraFamily = 'sdxl' | 'zimage' | 'anima' | 'ernie' | 'krea2' | 'ltx' | 'sd15' | 'flux'
+export type LoraFamily = 'sdxl' | 'zimage' | 'anima' | 'ernie' | 'krea2' | 'ltx' | 'h3' | 'sd15' | 'flux'
 
 /**
  * Narrow ComfyUI's LoRA list to the ones that can load on `family`.

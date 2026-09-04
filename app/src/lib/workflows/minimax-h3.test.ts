@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   minimaxH3Workflow,
   h3FrameCount,
+  h3ClampDuration,
+  H3_MIN_DURATION_S,
+  H3_MAX_DURATION_S,
   h3Dims,
   BUDGET_MP,
   tierOf,
@@ -15,7 +18,10 @@ import {
   H3_RIFE_FPS,
   H3_TURBO_STRENGTH,
   H3_GRAIN_INTENSITY,
+  H3_SHARPEN_STRENGTH,
   H3_REF2VA_CKPT,
+  H3_EROS,
+  h3UsesEros,
   H3_REF_BUDGET,
   h3RefCount,
   compactRefs,
@@ -24,6 +30,9 @@ import {
   H3_REALISM_STRENGTH,
   H3_REALISM_TRIGGER,
   withRealismTrigger,
+  H3_CONTEXT_FRAMES,
+  H3_CONTEXT_AUDIO_S,
+  h3DeliveredSeconds,
 } from './minimax-h3'
 import { MINIMAX_H3_ASSETS } from '@/lib/models/minimax-h3-assets'
 import type { VideoGenerationParams } from '@/types/video-workflow'
@@ -57,6 +66,9 @@ function danglingLinks(wf: Record<string, ComfyUIPromptNode>): string[] {
 
 const nodeOf = (wf: Record<string, ComfyUIPromptNode>, cls: string) =>
   Object.values(wf).find((n) => n.class_type === cls)
+
+const idFor = (wf: Record<string, ComfyUIPromptNode>, cls: string) =>
+  Object.keys(wf).find((k) => wf[k].class_type === cls)
 
 describe('h3FrameCount', () => {
   it('matches the official template formula at 5 s', () => {
@@ -94,6 +106,36 @@ describe('h3FrameCount', () => {
     for (let s = 1; s <= 15; s += 0.5) expect(h3FrameCount(s)).toBe(reference(s))
     // The case that exposed the difference: JS gives 22, Python gives 39.
     expect(h3FrameCount(1)).toBe(39)
+  })
+})
+
+describe('h3ClampDuration', () => {
+  it('maps the trained frame range exactly onto its bounds', () => {
+    // 124–362 frames is what H3 was trained on, and both ends are points on the
+    // 17k+5 grid — which is why the clamp can be expressed in whole seconds at
+    // all, and why neither bound loses a frame to rounding.
+    expect(h3FrameCount(H3_MIN_DURATION_S)).toBe(124)
+    expect(h3FrameCount(H3_MAX_DURATION_S)).toBe(362)
+  })
+
+  it('clamps both ways and leaves the trained range alone', () => {
+    expect(h3ClampDuration(30)).toBe(H3_MAX_DURATION_S)
+    expect(h3ClampDuration(2)).toBe(H3_MIN_DURATION_S)
+    for (let s = H3_MIN_DURATION_S; s <= H3_MAX_DURATION_S; s++) {
+      expect(h3ClampDuration(s)).toBe(s)
+    }
+  })
+
+  it('caps the frame count the graph actually asks for', () => {
+    // The bug: the slider reached 30 s, so the node was asked for 736 frames —
+    // twice the trained ceiling, at twice the render time, for a worse clip.
+    expect(h3FrameCount(30)).toBe(736)
+    const wf = minimaxH3Workflow.buildPrompt({
+      ...minimaxH3Workflow.defaultParams,
+      prompt: 'a clip',
+      durationSeconds: 30,
+    } as Parameters<typeof minimaxH3Workflow.buildPrompt>[0]) as Record<string, ComfyUIPromptNode>
+    expect(nodeOf(wf, 'MiniMaxH3ImageToVideo')?.inputs.length).toBe(362)
   })
 })
 
@@ -246,7 +288,42 @@ describe('minimaxH3Workflow.buildPrompt', () => {
     }
   })
 
-  it('has exactly two non-core nodes, each only when its feature is asked for', () => {
+  it('sharpens between RIFE and the grain, and only when asked', () => {
+    expect(nodeOf(build({}), 'ImageSharpenKJ')).toBeUndefined()
+
+    const wf = build({ sharpen: true, rife: true })
+    const sharp = nodeOf(wf, 'ImageSharpenKJ')!
+    // The dynamic-combo spelling. A wrong prefix here leaves `method` a bare
+    // string that the node subscripts and dies on — so this is the assertion
+    // that keeps the failure loud instead of silently unsharpened.
+    expect(sharp.inputs.method).toBe('rcas')
+    expect(sharp.inputs['method.strength']).toBe(H3_SHARPEN_STRENGTH)
+
+    // Reads the interpolated frames, not the decoder: sharpening before RIFE
+    // would leave every interpolated frame softer than its neighbours.
+    const rifeId = idFor(wf, 'RIFEInterpolation')
+    expect(sharp.inputs.image).toEqual([rifeId, 0])
+
+    // And the grain reads the sharpener, so grain lands on top of the sharpen
+    // rather than being sharpened into crunch.
+    const sharpId = idFor(wf, 'ImageSharpenKJ')
+    expect(nodeOf(wf, 'Film Grain')!.inputs.image).toEqual([sharpId, 0])
+  })
+
+  it('sharpens the trimmed clip in a continuation, not the pinned head', () => {
+    const wf = build({ sharpen: true, continueFrom: 'prev.mp4' })
+    // A continuation has *two* ImageFromBatch nodes — one pulling the tail off
+    // the source clip for the guide, one dropping the pinned head off this
+    // render. Only the second is downstream of the decoder, and picking the
+    // wrong one is precisely the mistake this test exists to catch.
+    const decodeId = idFor(wf, 'VAEDecode')
+    const trim = Object.entries(wf).find(
+      ([, n]) => n.class_type === 'ImageFromBatch' && (n.inputs.image as string[])?.[0] === decodeId,
+    )!
+    expect(nodeOf(wf, 'ImageSharpenKJ')!.inputs.image).toEqual([trim[0], 0])
+  })
+
+  it('keeps every non-core node out of the graph until its feature is asked for', () => {
     // Both packs are already pinned dependencies of the LTX graph, so nothing
     // new is installed — but they must stay out of the default graph.
     const off = Object.values(build({ filmGrain: false })).map((n) => n.class_type)
@@ -257,6 +334,9 @@ describe('minimaxH3Workflow.buildPrompt', () => {
     expect(
       Object.values(build({ seedHunt: true, filmGrain: false })).map((n) => n.class_type).filter((c) => !CORE_NODES.has(c)),
     ).toEqual(['VHS_VideoCombine'])
+    expect(
+      Object.values(build({ sharpen: true, filmGrain: false })).map((n) => n.class_type).filter((c) => !CORE_NODES.has(c)),
+    ).toEqual(['ImageSharpenKJ'])
     expect(
       Object.values(build({})).map((n) => n.class_type).filter((c) => !CORE_NODES.has(c)),
     ).toEqual(['Film Grain'])
@@ -269,6 +349,9 @@ const CORE_NODES = new Set([
   'KSamplerSelect', 'BasicScheduler', 'BasicGuider', 'RandomNoise',
   'SamplerCustomAdvanced', 'VAEDecode', 'VAEDecodeAudio', 'CreateVideo', 'SaveVideo',
   'LoraLoaderModelOnly', 'MiniMaxH3SigmaShift',
+  // Continuation. All core too, which is the whole reason this path was built
+  // out of them rather than out of one of the H3 chaining node packs.
+  'MiniMaxH3AddGuide', 'ImageFromBatch', 'TrimAudioDuration', 'GetImageSize',
 ])
 
 /** The model-patch chain, checkpoint first, as a list of [class, detail] pairs. */
@@ -287,6 +370,83 @@ function modelChain(wf: Record<string, ComfyUIPromptNode>): string[] {
     ref = next as [string, number]
   }
 }
+
+describe('MiniMax H3 Eros checkpoint', () => {
+  const eros = (over: Partial<VideoGenerationParams> = {}) =>
+    build({ h3Checkpoint: 'eros', ...over })
+
+  it('swaps the checkpoint and the whole sampling recipe together', () => {
+    // The card's entire documented recipe for beta4: "use euler/simple 6-8
+    // steps on all modes". Swapping only `unet_name` would leave it sampling on
+    // res_multistep at 20 steps, which is the schedule its merged Turbo was
+    // distilled AWAY from.
+    const wf = eros()
+    expect(nodeOf(wf, 'UNETLoader')!.inputs.unet_name).toBe(H3_EROS.ckpt)
+    expect(nodeOf(wf, 'KSamplerSelect')!.inputs.sampler_name).toBe('euler')
+    expect(nodeOf(wf, 'BasicScheduler')!.inputs.scheduler).toBe('simple')
+    expect(nodeOf(wf, 'BasicScheduler')!.inputs.steps).toBe(H3_EROS.steps)
+    expect(H3_EROS.steps).toBeLessThanOrEqual(8)
+    expect(H3_EROS.huntSteps).toBeGreaterThanOrEqual(6)
+  })
+
+  it('never stacks a Turbo LoRA or the sigma shift on a merged-turbo model', () => {
+    // The form retires the Speed row under Eros, but `turbo` is persisted, so a
+    // session that had Fast selected reopens with it still set. Stacking a LoRA
+    // distilled for one schedule onto weights already merged onto another is
+    // exactly the artefact the author's beta3 notes complain about.
+    const chain = modelChain(eros({ turbo: 'fast' }))
+    expect(chain).toEqual(['UNETLoader'])
+    expect(nodeOf(eros({ turbo: 'fast' }), 'MiniMaxH3SigmaShift')).toBeUndefined()
+    expect(nodeOf(eros({ turbo: 'fast' }), 'BasicScheduler')!.inputs.steps).toBe(H3_EROS.steps)
+  })
+
+  it('still takes user LoRAs and the realism adapter', () => {
+    // Only the *distillation* is baked in; the finetune keeps H3's key layout,
+    // so the ordinary stack must go on exactly as it does on the stock model.
+    expect(modelChain(eros({ lora1: 'style.safetensors', lora1Strength: 0.8 }))).toContain(
+      'lora:style.safetensors@0.8',
+    )
+    expect(modelChain(eros({ realismLora: true }))).toContain(
+      `lora:${H3_REALISM_LORA}@${H3_REALISM_STRENGTH}`,
+    )
+  })
+
+  it('is ignored in reference mode, which loads different weights entirely', () => {
+    // TenStrip's reference build exists only as a 40 GB bf16 file with no int8
+    // sibling, and `h3Checkpoint` is persisted across a mode switch — so the
+    // flag reaching ref2v must change nothing at all, right down to the Turbo
+    // dial coming back.
+    const wf = eros({ mode: 'ref2v', refImages: ['a.png'], turbo: 'fast' })
+    expect(nodeOf(wf, 'UNETLoader')!.inputs.unet_name).toBe(H3_REF2VA_CKPT)
+    expect(nodeOf(wf, 'KSamplerSelect')!.inputs.sampler_name).toBe('res_multistep')
+    expect(nodeOf(wf, 'BasicScheduler')!.inputs.steps).toBe(H3_TURBO.fast.steps)
+    expect(modelChain(wf)).toContain(`lora:${H3_TURBO.fast.lora}@${H3_TURBO.fast.strength}`)
+    expect(h3UsesEros({ h3Checkpoint: 'eros', mode: 'ref2v' })).toBe(false)
+    expect(h3UsesEros({ h3Checkpoint: 'eros', mode: 'i2v' })).toBe(true)
+    expect(h3UsesEros({ mode: 'i2v' })).toBe(false)
+    expect(h3UsesEros()).toBe(false)
+  })
+
+  it('takes the low end of the step range for seed-hunt candidates', () => {
+    // With no Draft tier to drop to, the step cut IS the whole hunt discount —
+    // without it the form would promise cheap candidates that each cost a full
+    // render. Both ends stay inside the card's documented 6-8.
+    expect(nodeOf(eros({ seedHunt: true }), 'BasicScheduler')!.inputs.steps).toBe(H3_EROS.huntSteps)
+    expect(H3_EROS.huntSteps).toBeLessThan(H3_EROS.steps)
+  })
+
+  it('is downloadable from the Models page', () => {
+    // A checkpoint the builder names but the catalog does not offer is a dead
+    // button: the install check could never pass, so the option never enables.
+    expect(MINIMAX_H3_ASSETS.map((a) => a.name)).toContain(H3_EROS.ckpt)
+    const asset = MINIMAX_H3_ASSETS.find((a) => a.name === H3_EROS.ckpt)!
+    expect(asset.folder).toBe('diffusion_models')
+    expect(asset.optional).toBe(true)
+    // int8 convrot, never the fp8_scaled sibling — that is the format
+    // DynamicVRAM renders as tiled garbage, and it is on by default here.
+    expect(asset.name).toContain('int8_convrot')
+  })
+})
 
 describe('MiniMax H3 Turbo tiers', () => {
   it('reads the legacy `true` as Draft, so saved sessions and Director runs survive', () => {
@@ -953,5 +1113,189 @@ describe('minimaxH3Workflow definition', () => {
   it('exposes an id the video form can select by', () => {
     expect(minimaxH3Workflow.id).toBe('minimax-h3')
     expect(minimaxH3Workflow.orientations.length).toBeGreaterThan(0)
+  })
+})
+
+describe('MiniMax H3 continuation', () => {
+  const PREV = 'video/MinimaxH3/2026-08-29/193337-MinimaxH3__00001_.mp4'
+  /** All nodes of a class — there are two of several classes in a continuation. */
+  const allOf = (wf: Record<string, ComfyUIPromptNode>, cls: string) =>
+    Object.entries(wf).filter(([, n]) => n.class_type === cls)
+  const titled = (wf: Record<string, ComfyUIPromptNode>, title: string) =>
+    Object.entries(wf).find(([, n]) => n._meta?.title === title)
+
+  it('adds nothing at all when continueFrom is unset', () => {
+    // Byte-identical, not merely "no AddGuide": a graph that gained even a
+    // dangling node would miss ComfyUI's execution cache on every old render.
+    expect(build({})).toEqual(build({ continueFrom: undefined }))
+    expect(nodeOf(build({}), 'MiniMaxH3AddGuide')).toBeUndefined()
+  })
+
+  it('reads the previous clip out of the output dir, not input', () => {
+    // Without the annotation LoadVideo resolves against input/ and the render
+    // dies on a missing file — the clip we want is one SaveVideo wrote.
+    const load = nodeOf(build({ continueFrom: PREV }), 'LoadVideo')!
+    expect(load.inputs.file).toBe(`${PREV} [output]`)
+  })
+
+  it('pins the TAIL of the previous clip, not its opening', () => {
+    const wf = build({ continueFrom: PREV })
+    const tail = titled(wf, `Last ${H3_CONTEXT_FRAMES} frames`)![1]
+    // Negative index is the whole difference between continuing a clip and
+    // re-rendering its first second.
+    expect(tail.inputs.batch_index).toBe(-H3_CONTEXT_FRAMES)
+    expect(tail.inputs.length).toBe(H3_CONTEXT_FRAMES)
+    const sound = titled(wf, 'Tail sound')![1]
+    expect(sound.inputs.start_index).toBe(-H3_CONTEXT_AUDIO_S)
+    expect(sound.inputs.duration).toBe(H3_CONTEXT_AUDIO_S)
+  })
+
+  it('pins the SAME span of sound as of picture, ending at the cut', () => {
+    // AddGuide anchors audio forward from frame_idx, so a window of a different
+    // length than the picture pin desynchronises them. At 1.0 s against a
+    // 22-frame pin, new-frame 0 showed the previous clip's frame N-22 while
+    // playing its audio from N-24 (83 ms of drift inside the pinned head), and
+    // the surplus 2 frames of sound outlived the 22-frame trim — so every
+    // delivered clip opened on a fragment of the previous clip's audio.
+    expect(H3_CONTEXT_AUDIO_S).toBeCloseTo(H3_CONTEXT_FRAMES / H3_FPS, 9)
+
+    const wf = build({ continueFrom: PREV })
+    const pinnedSound = titled(wf, 'Tail sound')![1]
+    const cutSound = titled(wf, 'Drop pinned head (sound)')![1]
+    // What was pinned and what is cut away must be the same amount of sound.
+    expect(pinnedSound.inputs.duration).toBeCloseTo(Number(cutSound.inputs.start_index), 9)
+  })
+
+  it('pins a frame count AddGuide will not silently shrink', () => {
+    // The node walks a non-grid batch DOWN to the next legal length instead of
+    // refusing, so an off-grid constant here would pin fewer frames than the
+    // trim arithmetic removes and every join would repeat a few frames.
+    expect(H3_CONTEXT_FRAMES % 17).toBe(5)
+  })
+
+  it('splices AddGuide between the conditioning and the guider', () => {
+    const wf = build({ continueFrom: PREV })
+    const [guideId, guide] = Object.entries(wf).find(
+      ([, n]) => n.class_type === 'MiniMaxH3AddGuide',
+    )!
+    const [condId] = Object.entries(wf).find(
+      ([, n]) => n.class_type === 'MiniMaxH3ImageToVideo',
+    )!
+    expect(guide.inputs.positive).toEqual([condId, 0])
+    expect(guide.inputs.frame_idx).toBe(0)
+    const guider = nodeOf(wf, 'BasicGuider')!
+    expect(guider.inputs.conditioning).toEqual([guideId, 0])
+    // AddGuide returns conditioning only — the sampler's latent must still come
+    // straight off the conditioning node, or the render has no latent to fill.
+    expect(nodeOf(wf, 'SamplerCustomAdvanced')!.inputs.latent_image).toEqual([condId, 1])
+  })
+
+  it('gives AddGuide the video VAE and the audio VAE the right way round', () => {
+    // Two VAELoaders in this graph; swapping them fails deep inside the node.
+    const wf = build({ continueFrom: PREV })
+    const guide = nodeOf(wf, 'MiniMaxH3AddGuide')!
+    expect(guide.inputs.vae).toEqual(nodeOf(wf, 'VAEDecode')!.inputs.vae)
+    expect(guide.inputs.audio_vae).toEqual(nodeOf(wf, 'VAEDecodeAudio')!.inputs.vae)
+    expect(guide.inputs.vae).not.toEqual(guide.inputs.audio_vae)
+  })
+
+  it('takes its size from the source clip, not from the form', () => {
+    // Reported from a real render: a portrait 672x960 source continued while
+    // the form said landscape came back 1088x608. AddGuide resizes the guide to
+    // the target rather than refusing, so it centre-cropped a band out of the
+    // portrait frames and upscaled it — wrong aspect and a big quality loss,
+    // with no error anywhere. The form's orientation describes what the user
+    // last picked, which has nothing to do with the clip being continued.
+    const wf = build({ continueFrom: PREV, orientation: 'landscape' })
+    const size = titled(wf, 'Match the previous clip’s size')!
+    const cond = nodeOf(wf, 'MiniMaxH3ImageToVideo')!
+    expect(cond.inputs.width).toEqual([size[0], 0])
+    expect(cond.inputs.height).toEqual([size[0], 1])
+    // Read off the previous clip's own frames, so the two cannot disagree.
+    const split = Object.entries(wf).find(([, n]) => n.class_type === 'GetVideoComponents')!
+    expect(size[1].inputs.image).toEqual([split[0], 0])
+  })
+
+  it('leaves a normal render sized by the form', () => {
+    // The link must appear only for continuations — a plain render still picks
+    // its dimensions from orientation and the VRAM budget.
+    const cond = nodeOf(build({ orientation: 'portrait' }), 'MiniMaxH3ImageToVideo')!
+    expect(typeof cond.inputs.width).toBe('number')
+    expect(typeof cond.inputs.height).toBe('number')
+  })
+
+  it('trims the pinned head off both streams by the same amount', () => {
+    const wf = build({ continueFrom: PREV, durationSeconds: 5 })
+    const cut = titled(wf, 'Drop pinned head')![1]
+    expect(cut.inputs.batch_index).toBe(H3_CONTEXT_FRAMES)
+    const cutSound = titled(wf, 'Drop pinned head (sound)')![1]
+    // Same instant expressed in seconds — a mismatch here desyncs picture from
+    // the audio H3 generated jointly with it, and stacks at every join.
+    expect(cutSound.inputs.start_index).toBeCloseTo(H3_CONTEXT_FRAMES / H3_FPS, 6)
+    expect(cutSound.inputs.duration).toBeCloseTo((124 - H3_CONTEXT_FRAMES) / H3_FPS, 6)
+  })
+
+  it('feeds the container the trimmed streams', () => {
+    // Film grain off, because it is on by default and legitimately sits between
+    // the trim and the container — this asserts the trim is in the path, not
+    // that it is the last thing in it.
+    const wf = build({ continueFrom: PREV, filmGrain: false })
+    const video = nodeOf(wf, 'CreateVideo')!
+    expect(video.inputs.images).toEqual([titled(wf, 'Drop pinned head')![0], 0])
+    expect(video.inputs.audio).toEqual([titled(wf, 'Drop pinned head (sound)')![0], 0])
+  })
+
+  it('grains the trimmed clip rather than replacing the trim', () => {
+    // Default-on film grain rewrites the container's images input, so the trim
+    // has to survive as its source — otherwise the pinned head comes back.
+    const wf = build({ continueFrom: PREV })
+    const grain = nodeOf(wf, 'Film Grain')!
+    expect(grain.inputs.image).toEqual([titled(wf, 'Drop pinned head')![0], 0])
+    expect(nodeOf(wf, 'CreateVideo')!.inputs.audio).toEqual([
+      titled(wf, 'Drop pinned head (sound)')![0],
+      0,
+    ])
+  })
+
+  it('drops a start or end frame, which would fight the pinned head', () => {
+    const wf = build({ continueFrom: PREV, inputImage: 'a.png', endImage: 'b.png' })
+    // Nothing can honour two different things at frame 0. The only LoadImage
+    // that may survive is a ref2v reference, and this is t2v.
+    expect(nodeOf(wf, 'LoadImage')).toBeUndefined()
+    expect(nodeOf(wf, 'MiniMaxH3ImageToVideo')!.inputs.first_frame).toBeUndefined()
+    expect(nodeOf(wf, 'MiniMaxH3ImageToVideo')!.inputs.last_frame).toBeUndefined()
+  })
+
+  it('makes RIFE interpolate the trimmed clip, not the pinned head', () => {
+    // The ordering trap: RIFE used to read the decoder directly, which would
+    // put the pinned second straight back into the delivered clip.
+    const wf = build({ continueFrom: PREV, rife: true })
+    const rife = nodeOf(wf, 'RIFEInterpolation')!
+    expect(rife.inputs.images).toEqual([titled(wf, 'Drop pinned head')![0], 0])
+    expect(rife.inputs.images).not.toEqual([
+      Object.entries(wf).find(([, n]) => n.class_type === 'VAEDecode')![0],
+      0,
+    ])
+  })
+
+  it('still composes with film grain and the Fast tier', () => {
+    const wf = build({ continueFrom: PREV, rife: true, filmGrain: true, turbo: 'fast' })
+    expect(danglingLinks(wf)).toEqual([])
+    expect(nodeOf(wf, 'MiniMaxH3AddGuide')).toBeDefined()
+    expect(nodeOf(wf, 'MiniMaxH3SigmaShift')).toBeDefined()
+  })
+
+  it('has exactly one tail-extract and one head-trim of each kind', () => {
+    const wf = build({ continueFrom: PREV })
+    expect(allOf(wf, 'ImageFromBatch')).toHaveLength(2)
+    expect(allOf(wf, 'TrimAudioDuration')).toHaveLength(2)
+    expect(danglingLinks(wf)).toEqual([])
+  })
+
+  it('reports the delivered duration, which is shorter than what was sampled', () => {
+    // 124 sampled - 22 pinned = 102 delivered = 4.25 s. A UI totalling the
+    // slider value instead would over-report by ~0.92 s per link.
+    expect(h3DeliveredSeconds(5)).toBeCloseTo((124 - H3_CONTEXT_FRAMES) / H3_FPS, 6)
+    expect(h3DeliveredSeconds(5)).toBeLessThan(5)
   })
 })

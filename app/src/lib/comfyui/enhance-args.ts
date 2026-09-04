@@ -1,5 +1,5 @@
 import { isLtxWorkflow } from '@/lib/workflows/video-index'
-import { compactRefs, h3Task } from '@/lib/workflows/minimax-h3'
+import { compactRefs, h3ClampDuration, h3Task } from '@/lib/workflows/minimax-h3'
 import type { EnhanceArgs } from './useCinematicEnhance'
 import type { EnhanceSettingsValues } from '@/components/generation/EnhanceSettings'
 import type { VideoGenerationParams } from '@/types/video-workflow'
@@ -83,7 +83,12 @@ export function buildEnhanceArgs({
     dialogueTier: settings.dialogueTier,
     energy: settings.energy,
     userIntent: settings.userIntent,
-    durationS: params.durationSeconds,
+    // The writer sizes shots, dialogue and the keyframe alignment timestamp off
+    // this number, so it has to be the duration that will actually render. H3
+    // clamps to its trained 5–15 s; LTX has no such ceiling and keeps the slider.
+    durationS: isLtxWorkflow(workflowId)
+      ? params.durationSeconds
+      : h3ClampDuration(params.durationSeconds),
     videoModel: isLtxWorkflow(workflowId) ? 'ltx23' : workflowId,
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { videoWorkflows, getVideoWorkflow, isLtxWorkflow, supportsSeedHunt } from './video-index'
+import { videoWorkflows, getVideoWorkflow, isLtxWorkflow, supportsSeedHunt, promoteSeedHunt } from './video-index'
 import { minimaxH3Workflow } from './minimax-h3'
 
 describe('isLtxWorkflow', () => {
@@ -67,5 +67,27 @@ describe('the features the gate hides', () => {
     for (const w of videoWorkflows) expect(supportsSeedHunt(w.id)).toBe(true)
     expect(supportsSeedHunt('some-future-model')).toBe(false)
     expect(supportsSeedHunt(undefined)).toBe(false)
+  })
+})
+
+describe('promoteSeedHunt', () => {
+  const candidate = {
+    prompt: 'a raccoon', mode: 't2v' as const, orientation: 'landscape',
+    durationSeconds: 5, fps: 24, seed: 7, vramMode: 'low' as const,
+    seedHunt: true, turbo: 'draft' as const, continueFrom: 'clips/prev.mp4',
+  } as unknown as Parameters<typeof promoteSeedHunt>[0]
+
+  it('clears the hunt flag and takes the caller\'s speed, never the candidate\'s', () => {
+    // The H3 builder forces Draft on candidates, so inheriting `turbo` would
+    // ship a draft as the keeper — the bug this function exists to prevent.
+    expect(promoteSeedHunt(candidate, false)).toMatchObject({ seedHunt: false, turbo: false })
+    expect(promoteSeedHunt(candidate, 'fast')).toMatchObject({ seedHunt: false, turbo: 'fast' })
+  })
+
+  it('carries everything else through, continuation included', () => {
+    const p = promoteSeedHunt(candidate, 'fast')
+    expect(p.seed).toBe(7)
+    expect(p.continueFrom).toBe('clips/prev.mp4')
+    expect(p.prompt).toBe('a raccoon')
   })
 })

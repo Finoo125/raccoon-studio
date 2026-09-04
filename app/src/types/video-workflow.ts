@@ -129,6 +129,20 @@ export interface VideoGenerationParams {
    */
   rife?: boolean
   /**
+   * MiniMax H3 only: which checkpoint the fl2va graph loads.
+   *
+   * `'eros'` is TenStrip's 10Eros Max beta4 — an H3 finetune with adult
+   * character grafted in and, load-bearingly, **its own Turbo merged into the
+   * weights**. That is why this is a checkpoint pick rather than another LoRA
+   * slot: it replaces the base model and the whole `turbo` dial at once (see
+   * `H3_EROS`).
+   *
+   * Ignored in `ref2v`, which loads a structurally different checkpoint the
+   * finetune has no int8 build of — so read it through `h3UsesEros()`, never as
+   * a bare equality check on this field.
+   */
+  h3Checkpoint?: 'base' | 'eros'
+  /**
    * MiniMax H3 only: which distillation LoRA to render with, instead of the
    * 20-step base. `'draft'` is 6 steps of throwaway preview for finding prompts
    * and seeds; `'fast'` is lightx2v's 8-step v1.0, good enough to keep. See
@@ -158,11 +172,36 @@ export interface VideoGenerationParams {
    */
   filmGrain?: boolean
   /**
+   * MiniMax H3 only: an RCAS sharpen pass on the finished frames (AMD's
+   * contrast-adaptive filter from FSR, via KJNodes).
+   *
+   * **Default OFF** — read it as `sharpen === true`. Unlike grain it is a taste
+   * call rather than a corrective, and it stacks with grain rather than
+   * replacing it. See `H3_SHARPEN_STRENGTH`.
+   */
+  sharpen?: boolean
+  /**
    * Seed-hunt candidate: render the half-res first pass and stop. Truncating the
    * graph rather than shrinking it keeps everything upstream identical to a full
    * render, which is what lets the winning seed reproduce the clip that was picked.
    */
   seedHunt?: boolean
+  /**
+   * MiniMax H3 only: continue a previously rendered clip, so a chain of renders
+   * reads as one longer video.
+   *
+   * The value is the clip's path **relative to ComfyUI's output directory**,
+   * subfolders included — the builder appends the ` [output]` annotation that
+   * makes core `LoadVideo` read from `output/` instead of `input/`, so nothing
+   * has to be copied or re-uploaded per link.
+   *
+   * The graph pins the tail of that clip (`H3_CONTEXT_FRAMES` frames plus
+   * `H3_CONTEXT_AUDIO_S` of its sound) at frame 0 of the new one and trims the
+   * pinned head back off before saving, so the delivered clip is
+   * `H3_CONTEXT_FRAMES` shorter than it was sampled. Callers that show a
+   * duration must say which of the two they mean.
+   */
+  continueFrom?: string
   /**
    * Pixel-budget profile: 'high' (~2MP, 24 GB+), 'medium' (~1.4MP) or 'low'
    * (~1MP, fits 16 GB). Default: high.

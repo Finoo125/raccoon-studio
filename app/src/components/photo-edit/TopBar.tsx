@@ -6,7 +6,8 @@ import { toast } from 'sonner'
 import { usePhotoEditStore } from '@/lib/photo-edit/store'
 import { renderToCanvas } from '@/lib/photo-edit/pipeline'
 import { computeAutoAdjustments } from '@/lib/photo-edit/auto-enhance'
-import { useSendToVideo } from '@/lib/generation/useSendToVideo'
+import { useSendToVideo, type SendToVideoTarget } from '@/lib/generation/useSendToVideo'
+import SendToVideoDialog from '@/components/generation/SendToVideoDialog'
 import { Button } from '@/components/ui/button'
 import {
   Popover,
@@ -44,6 +45,7 @@ export default function TopBar() {
   const [format, setFormat] = useState<Format>('png')
   const [confirmOverwriteOpen, setConfirmOverwriteOpen] = useState(false)
   const [confirmSwitchOpen, setConfirmSwitchOpen] = useState(false)
+  const [sendVideoOpen, setSendVideoOpen] = useState(false)
   const [savePopoverOpen, setSavePopoverOpen] = useState(false)
 
   const canUndo = historyIndex > 0
@@ -117,11 +119,11 @@ export default function TopBar() {
 
   // Sends the edited canvas straight to the video tab — the edits ride along
   // without having to save a copy to the gallery first.
-  const handleSendToVideo = async () => {
+  const handleSendToVideo = async (target: SendToVideoTarget) => {
     if (!source) return
     try {
       // exportBlob() defaults to PNG, so the name has to agree with the bytes.
-      await sendToVideo(await exportBlob(), `${filename.replace(/\.[a-z0-9]+$/i, '')}.png`)
+      await sendToVideo(await exportBlob(), `${filename.replace(/\.[a-z0-9]+$/i, '')}.png`, target)
     } catch (err: unknown) {
       toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -217,17 +219,26 @@ export default function TopBar() {
         </Button>
       </div>
 
-      {/* Send the edited image to the video tab as an image-to-video source */}
+      {/* Send the edited image to the video tab — the dialog asks which model
+          and which slot, same as the two inspectors. */}
       <Button
         variant="ghost"
         size="sm"
-        title="Send this image to Generate Videos as the source image"
+        title="Send this image to Generate Videos"
         disabled={!source || videoBusy}
-        onClick={() => void handleSendToVideo()}
+        onClick={() => setSendVideoOpen(true)}
       >
         {videoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Film className="h-3.5 w-3.5" />}
         To video
       </Button>
+      <SendToVideoDialog
+        open={sendVideoOpen}
+        onOpenChange={setSendVideoOpen}
+        onPick={(target) => {
+          setSendVideoOpen(false)
+          void handleSendToVideo(target)
+        }}
+      />
 
       {/* Save menu */}
       <Popover open={savePopoverOpen} onOpenChange={setSavePopoverOpen}>

@@ -9,6 +9,7 @@ import { buildOpeningImageParams } from '@/lib/director/opening-image'
 import { applyOpeningImage } from '@/lib/director/run-doc'
 import { getWorkflow } from '@/lib/workflows'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
+import { useImagePicker } from '@/components/generation/PickImageDialog'
 import type { DirectorRun } from '@/types/director'
 
 export default function OpeningImageStep({
@@ -20,6 +21,7 @@ export default function OpeningImageStep({
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const { isDragging, dragProps } = useFileDrop((file) => void uploadOwn(file))
+  const { openPicker, pickerDialog } = useImagePicker(fileRef, (file) => void uploadOwn(file))
 
   // Copy an image (a chosen output URL or a user-picked file) into ComfyUI's
   // input dir under a per-run filename, then persist it onto the run.
@@ -114,7 +116,8 @@ export default function OpeningImageStep({
           className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadOwn(f) }}
         />
-        <Button size="lg" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
+        {pickerDialog}
+        <Button size="lg" variant="outline" disabled={busy} onClick={openPicker}>
           {busy ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Upload data-icon="inline-start" />}
           Upload your own
         </Button>

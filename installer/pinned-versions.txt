@@ -69,10 +69,51 @@
 # (153558-LTX23Director__00001-audio.mp4). All 48 LTX23.json node classes and
 # all 9 Raccoon nodes registered on this revision.
 #
-# Deps moved with it: comfy-kitchen 0.2.14 -> 0.2.26, comfy-aimdo 0.4.10 ->
-# 0.4.11, frontend 1.45.19 -> 1.47.11. Re-run the installer (or
-# `pip install -r requirements.txt`) after checking this revision out.
-ComfyUI                   b1693ecba9f5b65f8c80ab36b195ab963ec92413
+# Bumped v0.30.0 -> v0.34.2 on 2026-08-29, for the H3 continuation feature:
+# `MiniMaxH3AddGuide` (anchor an image, a clip, audio or a clip-with-sound at
+# any frame) landed in v0.33.1 and is what lets a clip be continued using core
+# nodes alone. The same tree also brings "Fix peak memory issue with H3", an
+# H3 VAE optimisation, per-token AV noise masks and the `asym_w4a8_int8` layout
+# the ~11.8 GB w4a8 H3 checkpoint needs.
+#
+# **This bump retires the "never go past v0.30.0" rule**, which was based on the
+# mere existence of ComfyUI-MiniMax-H3-LegacySampling and had never been
+# measured. It was measured on 2026-08-29 (4 briefs, one fixed seed, same launch
+# flags, same av 17.1.0 so one AAC encoder): peak-referenced SNR **+2.98 dB**,
+# HF share flat, spectral flatness slightly better -- i.e. the "0.31 adds noise
+# and HF artefacts" claim does not hold. Two traps in reading those numbers: the
+# raw noise floor fell 5.3 dB but mostly because the clips came out quieter, and
+# falling L/R correlation variance reads as "stereo got steadier" when mid/side
+# says it actually NARROWED (-5.74 dB mean, -11.9 dB on the Fast turbo tier,
+# which is also the only leg carrying `MiniMaxH3SigmaShift` -- rebased in 0.34
+# from ModelSamplingDiscreteFlow onto ModelSamplingAV, so the tier's hardcoded
+# 12/3 shift may want re-tuning). Judged acceptable by ear on both revisions.
+#
+# Verified the way this file demands, all on v0.34.2: LTX23Director live render
+# (2 legs, 126 s) -- so the vendored RaccoonTiledVAEDecode /
+# RaccoonLatentUpsamplerTiled path still holds -- plus 4 live H3 renders with
+# audio, both H3 graphs validating, 2228 node classes registered with zero
+# import failures, and the app suite at 1373 passing. `av_model.LTXAVModel` and
+# `symmetric_patchifier.latent_to_pixel_coords` both still exist on this tree.
+#
+# Deps moved with it: comfy-kitchen 0.2.26 -> 0.2.31, comfy-aimdo 0.4.11 ->
+# 0.4.15, frontend 1.47.11 -> 1.49.6, templates 0.11.27 -> 0.11.50, embedded
+# docs 0.5.9 -> 0.5.10. torch is UNCHANGED (2.11.0+cu128), so no CUDA
+# reinstall. Re-run the installer (or `pip install -r requirements.txt`) after
+# checking this revision out.
+#
+# Note for whoever bumps next: comfy-kitchen's CUDA backend is still disabled
+# under cu128 and 0.34 makes the warning much louder ("If you are on nvidia 20
+# series and above it is required that you update your pytorch to cu130"). Its
+# triton backend reports available-but-disabled with triton 3.7.1 installed,
+# gated only on `--enable-triton-backend`.
+#
+# UPDATE 2026-08-30: that triton backend IS now wired up — `reserve-vram.py`
+# emits `--enable-triton-backend` by default on NVIDIA. Measured 1.37-1.43x on
+# MiniMax H3 (int8), nothing on the fp8_scaled models. The CUDA backend is still
+# disabled and still needs a cu130 torch; if you bump torch, re-measure, because
+# the triton flag stops being the interesting one the moment CUDA comes back.
+ComfyUI                   169fcf35a2fc163fec31338b816503ddac0d3fcf
 
 # Core workflow nodes
 rgthree-comfy             27b4f4cdcf3b127c29d5d8135ac1536ecbd4c383

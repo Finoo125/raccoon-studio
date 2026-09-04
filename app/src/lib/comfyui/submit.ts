@@ -17,6 +17,17 @@ const MODEL_INPUT_KEYS = ['ckpt_name', 'unet_name']
 // Module-level on purpose: every generation path funnels through submitPrompt.
 let lastModels = ''
 
+// Whether the last accepted job was MiniMax H3 — i.e. whether ComfyUI's output
+// cache is currently holding H3 conditioning latents. See the flush note in
+// `submitPrompt`.
+let lastWasH3 = false
+
+/** True if the graph runs any MiniMax H3 node (`…ImageToVideo`, `…ReferenceToVideo`, `…SigmaShift`). */
+function isMinimaxH3(prompt: unknown): boolean {
+  const nodes = (prompt ?? {}) as Record<string, { class_type?: string }>
+  return Object.values(nodes).some((n) => n?.class_type?.startsWith('MiniMaxH3') === true)
+}
+
 function modelsOf(prompt: unknown): string {
   const found = new Set<string>()
   const nodes = (prompt ?? {}) as Record<string, { inputs?: Record<string, unknown> }>
@@ -37,6 +48,23 @@ function modelsOf(prompt: unknown): string {
  * the incoming checkpoint doesn't fight the old one for VRAM. Same weights =
  * no flush, the cache stays warm.
  *
+ * H3 is the exception, and it needs the flush for a different reason than VRAM
+ * contention. H3 packs VAE-encoded video *and* audio latents into its
+ * conditioning — `minimax_payload`, a `CONDConstant` carrying
+ * `cond_video_latents` / `cond_audio_latents` (`comfy/model_base.py`) — so
+ * ComfyUI's per-node output cache pins them and `unload_all_models()` never
+ * frees them. Two H3 jobs in a row run on the same weights, so the rule above
+ * skips the flush, and every render's AV latents stay resident: that is the
+ * "the Nth H3 render kills ComfyUI" failure, which reads as an OOM or a driver
+ * fault rather than a leak. Only `free_memory` clears them (main.py calls
+ * `PromptExecutor.reset()` on that flag).
+ *
+ * Keyed off the *previous* job, not this one — nothing is pinned before the
+ * first H3 render, and the flush costs a full checkpoint reload. There is no
+ * cheaper middle setting: `/free` ignores `unload_models: false` (server.py
+ * only sets the flag when truthy) and main.py then defaults it to `free_memory`,
+ * so a cache reset always unloads the weights too.
+ *
  * ComfyUI answers 200 as long as ANY output node's chain validates — branches
  * that fail (e.g. a missing model file) are silently dropped from execution
  * and only reported in `node_errors`. Treat that as failure, and dequeue the
@@ -45,7 +73,7 @@ function modelsOf(prompt: unknown): string {
  */
 export async function submitPrompt(body: Record<string, unknown>): Promise<string> {
   const models = modelsOf(body.prompt)
-  if (models && lastModels && models !== lastModels) {
+  if ((models && lastModels && models !== lastModels) || lastWasH3) {
     await fetch('/api/comfyui/free', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -76,7 +104,9 @@ export async function submitPrompt(body: Record<string, unknown>): Promise<strin
     throw new Error(`ComfyUI rejected part of the graph (missing model?) — ${summary}`)
   }
   // Only a job ComfyUI accepted actually loads weights — a rejected one leaves
-  // the previous model resident, so remember models only on success.
+  // the previous model resident, so remember models only on success. Same for
+  // the H3 flag: a rejected graph never ran, so it pinned nothing.
   if (models) lastModels = models
+  lastWasH3 = isMinimaxH3(body.prompt)
   return j.prompt_id
 }

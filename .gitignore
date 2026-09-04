@@ -67,3 +67,10 @@ app/.next-manual/
 # Rebuild: docs/manual/serve-sandbox.sh <dir>, then capture.mjs, then build.mjs
 /Raccoon Studio Manual.pdf
 /docs/manual/
+
+# ── One-off A/B harness, deliberately untracked ──────────────────────────────
+# Re-renders picks lifted out of the user's own queue history, so it needs an
+# EROS_AB_DIR holding picks.json plus a scratchpad build_compare.py — neither of
+# which is in the repo. Ignored rather than committed so it cannot block a
+# publish, which refuses a dirty tree and counts untracked files as dirty.
+app/src/lib/workflows/eros-ab.live.test.ts

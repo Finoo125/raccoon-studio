@@ -38,6 +38,18 @@ export interface GenerationParams {
   scheduler?: string
   /** Ordered LoRA stack. The form starts with two rows and can append any number. */
   loras?: LoraParam[]
+  /**
+   * Character-sheet mode: render the subject as a multi-view reference sheet
+   * rather than a single picture, for use as a MiniMax H3 reference. The user's
+   * toggle; `characterSheetLora` is what the form injects once the file exists.
+   */
+  characterSheet?: boolean
+  /**
+   * Filename of the family's character-sheet LoRA. Same form-confirms-then-injects
+   * rule as `krea2RefusalLora` — only set once ComfyUI reports the file, so a
+   * missing download degrades to a normal render instead of failing validation.
+   */
+  characterSheetLora?: string
   /** Selected Patreon/Aria model (applied to the workflow's model/LoRA node). */
   ariaModel?: string
   ariaModelStrength?: number

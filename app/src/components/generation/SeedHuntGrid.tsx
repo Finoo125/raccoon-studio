@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { useQueueStore, isSeedHunt, type GenerationJob } from '@/lib/comfyui/queue'
@@ -8,7 +8,9 @@ import { useStudioStore } from '@/lib/generation/studio-store'
 import { cancelVideoJobs } from '@/lib/comfyui/cancel-video'
 import { submitPrompt } from '@/lib/comfyui/submit'
 import { ltx23Workflow } from '@/lib/workflows/ltx23'
-import { getVideoWorkflow } from '@/lib/workflows/video-index'
+import { getVideoWorkflow, promoteSeedHunt } from '@/lib/workflows/video-index'
+import { minimaxH3Workflow, H3_TURBO, H3_STEPS, h3UsesEros } from '@/lib/workflows/minimax-h3'
+import { assetInstalled } from '@/lib/models/ltx23-assets'
 import { Button } from '@/components/ui/button'
 import type { VideoGenerationParams } from '@/types/video-workflow'
 
@@ -28,6 +30,14 @@ export default function SeedHuntGrid({ jobs }: { jobs: GenerationJob[] }) {
   const clientId = useQueueStore((s) => s.clientId)
   const addJob = useQueueStore((s) => s.addJob)
   const setPrefill = useStudioStore((s) => s.setPrefill)
+  /**
+   * How the *picked* clip renders. Chosen here rather than on the form's Speed
+   * row because the whole point of the hunt is to decide after seeing the
+   * candidates — and reading the live form is not an option anyway (below).
+   * Defaults to full quality, which is what promoting used to hardcode.
+   */
+  const [turbo, setTurbo] = useState<false | 'fast'>(false)
+  const [fastReady, setFastReady] = useState(false)
 
   const ready = jobs.filter((j) => j.outputVideos?.length).length
 
@@ -49,6 +59,31 @@ export default function SeedHuntGrid({ jobs }: { jobs: GenerationJob[] }) {
    */
   const workflowOf = (job: GenerationJob) => getVideoWorkflow(job.workflowId) ?? ltx23Workflow
 
+  // Speed tiers are an H3 concept; LTX's builder reads no `turbo` at all. Nor
+  // does the Eros checkpoint, whose distillation is merged into its weights —
+  // offering the row there would promise a speed the promoted render ignores.
+  const isH3 =
+    jobs.length > 0 && workflowOf(jobs[0]).id === minimaxH3Workflow.id && !h3UsesEros(first)
+
+  // ponytail: the same one-shot LoraLoader probe the video form does. This grid
+  // is also rendered by Movie Maker, which sits OUTSIDE VideoFormProvider, so
+  // it cannot borrow the form's `turboReady` — calling useVideoForm() here
+  // would throw there.
+  useEffect(() => {
+    if (!isH3) return
+    let alive = true
+    fetch('/api/comfyui/object_info/LoraLoader')
+      .then((r) => r.json())
+      .then((d) => {
+        const names = d?.LoraLoader?.input?.required?.lora_name?.[0] as string[] | undefined
+        if (alive) setFastReady(assetInstalled(H3_TURBO.fast.lora, new Set(names ?? [])))
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [isH3])
+
   const select = (job: GenerationJob) => {
     setPicked(job.id)
     setPrefill({ workflowId: workflowOf(job).id, params: { seed: seedOf(job) } })
@@ -62,20 +97,11 @@ export default function SeedHuntGrid({ jobs }: { jobs: GenerationJob[] }) {
       // editing the prompt while candidates render cannot desync the finished
       // clip from the one that was picked.
       const wf = workflowOf(job)
-      // Clearing `seedHunt` is what promotes a candidate to the real render. On
-      // H3 that also drops Draft mode back to whatever the user actually chose,
-      // because the builder forces Turbo on for candidates only — so the final
-      // clip is full quality even though the candidate was not.
-      const p: VideoGenerationParams = {
-        ...(job.generationParams as VideoGenerationParams),
-        seedHunt: false,
-        // ...and explicitly off, not merely un-forced. A candidate carries
-        // whatever the Draft toggle said when the hunt started, so without this
-        // a hunt begun in Draft mode would promote to a *draft* — while the
-        // panel promises "rendered again at full quality with Draft mode off".
-        // The whole point of the hunt is cheap seeds, expensive keeper.
-        turbo: false,
-      }
+      // Clearing `seedHunt` promotes the candidate; the speed row above decides
+      // what it promotes TO. Never inherit the candidate's own `turbo` — the H3
+      // builder forces Draft on candidates whatever the form said, so a hunt
+      // begun in Draft would otherwise ship a draft as the keeper.
+      const p = promoteSeedHunt(job.generationParams as VideoGenerationParams, isH3 && turbo)
       // Abandon the candidates still outstanding — otherwise the real render
       // queues behind clips that have already been rejected.
       await cancelVideoJobs(useQueueStore.getState().jobs.filter(isSeedHunt))
@@ -85,7 +111,11 @@ export default function SeedHuntGrid({ jobs }: { jobs: GenerationJob[] }) {
         extra_data: { preview_method: 'auto' },
       })
       addJob(prompt_id, wf.id, wf.name, p.prompt, p, 'video')
-      toast.success(`Rendering seed ${p.seed} in full — this takes a few minutes.`)
+      toast.success(
+        turbo
+          ? `Rendering seed ${p.seed} at ${H3_TURBO.fast.steps} steps — this takes a minute or two.`
+          : `Rendering seed ${p.seed} in full — this takes a few minutes.`,
+      )
     } catch (e) {
       toast.error(`Render failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -99,6 +129,38 @@ export default function SeedHuntGrid({ jobs }: { jobs: GenerationJob[] }) {
         Seed hunt — {ready}/{jobs.length} candidates ready. Pick the motion you want; only that
         one gets upscaled.
       </p>
+      {/* Which speed the keeper renders at. Only H3 has tiers, and Fast stays
+          visible-but-disabled when its LoRA is missing — someone who cannot see
+          the option cannot decide they want it (same rule as the form's Speed
+          row). */}
+      {isH3 && (
+        <div className="flex shrink-0 items-center justify-center gap-2">
+          <span className="text-xs text-muted-foreground">Render the pick at</span>
+          {([false, 'fast'] as const).map((t) => {
+            const disabled = t === 'fast' && !fastReady
+            return (
+              <Button
+                key={String(t)}
+                size="sm"
+                variant={turbo === t ? 'default' : 'outline'}
+                className={`h-7 px-3 text-xs${disabled ? ' opacity-60' : ''}`}
+                title={
+                  disabled
+                    ? 'Needs the lightx2v 8-step Turbo LoRA — install it on the Models page'
+                    : undefined
+                }
+                onClick={() => {
+                  if (!disabled) setTurbo(t)
+                }}
+              >
+                {t === false
+                  ? `Full quality · ${H3_STEPS.normal} steps`
+                  : `Fast · ${H3_TURBO.fast.steps} steps`}
+              </Button>
+            )
+          })}
+        </div>
+      )}
       {/* Rows must be minmax(0, 1fr), not the implicit 1fr — that one is
           minmax(auto, 1fr), and its min-content floor lets a tall tile push the
           bottom row out of the container instead of shrinking to fit. Sized here

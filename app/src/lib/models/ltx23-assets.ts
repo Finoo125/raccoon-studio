@@ -26,6 +26,11 @@ export interface ModelAsset {
     | 'text_encoders'
     | 'diffusion_models'
     | 'latent_upscale_models'
+    // Tiny approximate decoders. ComfyUI scans this folder itself to build live
+    // sampling previews (`latent_preview.py:78`) — nothing loads them by name,
+    // so a file here changes what a render *looks like in progress* with no
+    // graph change at all.
+    | 'vae_approx'
   /** Approximate download size, MB (for display only). */
   sizeMb: number
   /** Verified public download URL (HF resolve). Omitted = import manually. */

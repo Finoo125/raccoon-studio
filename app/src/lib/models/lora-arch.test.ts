@@ -25,6 +25,19 @@ describe('classifyLoraHeader — tensor-key fingerprints', () => {
     ]))).toBe('anima')
   })
 
+  it('identifies MiniMax H3 in both of its key formats', () => {
+    // Mystic XXX ships v2 in ComfyUI keys and v4 in sd-scripts keys — one LoRA
+    // family, no shared prefix, so both spellings need to land on 'h3'.
+    expect(classifyLoraHeader(h([
+      'diffusion_model.blocks.0.mlp.fc1.lora_A.weight',
+      'diffusion_model.blocks.0.mlp.fc2.lora_B.weight',
+    ]))).toBe('h3')
+    expect(classifyLoraHeader(h([
+      'lora_unet_blocks_24_attn_qkv_proj.lora_down.weight',
+      'lora_unet_blocks_24_mlp_fc1.lora_down.weight',
+    ]))).toBe('h3')
+  })
+
   it('identifies LTX video (diffusion_model.transformer_blocks.*)', () => {
     expect(classifyLoraHeader(h([
       'diffusion_model.transformer_blocks.0.audio_attn1.to_gate_logits.alpha',
@@ -56,6 +69,18 @@ describe('classifyLoraHeader — tensor-key fingerprints', () => {
     expect(classifyLoraHeader(h([
       'transformer.text_fusion.projector.lora_A.weight',
       'transformer.text_fusion.projector.lora_B.weight',
+    ]))).toBe('krea2')
+  })
+
+  it('identifies Krea2 in sd-scripts key format, despite Anima-style block keys', () => {
+    // verified: aria_muscgi_krea2_r32_ep08.safetensors — ss_network_module
+    // `networks.lora_krea2`, trained on krea2_raw_bf16. Its transformer blocks
+    // are `lora_unet_blocks_*`, the same sd-scripts convention Anima uses, so
+    // only the txtfusion keys separate the two — and the krea2 rule has to be
+    // reached before the anima one for that to matter.
+    expect(classifyLoraHeader(h([
+      'lora_unet_blocks_0_attn_wk.lora_down.weight',
+      'lora_unet_txtfusion_projector.lora_up.weight',
     ]))).toBe('krea2')
   })
 

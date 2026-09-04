@@ -8,6 +8,7 @@ import { useQueueStore } from '@/lib/comfyui/queue'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import { canvasMediaKey } from '@/lib/generation/canvas-preview'
 import { useSendToVideo } from '@/lib/generation/useSendToVideo'
+import SendToVideoDialog from './SendToVideoDialog'
 import { formatEta } from '@/lib/generation/eta'
 import { workflows } from '@/lib/workflows'
 import { Progress } from '@/components/ui/progress'
@@ -25,6 +26,7 @@ const EXAMPLE_PROMPTS = [
 export default function StudioCanvas() {
   const [isHovered, setIsHovered] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [sendVideoOpen, setSendVideoOpen] = useState(false)
   const { activeImageUrl, setPrefill } = useStudioStore()
   const { sendToVideo, busy: videoBusy } = useSendToVideo()
   const director = useDirectorStage('image')
@@ -236,10 +238,18 @@ export default function StudioCanvas() {
               className="h-8 w-8 bg-background/80 backdrop-blur-sm"
               title="Send to Generate Videos"
               disabled={videoBusy}
-              onClick={() => void sendToVideo(activeImageUrl)}
+              onClick={() => setSendVideoOpen(true)}
             >
               {videoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Film className="h-3.5 w-3.5" />}
             </Button>
+            <SendToVideoDialog
+              open={sendVideoOpen}
+              onOpenChange={setSendVideoOpen}
+              onPick={(target) => {
+                setSendVideoOpen(false)
+                if (activeImageUrl) void sendToVideo(activeImageUrl, undefined, target)
+              }}
+            />
             <Button
               size="icon"
               variant="secondary"

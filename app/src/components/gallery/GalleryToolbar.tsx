@@ -103,20 +103,32 @@ export default function GalleryToolbar({ onRefresh, loading }: Props) {
         />
       </div>
 
-      {/* Workflow filter — image presets only; videos are all LTX23 for now */}
-      {mediaMode === 'image' && (
-        <Select value={filters.workflow || 'all'} onValueChange={(v) => setFilter('workflow', (v ?? '') === 'all' ? '' : (v ?? ''))}>
-          <SelectTrigger className="h-8 w-36 text-sm">
-            <SelectValue placeholder="All presets" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All presets</SelectItem>
-            <SelectItem value="Anima">Anima</SelectItem>
-            <SelectItem value="ERNIE">Ernie Turbo</SelectItem>
-            <SelectItem value="ZIT">Z Image Turbo</SelectItem>
-          </SelectContent>
-        </Select>
-      )}
+      {/* Workflow filter. It used to be images-only, justified by "videos are
+          all LTX23 for now" — which stopped being true when MiniMax H3 landed
+          and left a mixed video library with no way to tell the two apart.
+          The scanner matches `metadata.workflow` by exact equality, so these
+          values are the literal strings it records, not display names. */}
+      <Select value={filters.workflow || 'all'} onValueChange={(v) => setFilter('workflow', (v ?? '') === 'all' ? '' : (v ?? ''))}>
+        <SelectTrigger className="h-8 w-36 text-sm">
+          <SelectValue placeholder={mediaMode === 'video' ? 'All models' : 'All presets'} />
+        </SelectTrigger>
+        <SelectContent>
+          {mediaMode === 'video' ? (
+            <>
+              <SelectItem value="all">All models</SelectItem>
+              <SelectItem value="MinimaxH3">MiniMax H3</SelectItem>
+              <SelectItem value="LTX23">LTX 2.3</SelectItem>
+            </>
+          ) : (
+            <>
+              <SelectItem value="all">All presets</SelectItem>
+              <SelectItem value="Anima">Anima</SelectItem>
+              <SelectItem value="ERNIE">Ernie Turbo</SelectItem>
+              <SelectItem value="ZIT">Z Image Turbo</SelectItem>
+            </>
+          )}
+        </SelectContent>
+      </Select>
 
       {/* Metadata + tag filters — only shown when there are values to pick */}
       {allTags.length > 0 && (

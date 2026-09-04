@@ -202,4 +202,127 @@ export const MINIMAX_H3_ASSETS: ModelAsset[] = [
     source: 'Comfy-Org/MiniMax-H3 — optional, enables reference-to-video',
     optional: true,
   },
+  {
+    /**
+     * TenStrip's **10Eros Max**, beta4 — an uncensored H3 finetune that keeps
+     * base-model behaviour, built by grafting character data out of Wan 2.2,
+     * Krea 2 and LTX 2.3 onto H3's attention layers at a level the author says
+     * leaves its visual and audio quality alone.
+     *
+     * Two things make this a checkpoint *pick* rather than one more LoRA:
+     *
+     * - It is a **TURBO-hybrid** — the author's own sum-ranked turbo merge is
+     *   already in the weights, so the Draft/Fast LoRAs must NOT be stacked on
+     *   top. `H3_EROS` is the profile that replaces them, and the video form's
+     *   Speed row retires while this is selected.
+     * - beta3's turbo "harms referenced starts in i2v and reference mode", and
+     *   the card calls beta3 "somewhat corrupted and technically only a t2v
+     *   model". beta4 is the fix for both, which is why it is the only build
+     *   here and beta3 is deliberately absent.
+     *
+     * Same quantisation reasoning as every other H3 checkpoint in this list:
+     * int8 convrot, never an fp8_scaled sibling. The repo also holds a 40 GB
+     * bf16 build of this same beta4 (no benefit at 2x the download) and a
+     * separate `TURBO_ref2va_beta2` with **no int8 build at all** — hence
+     * reference mode staying on the stock ref2va weights.
+     *
+     * Licence is MiniMax's H3 community agreement plus — the author is explicit
+     * — the Wan 2.2, Krea 2 and LTX 2.3 community licences covering the
+     * character each contributed. Linked, never mirrored, like everything here.
+     */
+    name: '10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors',
+    folder: 'diffusion_models',
+    sizeMb: 20968,
+    url: 'https://huggingface.co/TenStrip/10Eros-Max/resolve/main/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors',
+    source: 'TenStrip/10Eros-Max — optional, uncensored finetune with Turbo built in',
+    optional: true,
+  },
+  {
+    /**
+     * Tiny approximate decoder for H3's latent, so a render shows a live picture
+     * while it samples instead of a bare progress bar.
+     *
+     * **Nothing in the graph references this file.** ComfyUI matches it by name
+     * out of `models/vae_approx/` on its own — `latent_formats.py:627` declares
+     * H3's `taesd_decoder_name = "taeh3"`, `latent_preview.py:14` lists it among
+     * the video TAEs, and the launcher already passes `--preview-method auto`.
+     * So this entry is the entire feature: no node, no custom pack, no builder
+     * change. That is also why it cannot be gated behind an install check the
+     * way the Turbo LoRAs are — there is no input to gate.
+     *
+     * Worth more here than on the image families: an H3 clip is minutes of
+     * sampling, and without a previewer a slow render is indistinguishable from
+     * a hung one — which is exactly how the `resolveOutputMedia` bug read before
+     * it was found.
+     *
+     * 9.8 MB and Apache-2.0, the only permissively-licensed file in this list.
+     */
+    name: 'taeh3.safetensors',
+    folder: 'vae_approx',
+    sizeMb: 10,
+    url: 'https://huggingface.co/Kijai/MiniMax-H3-TAE/resolve/main/vae_approx/taeh3.safetensors',
+    source: 'Kijai/MiniMax-H3-TAE — optional, live preview while a clip renders',
+    optional: true,
+  },
+  // ── Style LoRAs ───────────────────────────────────────────────────────────
+  // Unlike everything above, these unlock no mode and the builder never names
+  // them: they are picked by hand in the video form's four LoRA slots, which
+  // enumerate whatever ComfyUI reports. So the only thing needed to "integrate"
+  // one is a download entry — plus its key signature in `lora-arch.ts`, without
+  // which the sd-scripts build below is filed as Anima and offered on Anima
+  // image renders, where it can only fail validation.
+  //
+  // Sourced from HuggingFace rather than Civitai because every other URL in this
+  // catalog is an HF resolve URL and the download route wants a plain public GET.
+  // Both files were checked byte-for-byte against Civitai's own SHA256:
+  //   V4  fc3e856d…afba   155,095,800 B
+  //   V2  2fc32615…e8de   172,057,936 B
+  // The uploader permits derivatives, relicensing and commercial use with no
+  // credit, so mirroring is allowed here (unlike the Anima character sheet,
+  // which is manual-import for exactly the opposite licence flags).
+  // ⚠️ These are third-party re-uploads — the author keeps no HF repo — so the
+  // URLs can disappear where a first-party one would not. Known duplicates of
+  // the same bytes: B4100/mystic-h3 (V4), kirk86413/mysticv2-h3 (V2).
+  {
+    /**
+     * Mystic XXX v4 — the author's own pick ("best overall balance of motion
+     * quality, temporal stability, and fine detail"), and the newest release.
+     *
+     * Rank 16, fp32, sd-scripts keys (`lora_unet_blocks_<n>_*`), and it patches
+     * only blocks 24–49 — the back half of the DiT — which is why 104 modules
+     * fit in 148 MB. Loads on core `LoraLoaderModelOnly`: ComfyUI maps that
+     * spelling onto `diffusion_model.*` itself (`comfy/lora.py:195`), so the H3
+     * graph keeps its no-custom-packs property.
+     *
+     * No trigger word. Author's starting point is strength 1.0, with 0.2–1.0
+     * usable; expect to drop it when stacked on a Turbo LoRA, which was
+     * distilled on a schedule this was not tuned against.
+     */
+    name: 'MysticXXX_MMH3-V4.safetensors',
+    folder: 'loras',
+    sizeMb: 148,
+    url: 'https://huggingface.co/lynaNSFW/mysticxxx_MM_H3/resolve/main/MysticXXX_MMH3-V4.safetensors',
+    source: 'alcaitiff (Civitai) — optional style LoRA, anatomy realism',
+    optional: true,
+  },
+  {
+    /**
+     * Mystic XXX v2 — kept alongside v4 rather than superseded by it, because
+     * the two are structurally different adapters, not two builds of one thing:
+     * v2 carries ComfyUI keys (`diffusion_model.blocks.*`), touches all 50
+     * blocks, and patches **only the MLPs** — no attention at all. That is a
+     * much lighter-handed edit than v4's attention-inclusive back-half patch,
+     * so it composes differently with Turbo and with the realism adapter.
+     *
+     * Its `__metadata__` is a joke blob (`ss_base_model_version` reads
+     * "Schwifty-9K-Morty-Proof (Chuck Norris Edition)"), which is a live example
+     * of why `lora-arch.ts` reads tensor keys first and metadata second.
+     */
+    name: 'MysticXXX_MMH3-V2.safetensors',
+    folder: 'loras',
+    sizeMb: 164,
+    url: 'https://huggingface.co/lynaNSFW/mysticxxx_MM_H3/resolve/main/MysticXXX_MMH3-V2.safetensors',
+    source: 'alcaitiff (Civitai) — optional style LoRA, MLP-only variant',
+    optional: true,
+  },
 ]

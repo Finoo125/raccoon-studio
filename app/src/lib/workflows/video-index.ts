@@ -1,7 +1,7 @@
 import { ltx23Workflow } from './ltx23'
 import { ltx23DirectorWorkflow } from './ltx23-director'
 import { minimaxH3Workflow } from './minimax-h3'
-import type { VideoWorkflowDefinition } from '@/types/video-workflow'
+import type { VideoGenerationParams, VideoWorkflowDefinition } from '@/types/video-workflow'
 
 export const videoWorkflows: VideoWorkflowDefinition[] = [
   ltx23Workflow,
@@ -37,4 +37,20 @@ export function isLtxWorkflow(id: string | undefined): boolean {
  */
 export function supportsSeedHunt(id: string | undefined): boolean {
   return isLtxWorkflow(id) || id === 'minimax-h3'
+}
+
+/**
+ * Promote a seed-hunt candidate to the real render.
+ *
+ * Two things must be written explicitly rather than inherited, and both have
+ * bitten already: `seedHunt` off (that flag *is* what makes it a candidate),
+ * and `turbo` — the H3 builder forces Draft on candidates whatever the form
+ * said, so a promotion that merely left `turbo` alone would ship a draft as the
+ * keeper. The speed is the caller's choice at pick time, not the candidate's.
+ */
+export function promoteSeedHunt(
+  params: VideoGenerationParams,
+  turbo: VideoGenerationParams['turbo'],
+): VideoGenerationParams {
+  return { ...params, seedHunt: false, turbo }
 }

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { patreonSubfolder, matchesPatreonPreset, effectiveAriaModel } from './patreon'
+import { patreonSubfolder, matchesPatreonPreset, effectiveAriaModel, isAriaModel } from './patreon'
+
+describe('isAriaModel', () => {
+  it('excludes muscgi/muscgro names — those are LoRAs whatever else they are called', () => {
+    expect(isAriaModel('aria_muscgi_krea2_r32_ep08.safetensors')).toBe(false)
+    expect(isAriaModel('aria_zit_01.safetensors')).toBe(true)
+  })
+})
 
 describe('patreonSubfolder', () => {
   it('routes SDXL-family aria models to checkpoints', () => {
@@ -17,6 +24,13 @@ describe('patreonSubfolder', () => {
   it('routes muscgi/muscgro models to loras', () => {
     expect(patreonSubfolder('muscgi_pack.safetensors')).toBe('loras')
     expect(patreonSubfolder('MUSCGRO_v2.safetensors')).toBe('loras')
+  })
+  it('routes a muscgi/muscgro lora to loras even when the name also says aria', () => {
+    // aria_muscgi_krea2_r32_ep08.safetensors — an Aria-branded *LoRA*. The bare
+    // 'aria' substring used to win, copying a rank-32 LoRA into
+    // diffusion_models/ where no LoRA loader can see it.
+    expect(patreonSubfolder('aria_muscgi_krea2_r32_ep08.safetensors')).toBe('loras')
+    expect(patreonSubfolder('Aria_MUSCGRO_sdxl.safetensors')).toBe('loras')
   })
   it('falls back to loras for anything else', () => {
     expect(patreonSubfolder('random.safetensors')).toBe('loras')

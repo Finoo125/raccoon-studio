@@ -25,3 +25,18 @@ export async function uploadImageFromUrl(url: string, filename = 'base.png'): Pr
   if (!res.ok) throw new Error(`Could not load source image (${res.status})`)
   return uploadImageBlob(await res.blob(), filename)
 }
+
+/**
+ * The view URL for a file already sitting in ComfyUI's input dir — the inverse
+ * of what `uploadImageBlob` returns, subfolder prefix and all.
+ *
+ * Needed wherever a slot holds a filename this browser never uploaded itself (a
+ * prefill from another tab, a form restored from storage): the uploader keeps an
+ * object URL for its own upload, but has nothing to show for a name handed to it.
+ */
+export function inputViewUrl(name: string): string {
+  const slash = name.lastIndexOf('/')
+  const subfolder = slash >= 0 ? name.slice(0, slash) : ''
+  const filename = slash >= 0 ? name.slice(slash + 1) : name
+  return `/api/comfyui/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=input`
+}

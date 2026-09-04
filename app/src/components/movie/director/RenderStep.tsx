@@ -11,15 +11,8 @@ import { ltx23Workflow } from '@/lib/workflows/ltx23'
 import { parseComfyViewUrl } from '@/lib/director/render'
 import { allBeatsDone, nextPendingBeat, seedImageForBeat } from '@/lib/director/run-doc'
 import { downscaleFileToB64 } from '@/lib/generation/image-b64'
+import { inputViewUrl } from '@/lib/generation/upload'
 import type { DirectorRun } from '@/types/director'
-
-/** Build the ComfyUI input-dir view URL for a seed filename (may include a subfolder). */
-function inputViewUrl(seed: string): string {
-  const slash = seed.lastIndexOf('/')
-  const subfolder = slash >= 0 ? seed.slice(0, slash) : ''
-  const filename = slash >= 0 ? seed.slice(slash + 1) : seed
-  return `/api/comfyui/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=input`
-}
 
 async function beatPatch(runId: string, body: Record<string, unknown>): Promise<DirectorRun> {
   const res = await fetch(`/api/director/${runId}/beat`, {

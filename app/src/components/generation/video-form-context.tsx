@@ -21,6 +21,7 @@ import {
   H3_REF2V_TURBO_LORA,
   H3_REALISM_LORA,
   H3_REF2VA_CKPT,
+  H3_EROS,
   h3RefCount,
   h3TurboTier,
   type H3TurboTier,
@@ -125,6 +126,7 @@ function useVideoFormState() {
     fast: false,
   })
   const [ref2vReady, setRef2vReady] = useState(false)
+  const [erosReady, setErosReady] = useState(false)
   const [realismReady, setRealismReady] = useState(false)
   const { locked: directorLocked, loaded: addonsLoaded } = useAddonLock(LTX_DIRECTOR_ADDON)
   const [imageB64, setImageB64] = useState('')
@@ -266,12 +268,23 @@ function useVideoFormState() {
       .then((d) => {
         if (!alive) return
         const names = d?.UNETLoader?.input?.required?.unet_name?.[0] as string[] | undefined
-        const ready = Array.isArray(names) && assetInstalled(H3_REF2VA_CKPT, new Set(names))
+        const installed = new Set(names ?? [])
+        const ready = Array.isArray(names) && assetInstalled(H3_REF2VA_CKPT, installed)
         setRef2vReady(ready)
         // `mode` is persisted, so a session saved where the checkpoint existed
         // would restore into a mode whose button is now disabled, with no way
         // back to it in the UI. Same reasoning as the Director add-on guard below.
         if (!ready) setParams((p) => (p.mode === 'ref2v' ? { ...p, mode: 't2v' } : p))
+
+        // The Eros finetune is a third optional checkpoint on the same loader.
+        // Same persisted-flag reset the Turbo tiers need: a session saved where
+        // the file existed would otherwise reopen naming a checkpoint ComfyUI
+        // rejects at validation, behind a button that is now disabled.
+        const eros = Array.isArray(names) && assetInstalled(H3_EROS.ckpt, installed)
+        setErosReady(eros)
+        if (!eros) {
+          setParams((p) => (p.h3Checkpoint === 'eros' ? { ...p, h3Checkpoint: 'base' } : p))
+        }
       })
       .catch(() => {})
     return () => { alive = false }
@@ -295,13 +308,57 @@ function useVideoFormState() {
   // Director (or any caller) prefill: override prompt/params and lock an i2v seed.
   useEffect(() => {
     if (!prefill) return
+    /**
+     * Honour `prefill.workflowId` by switching the model it names.
+     *
+     * This form selects its workflow from `params.videoModel`, so a prefill
+     * that only set `workflowId` used to be ignored entirely — the form stayed
+     * on whatever was chosen before, and the default is LTX. "Send as video
+     * reference" was landing on LTX with `mode: 'ref2v'`, a mode LTX does not
+     * offer and whose reference the LTX builder discards, so the render
+     * succeeded and silently ignored the reference. Confirmed in a browser:
+     * "LTX 2.3 Video" before the click and after it.
+     *
+     * Matched against the video list on purpose. `StudioPrefill` is shared with
+     * the *image* form, so `workflowId` is often an image workflow id; writing
+     * that into `videoModel` would be meaningless. Director is excluded for the
+     * same reason the selector below excludes it — it is reached through
+     * `mode`, not through the model picker.
+     */
+    const named = videoWorkflows.find(
+      (w) => w.id === prefill.workflowId && w.id !== 'ltx23-director',
+    )
+    // `prefill.params` last so a caller that sets `videoModel` explicitly still wins.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing form from prefill store
-    setParams((p) => ({ ...p, ...prefill.params }))
+    setParams((p) => ({ ...p, ...(named ? { videoModel: named.id } : {}), ...prefill.params }))
     if (prefill.videoSeed) {
-      setParams((p) => ({ ...p, mode: 'i2v', inputImage: prefill.videoSeed!.filename }))
-      setImageB64(prefill.videoSeed.b64)
-      setSeedPreview(prefill.videoSeed.previewUrl)
+      // Only an unqualified seed means i2v. A prefill that names its own mode has
+      // already put the filename in the slot that mode reads — H3's reference
+      // sends land in `refImages`, and forcing i2v here would both bounce the
+      // mode back and re-file the image as a start frame.
+      if (!prefill.params.mode) {
+        setParams((p) => ({ ...p, mode: 'i2v', inputImage: prefill.videoSeed!.filename }))
+      }
+      /**
+       * An end-frame send fills `endImage`, and its thumbnail belongs to the
+       * end slot: `buildEnhanceArgs` reads `endImageB64` for fl2v and l2v.
+       * Putting it in `imageB64` would tell the writer "this is the opening
+       * frame" about the picture the clip has to *land* on — and l2v would then
+       * be described an image it was never shown. `seedPreview` is the start
+       * slot's preview and stays untouched; the end slot derives its own.
+       */
+      if (prefill.params.endImage && !prefill.params.inputImage) {
+        setEndImageB64(prefill.videoSeed.b64)
+      } else {
+        setImageB64(prefill.videoSeed.b64)
+        setSeedPreview(prefill.videoSeed.previewUrl)
+      }
     }
+    // The Continue dialog picks the batch size before this form exists, so it
+    // arrives on the prefill rather than in params (`huntCount` is form-local
+    // by design — see its declaration). Applied unconditionally when present:
+    // a same-route Continue keeps the previous hunt's size otherwise.
+    if (prefill.huntCount !== undefined) setHuntCount(prefill.huntCount)
     setPrefill(null)
   }, [prefill, setPrefill])
 
@@ -337,6 +394,11 @@ function useVideoFormState() {
           refImages: undefined,
           refVideos: undefined,
           refAudios: undefined,
+          // Same reason again, and one more: continuing is a deliberate act
+          // aimed at a specific clip. Restoring it a week later would silently
+          // chain onto something the user has forgotten about — or, once that
+          // clip is deleted, 400 every render with no visible cause.
+          continueFrom: undefined,
           lora1: undefined, lora1Strength: undefined,
           lora2: undefined, lora2Strength: undefined,
           lora3: undefined, lora3Strength: undefined,
@@ -511,7 +573,7 @@ function useVideoFormState() {
     workflow, params, set, setParams,
     settings, onSettingChange, models, options,
     collapsed, setCollapsed, advancedOpen, setAdvancedOpen,
-    faceIdReady, motionReady, turboReady, ref2vReady, realismReady, seedPreview, setSeedPreview,
+    faceIdReady, motionReady, turboReady, ref2vReady, erosReady, realismReady, seedPreview, setSeedPreview,
     setImageB64, setEndImageB64,
     isGenerating, huntCount, setHuntCount, hasActiveJob, lastJobSeed,
     enh, enhanceDisabledReason, handleEnhance, handleRefine, handleGenerate, handleCancel,

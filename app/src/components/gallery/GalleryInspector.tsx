@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import { useState, useEffect } from 'react'
-import { Heart, X, Send, ChevronLeft, ChevronRight, FolderOpen, Maximize2, Download, Pencil, Trash2, Clapperboard, ImagePlus, Film, Loader2 } from 'lucide-react'
+import { Heart, X, Send, ChevronLeft, ChevronRight, FolderOpen, Maximize2, Download, Pencil, Trash2, Clapperboard, ImagePlus, Film, Loader2, FastForward } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -10,21 +10,26 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import MoviePickerDialog from './MoviePickerDialog'
+import SendToVideoDialog from '@/components/generation/SendToVideoDialog'
 import { useGalleryStore } from '@/lib/gallery/store'
 import { useSendToVideo } from '@/lib/generation/useSendToVideo'
+import { useContinueVideo, canContinue } from '@/lib/generation/useContinueVideo'
 import { useRouter } from 'next/navigation'
 import { serializeGalleryLoras } from '@/lib/gallery/lora-transfer'
+import { resolveWorkflowFromMetadata } from '@/lib/gallery/reuse-settings'
 import { useKiosk } from '@/app/providers'
 
 export default function GalleryInspector() {
   const kiosk = useKiosk()
   const { selected, images, setSelected, toggleFavorite, removeImages } = useGalleryStore()
   const { sendToVideo, busy: videoBusy } = useSendToVideo()
+  const continueVideo = useContinueVideo()
   const router = useRouter()
   // Full-size lightbox shown in front of the gallery when the preview is clicked.
   const [lightbox, setLightbox] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [movieOpen, setMovieOpen] = useState(false)
+  const [sendVideoOpen, setSendVideoOpen] = useState(false)
   const [tagInput, setTagInput] = useState('')
 
   // Close the lightbox on Escape, and never leave it open across image changes.
@@ -134,7 +139,13 @@ export default function GalleryInspector() {
     if (selected.metadata.prompt) params.set('prompt', selected.metadata.prompt)
     if (selected.metadata.negativePrompt) params.set('negative', selected.metadata.negativePrompt)
     if (selected.metadata.seed !== undefined) params.set('seed', String(selected.metadata.seed))
-    if (selected.metadata.workflow) params.set('workflow', selected.metadata.workflow.toLowerCase())
+    // The resolved preset **id**, not the raw folder name the scanner recorded:
+    // `/generate` matches this param on id or name, and a folder ("ZIT",
+    // "KREA2") is neither — so the model preset never got selected and the
+    // prompt landed in whatever preset happened to be open.
+    const preset = resolveWorkflowFromMetadata(selected.metadata)
+    if (preset) params.set('workflow', preset.id)
+    else if (selected.metadata.workflow) params.set('workflow', selected.metadata.workflow.toLowerCase())
     const loras = serializeGalleryLoras(selected.metadata.loras)
     if (loras) params.set('loras', loras)
     router.push(`${isVideo ? '/generate-videos' : '/generate'}?${params}`)
@@ -244,18 +255,39 @@ export default function GalleryInspector() {
               <ImagePlus className="h-4 w-4 mr-2" /> Send as base image
             </Button>
           )}
-          {!isVideo && (
+          {isVideo && canContinue(selected) && (
             <Button
               variant="outline"
               className="w-full h-11 text-sm font-semibold"
-              disabled={videoBusy}
-              onClick={() => void sendToVideo(selected.url, selected.filename)}
+              onClick={() => continueVideo(selected)}
             >
-              {videoBusy
-                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                : <Film className="h-4 w-4 mr-2" />}
-              Send to Generate Videos
+              <FastForward className="h-4 w-4 mr-2" /> Continue this clip
             </Button>
+          )}
+          {/* One button, four destinations — the dialog asks which model and
+              which slot rather than this rail carrying a button per combination. */}
+          {!isVideo && (
+            <>
+              <Button
+                variant="outline"
+                className="w-full h-11 text-sm font-semibold"
+                disabled={videoBusy}
+                onClick={() => setSendVideoOpen(true)}
+              >
+                {videoBusy
+                  ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  : <Film className="h-4 w-4 mr-2" />}
+                Send to Generate Videos
+              </Button>
+              <SendToVideoDialog
+                open={sendVideoOpen}
+                onOpenChange={setSendVideoOpen}
+                onPick={(target) => {
+                  setSendVideoOpen(false)
+                  void sendToVideo(selected.url, selected.filename, target)
+                }}
+              />
+            </>
           )}
           {!isVideo && (
             <Button variant="outline" className="w-full h-11 text-sm font-semibold" onClick={handleEdit}>

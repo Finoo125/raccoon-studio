@@ -308,15 +308,15 @@ describe('krea2 post-processing', () => {
     const wf = krea2TurboWorkflow.buildPrompt({ ...post, detailer: false })
     expect(wf['hires:upscale_model'].inputs.model_name).toBe('4x-UltraSharp.pth')
     expect(wf['hires:scale'].inputs.scale_by).toBeCloseTo(0.375)
-    expect(wf['hires:sample'].inputs.denoise).toBe(0.2)
+    expect(wf['hires:sample'].inputs.denoise).toBe(0.15)
     expect(wf['hires:sample'].inputs.steps).toBe(8)
     expect(wf['hires:sample'].inputs.cfg).toBe(1)
     expect(wf['hires:sample'].inputs.seed).toBe(42)
   })
 
   it('reuses RAW native steps/cfg in the hires pass', () => {
-    // All 52 steps actually run — comfy/samplers.py:1420 builds int(52/0.2)=260
-    // sigmas and keeps the last 53 — they just span the tail 20% of the
+    // All 52 steps actually run — comfy/samplers.py:1420 builds int(52/0.15)=346
+    // sigmas and keeps the last 53 — they just span the tail 15% of the
     // schedule. There is no separate hires step budget to tune.
     const wf = krea2RawWorkflow.buildPrompt({ ...post, detailer: false })
     expect(wf['hires:sample'].inputs.steps).toBe(52)
@@ -324,7 +324,7 @@ describe('krea2 post-processing', () => {
   })
 
   // Regression: the refinement passes must never use a stochastic sampler.
-  // er_sde re-injects noise every step, and at denoise 0.2 all 8 steps run, so
+  // er_sde re-injects noise every step, and at denoise 0.15 all 8 steps run, so
   // it invented texture instead of refining it — light freckles came back as
   // blotches and the "upscale" looked worse than the base render. Measured live
   // 2026-08-03; euler at the same denoise is clean. Same lesson Anima Turbo

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Upload, Loader2, X, ScanFace, Boxes, RefreshCw, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
+import { useImagePicker } from './PickImageDialog'
 import { listFaceModels } from '@/lib/generation/face-models'
 import { selectionIsStale } from '@/lib/models/installed'
 
@@ -75,6 +76,7 @@ export default function FaceSwapInput({
   const [preview, setPreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const { isDragging, dragProps } = useFileDrop((file) => void handleFile(file))
+  const { openPicker, pickerDialog } = useImagePicker(inputRef, (file) => void handleFile(file))
 
   // Saved face models, loaded when the model source is shown (and refreshable).
   const [faceModels, setFaceModels] = useState<string[]>([])
@@ -236,9 +238,10 @@ export default function FaceSwapInput({
                 if (f) void handleFile(f)
               }}
             />
+            {pickerDialog}
             <button
               type="button"
-              onClick={() => inputRef.current?.click()}
+              onClick={openPicker}
               disabled={uploading}
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-60"
             >

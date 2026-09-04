@@ -8,11 +8,12 @@ import { Button } from '@/components/ui/button'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import { useRecentImagesStore } from '@/lib/generation/recent-store'
 import { useSendToVideo } from '@/lib/generation/useSendToVideo'
+import SendToVideoDialog from './SendToVideoDialog'
 import { useDirectorStage } from '@/lib/director/director-stage'
 import { useRouter } from 'next/navigation'
 import { workflows } from '@/lib/workflows'
 import type { GenerationParams } from '@/types/workflow'
-import { galleryMetadataToGenerationParams } from '@/lib/gallery/reuse-settings'
+import { galleryMetadataToGenerationParams, resolveWorkflowFromMetadata } from '@/lib/gallery/reuse-settings'
 
 /**
  * Centered modal that inspects a recent gallery image. Opened by the RecentRail
@@ -25,6 +26,7 @@ export default function GenerateInspector() {
   const setInspectImage = useStudioStore((s) => s.setInspectImage)
   const setPrefill = useStudioStore((s) => s.setPrefill)
   const [lightbox, setLightbox] = useState(false)
+  const [sendVideoOpen, setSendVideoOpen] = useState(false)
   const { sendToVideo, busy: videoBusy } = useSendToVideo()
   const director = useDirectorStage('image')
   const router = useRouter()
@@ -68,11 +70,9 @@ export default function GenerateInspector() {
   }
 
   const handleReuse = () => {
-    const wf = m.workflow
-      ? workflows.find(
-          (w) => w.id === m.workflow!.toLowerCase() || w.name.toLowerCase() === m.workflow!.toLowerCase(),
-        )
-      : undefined
+    // Same resolver the gallery's "Send to Generate" uses — the recorded
+    // `workflow` is an output folder name, which matches no id or name.
+    const wf = resolveWorkflowFromMetadata(m)
     const params: Partial<GenerationParams> = galleryMetadataToGenerationParams(m)
     setPrefill({ workflowId: wf?.id ?? workflows[0].id, params })
     setInspectImage(null)
@@ -158,17 +158,29 @@ export default function GenerateInspector() {
                 <Button className="h-11 text-sm font-semibold col-span-3" onClick={handleReuse}>
                   <RotateCcw className="h-4 w-4 mr-2" /> Reuse settings
                 </Button>
+                {/* One button, four destinations — the dialog asks which model
+                    and which slot. Same component as the gallery inspector, so
+                    the two cannot drift. */}
                 <Button
                   variant="outline"
                   className="h-11 text-sm font-semibold col-span-3"
                   disabled={videoBusy}
-                  onClick={() => { void sendToVideo(image.url, image.filename); setInspectImage(null) }}
+                  onClick={() => setSendVideoOpen(true)}
                 >
                   {videoBusy
                     ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     : <Film className="h-4 w-4 mr-2" />}
                   Send to Generate Videos
                 </Button>
+                <SendToVideoDialog
+                  open={sendVideoOpen}
+                  onOpenChange={setSendVideoOpen}
+                  onPick={(target) => {
+                    setSendVideoOpen(false)
+                    void sendToVideo(image.url, image.filename, target)
+                    setInspectImage(null)
+                  }}
+                />
                 <Button variant="outline" className="h-11 flex-col gap-1 text-xs col-span-3" onClick={handleEdit}>
                   <Pencil className="h-4 w-4" /> Edit image
                 </Button>

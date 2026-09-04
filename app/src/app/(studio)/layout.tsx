@@ -19,6 +19,7 @@ import { Fragment, useEffect, useState } from 'react'
 import QueuePanel from '@/components/queue/QueuePanel'
 import FirstRunModels from '@/components/FirstRunModels'
 import GuidedTour from '@/components/GuidedTour'
+import ContinueVideoDialog from '@/components/generation/ContinueVideoDialog'
 
 const ICONS: Record<string, LucideIcon> = {
   Wand2, Clapperboard, Images, SlidersHorizontal, Film, Package, ScrollText, Puzzle, PencilRuler, Wrench, Archive, Settings,
@@ -151,6 +152,10 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
       <QueuePanel open={queueOpen} onOpenChange={setQueueOpen} />
       <FirstRunModels />
       <GuidedTour />
+      {/* Continue-a-clip dialog: one instance for all three Continue buttons,
+          which sit in the video canvas, the video inspector and the gallery
+          inspector. Driven by `continueTarget` in the studio store. */}
+      <ContinueVideoDialog />
       <Toaster richColors position="bottom-right" />
     </div>
   )

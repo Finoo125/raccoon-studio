@@ -19,6 +19,7 @@ const NOISE_ID = idOf('RandomNoise')
 const VIDEO_ID = idOf('CreateVideo')
 const MODEL_ID = idOf('UNETLoader')
 const SCHED_ID = idOf('BasicScheduler')
+const SAMPLER_ID = idOf('KSamplerSelect')
 const GUIDER_ID = idOf('BasicGuider')
 const DECODE_ID = idOf('VAEDecode')
 const SAVE_ID = idOf('SaveVideo')
@@ -115,6 +116,48 @@ export const H3_TURBO_LORA = H3_TURBO.draft.lora
 export const H3_REF2VA_CKPT = 'minimax_h3_ref2va_pruned_int8_convrot.safetensors'
 
 /**
+ * TenStrip's 10Eros Max (beta4) — an alternative fl2va checkpoint, offered
+ * beside the stock one in the video form.
+ *
+ * A whole profile like `H3_TURBO`, for the same reason: this build is a
+ * **TURBO-hybrid**, meaning the author merged his own distillation into the
+ * weights. So it does not merely swap `unet_name` — it also owns the sampler,
+ * the scheduler and the step count, and a Turbo LoRA must **not** be stacked on
+ * top of it (a LoRA distilled for one schedule patching a model already merged
+ * onto another is how you get the soft, over-sharpened clip the card's beta3
+ * notes complain about). The whole documented recipe is one line: *"For beta_4
+ * use euler/simple 6-8 steps on all modes."*
+ *
+ * `steps` takes the top of that range and `huntSteps` the bottom, which is what
+ * keeps the seed hunt honestly cheaper here — there is no Draft tier to drop to,
+ * so without this candidates would cost a full render each.
+ *
+ * Not applied in `ref2v`: that mode loads a structurally different checkpoint,
+ * and TenStrip's reference build (`10Eros_Max_h3_TURBO_ref2va_beta2`) exists
+ * only as a 40 GB bf16 file with no int8 convrot sibling. `h3UsesEros` is the
+ * single reader of that exclusion.
+ */
+export const H3_EROS = {
+  ckpt: '10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors',
+  sampler: 'euler',
+  scheduler: 'simple',
+  steps: 8,
+  huntSteps: 6,
+} as const
+
+/**
+ * Is this render on the Eros checkpoint?
+ *
+ * Never compare `h3Checkpoint` directly. The flag is persisted with the rest of
+ * the form, so it survives a switch into reference mode — where these weights
+ * are the wrong architecture entirely and ComfyUI would reject the graph.
+ */
+export const h3UsesEros = (p?: {
+  h3Checkpoint?: VideoGenerationParams['h3Checkpoint']
+  mode?: VideoGenerationParams['mode']
+}): boolean => p?.h3Checkpoint === 'eros' && p.mode !== 'ref2v'
+
+/**
  * The references the node will actually see, in the order it will see them.
  *
  * Load-bearing, not cosmetic: `execute` iterates the slots it received and skips
@@ -159,6 +202,33 @@ export const h3RefCount = (p: {
  */
 export const H3_STEPS = { normal: 20, turbo: H3_TURBO.draft.steps } as const
 export const H3_TURBO_STRENGTH = H3_TURBO.draft.strength
+
+/**
+ * Frames of the previous clip pinned at the head of a continuation.
+ *
+ * **Must stay on H3's 17k+5 clip grid** (5, 22, 39, 56): `MiniMaxH3AddGuide`
+ * silently walks a non-grid batch *down* to the next legal length rather than
+ * refusing, so an innocent-looking 24 would quietly pin 22 and the arithmetic
+ * that trims the head back off would be wrong by two frames.
+ *
+ * 22 because one frame is not enough to say where anything is *going* — from a
+ * single still the model cannot tell a rising ball from a falling one, so it
+ * invents the motion and the join visibly changes direction. 22 frames (~0.9 s)
+ * carry velocity. The pack that tuned this calls 5 "just barely fluid" and 22
+ * "nearly seamless", and warns that 56 spends 2.3 s of every render on frames
+ * you throw away.
+ */
+export const H3_CONTEXT_FRAMES = 22
+
+/**
+ * Seconds delivered by a continuation that was *sampled* for `durationSeconds`.
+ *
+ * The pinned head comes back at the start of the new clip and is trimmed before
+ * saving, so a continuation always delivers less than it rendered. Anything
+ * showing the user a running total has to use this, not the slider value.
+ */
+export const h3DeliveredSeconds = (durationSeconds: number): number =>
+  (h3FrameCount(h3ClampDuration(durationSeconds)) - H3_CONTEXT_FRAMES) / H3_FPS
 
 /**
  * fal's realism-people adapter — the fix for H3's waxy, airbrushed skin, which
@@ -220,6 +290,22 @@ export function withRealismTrigger(prompt: string): string {
  */
 export const H3_GRAIN_INTENSITY = 0.04
 
+/**
+ * RCAS sharpen strength — AMD's contrast-adaptive filter from FSR, via KJNodes'
+ * `ImageSharpenKJ`. A single 5-tap cross filter that adapts to local contrast,
+ * so it has far fewer halo artefacts than an unsharp mask at the same bite.
+ *
+ * 0.3 is PlagueKind's V7 figure ("looks natural"); the node's own default is
+ * 0.8, which on H3's already-soft output reads as over-sharpened rather than
+ * detailed. Tune downward from here.
+ *
+ * A different job from both grain and the realism adapter: grain lays texture
+ * over the frame, the adapter rebuilds skin, this raises local contrast on the
+ * detail that is already there. It cannot invent detail the sampler dropped —
+ * for that, more steps.
+ */
+export const H3_SHARPEN_STRENGTH = 0.3
+
 /** Frames per second RIFE interpolates up to. Exactly 2x H3's fixed 24. */
 export const H3_RIFE_FPS = 48
 
@@ -230,6 +316,26 @@ export const H3_RIFE_FPS = 48
  * silently change the clip's duration, not its smoothness.
  */
 export const H3_FPS = 24
+
+/**
+ * Seconds of the previous clip's sound pinned alongside those frames.
+ *
+ * **Derived from `H3_CONTEXT_FRAMES`, never chosen independently.**
+ * `MiniMaxH3AddGuide` anchors audio *forward* from `frame_idx`, so a window of
+ * a different length than the picture pin desynchronises the two: at 1.0 s
+ * (24 frames) against a 22-frame picture pin, new-frame 0 showed the previous
+ * clip's frame N-22 while playing its audio from N-24 — 83 ms of A/V drift
+ * inside the pinned head — and the extra 2 frames of sound survived the
+ * 22-frame trim, so every delivered clip opened with a fragment of the
+ * previous one's audio. Both streams must cover the same span and end at the
+ * same instant, which is the cut point.
+ *
+ * The cost of tying them: 22 frames is not a multiple of 3, so the window no
+ * longer lands exactly on H3's 40 Hz audio grid (a frame is 5/3 audio steps).
+ * Alignment with the picture is worth more than grid-exactness — a sub-step
+ * rounding is smaller than the 83 ms it replaces.
+ */
+export const H3_CONTEXT_AUDIO_S = H3_CONTEXT_FRAMES / H3_FPS
 
 /** Model's own ceiling, from the H3 docs: short edge ≤768, long edge ≤1344. */
 const MAX_SHORT = 768
@@ -255,6 +361,27 @@ export const tierOf = (m?: string): Tier => (m === 'high' || m === 'medium' ? m 
 export const BUDGET_MP: Record<Tier, number> = { low: 0.4, medium: 0.6, high: 0.8 }
 
 /**
+ * H3's trained clip length, in seconds at 24 fps.
+ *
+ * The model was trained on 124–362 frames, and `h3FrameCount` lands exactly on
+ * both ends (5 s → 124, 15 s → 362) because the bounds are themselves points on
+ * the 17k+5 grid. Past 362 the model does not refuse, it degrades — so the form
+ * happily offered 30 s (727 frames, twice the ceiling) and the render came back
+ * worse for having taken twice as long.
+ *
+ * `h3_brain.py` has carried `MAX_DURATION_S = 15` since it was written, with a
+ * comment that the slider goes to 30 and "the model simply will not honour
+ * that" — but it clamps only the words it writes, never the frame count the
+ * graph asks for. This is the other half of that clamp.
+ */
+export const H3_MIN_DURATION_S = 5
+export const H3_MAX_DURATION_S = 15
+
+/** `d` clamped to the range H3 was trained on. */
+export const h3ClampDuration = (d: number): number =>
+  Math.min(H3_MAX_DURATION_S, Math.max(H3_MIN_DURATION_S, d))
+
+/**
  * Frame count for a duration, snapped up to H3's 17k+5 grid at 24 fps.
  *
  * This is the `ComfyMathExpression` from the official templates
@@ -262,6 +389,9 @@ export const BUDGET_MP: Record<Tier, number> = { low: 0.4, medium: 0.6, high: 0.
  * TypeScript instead — which drops both that node and `PrimitiveFloat` from the
  * graph, and with them the only dependency this workflow would have had on a
  * custom node pack. 5 s → 124 frames, matching the documented figure.
+ *
+ * Grid arithmetic only, deliberately unclamped: callers pass it through
+ * `h3ClampDuration` first, and `buildPrompt` does.
  */
 export function h3FrameCount(durationSeconds: number): number {
   const raw = Math.max(5, Math.round(durationSeconds * H3_FPS))
@@ -432,9 +562,15 @@ export const minimaxH3Workflow: VideoWorkflowDefinition = {
     // Above the mode branch: ref2v allocates loader ids before the model chain does.
     const freshId = makeIds()
 
+    // A continuation opens on its pinned head, so a start or end frame would
+    // fight it — nothing can honour two different things at frame 0. Cleared
+    // here rather than trusted to the caller, so every downstream read (task
+    // derivation, the aspect anchor, the loader splice) sees one truth.
+    if (params.continueFrom) params = { ...params, inputImage: undefined, endImage: undefined }
+
     cond.prompt =
       params.realismLora === true ? withRealismTrigger(params.prompt) : params.prompt
-    cond.length = h3FrameCount(params.durationSeconds)
+    cond.length = h3FrameCount(h3ClampDuration(params.durationSeconds))
     wf[VIDEO_ID].inputs.fps = H3_FPS
 
     const tier = tierOf(params.vramMode)
@@ -560,15 +696,158 @@ export const minimaxH3Workflow: VideoWorkflowDefinition = {
     // to whatever they actually chose. So the candidate and the final clip
     // deliberately differ in quality, and only the seed carries across.
     const hunting = params.seedHunt === true
+    // The Eros finetune carries its own distillation in the weights, so it
+    // retires the Turbo dial rather than stacking on it, and brings its own
+    // sampler/scheduler/steps (see `H3_EROS`). `speed` is forced to null so
+    // `buildModelChain` adds neither the Turbo LoRA nor the sigma shift.
+    const eros = h3UsesEros(params)
     // Hunting upgrades "no Turbo" to Draft — the cheapest tier, since the point
     // is throwaway candidates — but honours an explicit Fast pick rather than
     // quietly downgrading someone who chose it.
-    const speed = h3TurboTier(params.turbo) ?? (hunting ? 'draft' : null)
-    wf[SCHED_ID].inputs.steps = speed ? H3_TURBO[speed].steps : H3_STEPS.normal
+    const speed = eros ? null : (h3TurboTier(params.turbo) ?? (hunting ? 'draft' : null))
+    if (eros) {
+      wf[MODEL_ID].inputs.unet_name = H3_EROS.ckpt
+      wf[SAMPLER_ID].inputs.sampler_name = H3_EROS.sampler
+      wf[SCHED_ID].inputs.scheduler = H3_EROS.scheduler
+    }
+    // Candidates take the low end of the card's 6-8 range: with no Draft tier to
+    // fall back on, that step cut is the entire seed-hunt discount.
+    wf[SCHED_ID].inputs.steps = eros
+      ? hunting
+        ? H3_EROS.huntSteps
+        : H3_EROS.steps
+      : speed
+        ? H3_TURBO[speed].steps
+        : H3_STEPS.normal
     const model = buildModelChain(wf, params, speed, freshId)
     if (model !== MODEL_ID) {
       wf[SCHED_ID].inputs.model = [model, 0]
       wf[GUIDER_ID].inputs.model = [model, 0]
+    }
+
+    // ── Continuation: pin the previous clip's tail, then trim it back off ────
+    //
+    // Five core nodes, so this costs the graph none of its core-only property:
+    //   LoadVideo -> GetVideoComponents -> ImageFromBatch / TrimAudioDuration
+    //   -> MiniMaxH3AddGuide (which only rewrites the conditioning)
+    //
+    // Placed before the RIFE splice on purpose: trimming first means RIFE
+    // interpolates 22 fewer frames, and the frame index stays in *source*
+    // frames rather than doubling with the output fps.
+    if (params.continueFrom) {
+      const load = freshId()
+      wf[load] = {
+        class_type: 'LoadVideo',
+        _meta: { title: 'Previous clip' },
+        // ` [output]` makes core LoadVideo read from output/ rather than its
+        // own input/ listing — `folder_paths.annotated_filepath` honours it and
+        // ComfyUI does not reject the value for being absent from the node's
+        // combo options. Verified live, both validation and execution, so the
+        // previous clip never has to be copied or re-uploaded per link.
+        inputs: { file: `${params.continueFrom} [output]` },
+      }
+      const split = freshId()
+      wf[split] = {
+        class_type: 'GetVideoComponents',
+        _meta: { title: 'Previous clip frames + sound' },
+        inputs: { video: [load, 0] },
+      }
+      /**
+       * Size the render from the previous clip instead of from the form.
+       *
+       * The form's orientation and pixel budget describe whatever the user last
+       * picked, which has nothing to do with the clip being continued. A
+       * portrait 672×960 source continued while the form said landscape came
+       * back 1088×608: `AddGuide` **resizes the guide to the target rather than
+       * refusing**, so it centre-cropped a thin band out of the portrait frames
+       * and upscaled it — wrong framing and a large quality loss, with no error
+       * anywhere. Reported from a real render.
+       *
+       * Carrying width/height through params instead would work until they
+       * drifted; taking them off the source's own frames cannot disagree with
+       * it. `GetImageSize` is core, and H3 only ever emits legal sizes (they
+       * came out of `h3Dims`), so nothing needs re-snapping. It also means the
+       * pinned frames are used at their native size, with no resample at all.
+       */
+      const size = freshId()
+      wf[size] = {
+        class_type: 'GetImageSize',
+        _meta: { title: 'Match the previous clip’s size' },
+        inputs: { image: [split, 0] },
+      }
+      cond.width = [size, 0]
+      cond.height = [size, 1]
+
+      const tailFrames = freshId()
+      wf[tailFrames] = {
+        class_type: 'ImageFromBatch',
+        _meta: { title: `Last ${H3_CONTEXT_FRAMES} frames` },
+        // Negative index counts from the end (`batch_index += shape[0]` in the
+        // node), which is what makes this the *tail* rather than the opening.
+        inputs: {
+          image: [split, 0],
+          batch_index: -H3_CONTEXT_FRAMES,
+          length: H3_CONTEXT_FRAMES,
+        },
+      }
+      const tailAudio = freshId()
+      wf[tailAudio] = {
+        class_type: 'TrimAudioDuration',
+        _meta: { title: 'Tail sound' },
+        inputs: {
+          audio: [split, 1],
+          start_index: -H3_CONTEXT_AUDIO_S,
+          duration: H3_CONTEXT_AUDIO_S,
+        },
+      }
+      const guide = freshId()
+      wf[guide] = {
+        class_type: 'MiniMaxH3AddGuide',
+        _meta: { title: 'Pin previous tail at frame 0' },
+        inputs: {
+          positive: [COND_ID, 0],
+          latent: [COND_ID, 1],
+          // Both VAEs by role, never by id: this graph has two VAELoaders and
+          // which is which is decided by what the decoders already read. The
+          // ref2v branch identifies the audio one the same way.
+          vae: wf[DECODE_ID].inputs.vae,
+          audio_vae: wf[AUDIO_ID].inputs.vae,
+          image: [tailFrames, 0],
+          audio: [tailAudio, 0],
+          frame_idx: 0,
+        },
+      }
+      // AddGuide returns conditioning only — the latent still comes straight
+      // off the conditioning node.
+      wf[GUIDER_ID].inputs.conditioning = [guide, 0]
+
+      // The pinned frames come back at the head of the render and have to come
+      // off before the clip is saved, picture and sound together, or every join
+      // repeats a second of the previous clip.
+      const deliveredS = (Number(cond.length) - H3_CONTEXT_FRAMES) / H3_FPS
+      const cutFrames = freshId()
+      wf[cutFrames] = {
+        class_type: 'ImageFromBatch',
+        _meta: { title: 'Drop pinned head' },
+        inputs: {
+          image: wf[VIDEO_ID].inputs.images,
+          batch_index: H3_CONTEXT_FRAMES,
+          // `length` is clamped to what is left, so this asks for "the rest".
+          length: 4096,
+        },
+      }
+      wf[VIDEO_ID].inputs.images = [cutFrames, 0]
+      const cutAudio = freshId()
+      wf[cutAudio] = {
+        class_type: 'TrimAudioDuration',
+        _meta: { title: 'Drop pinned head (sound)' },
+        inputs: {
+          audio: wf[VIDEO_ID].inputs.audio,
+          start_index: H3_CONTEXT_FRAMES / H3_FPS,
+          duration: deliveredS,
+        },
+      }
+      wf[VIDEO_ID].inputs.audio = [cutAudio, 0]
     }
 
     // RIFE doubles the frame count, so the container fps has to double with it
@@ -580,7 +859,10 @@ export const minimaxH3Workflow: VideoWorkflowDefinition = {
         class_type: 'RIFEInterpolation',
         _meta: { title: 'RIFE Interpolation' },
         inputs: {
-          images: [DECODE_ID, 0],
+          // Whatever is currently feeding the container, not DECODE_ID: a
+          // continuation puts a trim in between, and reading past it would
+          // interpolate the pinned head straight back into the delivered clip.
+          images: wf[VIDEO_ID].inputs.images,
           source_fps: H3_FPS,
           target_fps: H3_RIFE_FPS,
           scale: 1,
@@ -588,6 +870,37 @@ export const minimaxH3Workflow: VideoWorkflowDefinition = {
       }
       wf[VIDEO_ID].inputs.images = [rife, 0]
       wf[VIDEO_ID].inputs.fps = H3_RIFE_FPS
+    }
+
+    // RCAS sharpen — one cheap pass against H3's softness. See
+    // H3_SHARPEN_STRENGTH for why 0.3 and not the node's own 0.8.
+    //
+    // Its place in the chain is between RIFE and grain, and both edges matter:
+    // sharpening *before* RIFE would leave the interpolated frames unsharpened
+    // while the real ones were, so crispness would alternate frame to frame;
+    // sharpening *after* grain would sharpen the grain into crunch instead of
+    // sharpening the picture.
+    if (params.sharpen === true) {
+      const sharp = freshId()
+      wf[sharp] = {
+        class_type: 'ImageSharpenKJ',
+        _meta: { title: 'RCAS sharpen' },
+        inputs: {
+          // Read off the container, not the decoder: a continuation trims the
+          // pinned head out in between, and reading past that would sharpen —
+          // and re-attach — frames this clip is supposed to drop.
+          image: wf[VIDEO_ID].inputs.images,
+          // `method` is a V3 dynamic combo: the key selects the option, and that
+          // option's own inputs arrive prefixed with the parent id
+          // (`comfy_api/latest/_io.py:1599`) — the same convention as ref2v's
+          // autogrow slots. Get the prefix wrong and `method` stays a bare
+          // string, which the node subscripts and dies on, so this fails loudly
+          // rather than silently rendering unsharpened.
+          method: 'rcas',
+          'method.strength': H3_SHARPEN_STRENGTH,
+        },
+      }
+      wf[VIDEO_ID].inputs.images = [sharp, 0]
     }
 
     // Film grain, same node the image families use at a near-identical intensity
@@ -622,7 +935,11 @@ export const minimaxH3Workflow: VideoWorkflowDefinition = {
         _meta: { title: 'Seed-hunt candidate (temp)' },
         inputs: {
           images: wf[VIDEO_ID].inputs.images,
-          audio: [AUDIO_ID, 0],
+          // Read off the container like `images` above, not straight from the
+          // decoder: a continuation trims the pinned head out of both streams,
+          // and taking audio from the decoder would put that second of sound
+          // back while the picture stayed trimmed.
+          audio: wf[VIDEO_ID].inputs.audio,
           frame_rate: wf[VIDEO_ID].inputs.fps,
           loop_count: 0,
           filename_prefix: 'MinimaxH3_hunt',

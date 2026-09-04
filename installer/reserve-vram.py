@@ -235,6 +235,82 @@ def sage_flags(usable):
     return ['--use-sage-attention'] if usable else []
 
 
+# ── comfy-kitchen Triton INT8 backend ────────────────────────────────────────
+#
+# The SECOND seed-invalidating install flag, and it clears the bar the one above
+# set: Sol-Attn was rejected at 1.083x, sage earns its place at 1.44x, this is
+# 1.37x. Same reasoning applies — install-level, never a per-render toggle.
+#
+# What it fixes: `comfy/quant_ops.py:42` disables comfy-kitchen's CUDA backend on
+# anything below cu130 and we pin cu128, so every int8 op falls to the *eager*
+# fallback, which our own measurement put at 1.272 ms/layer against the CUDA
+# backend's 0.320 — slower than not quantizing at all. `--enable-triton-backend`
+# routes those ops through Triton instead. It does NOT re-enable the CUDA
+# backend; that still needs a cu130 torch.
+#
+# Measured 2026-08-30, RTX 5090, 3-render protocol per side, fresh process each,
+# warmup discarded (within-protocol variance was 0.1 s):
+#
+#   MiniMax H3 (int8_convrot)   84.3 -> 58.9 s   1.43x   |  3 seeds, no regression
+#   H3 again, 2 fresh seeds     83.0 -> 60.5 s   1.37x
+#   Krea2 Turbo (fp8_scaled)    12.5 -> 12.6 s   none    |  output shifts 15.7/255
+#   LTX 2.3 10Eros (fp8_scaled) 95.8 -> 93.5 s   noise   |  output shifts 3.4/255
+#
+# So the win is int8-only; the two fp8_scaled models get a small trajectory shift
+# for nothing. Z-Image, Anima and Illustrious are BF16/F16 — read off the
+# safetensors headers, not assumed — and never reach a quant op at all.
+#
+# Quality was the thing to disprove and it held up. The first seed looked like a
+# +79% flicker regression; it was not. `std` of per-frame mean luma conflates a
+# slow brightness trend with true frame-to-frame flicker, and only the trend
+# moved — `std` of the frame-to-frame DIFFERENCE went 0.307->0.392, 0.387->0.355,
+# 0.284->0.270 across three seeds, i.e. mixed and tiny. Audio SNR was mixed too
+# (+3.83, -0.98 dB). Measure the difference, not the level, or you will reject
+# this for an artefact of the metric.
+def triton_backend_usable():
+    """True when ComfyUI could start with --enable-triton-backend and benefit.
+
+    NVIDIA only, and that is a safety gate rather than a tuning one. ComfyUI's
+    own auto-enable for ROCm is commented out in `quant_ops.py` because RDNA1 and
+    RDNA2 (gfx10xx) have no WMMA and the INT8 `tl.dot` path **hangs the GPU**
+    there. The flag itself carries no such check — it enables the backend on
+    whatever it is given — so passing it on an unlucky AMD card trades a hang for
+    a speedup we only measured on NVIDIA anyway. `torch.version.hip` is the
+    discriminator: PyTorch-ROCm aliases HIP into the `torch.cuda` namespace, so
+    every other probe in this file sees AMD as CUDA and cannot be reused here.
+
+    Version floor mirrors `quant_ops.py:55` (>= 3.7). Broad except for the same
+    reason as its sage sibling: no package, a bad DLL or a wheel built for
+    another torch all have the same correct answer, which is to leave the flag
+    off and take the eager path.
+    """
+    try:
+        import torch
+        if getattr(torch.version, 'hip', None) is not None:
+            return False
+        import triton
+        return tuple(int(v) for v in triton.__version__.split('.')[:2]) >= (3, 7)
+    except Exception:
+        return False
+
+
+def parse_triton_override(raw):
+    """RACCOON_TRITON_BACKEND -> True (force on), False (off), None (auto-detect).
+
+    Numeric like every other override here, and for the same reason. `0` is the
+    way back to the eager path — and therefore back to the seeds an install
+    produced before this flag shipped.
+    """
+    if raw is None or raw.strip() == '':
+        return None
+    return float(raw) != 0
+
+
+def triton_flags(usable):
+    """--enable-triton-backend, or [] to leave comfy-kitchen on eager."""
+    return ['--enable-triton-backend'] if usable else []
+
+
 def parse_override(raw):
     """RACCOON_RESERVE_VRAM -> GB, or None for 'use ComfyUI's default' (0 or blank).
 
@@ -352,17 +428,17 @@ def resolve_reserve_gb(total_gib):
     return None if total_gib is None else reserve_gb(total_gib)
 
 
-def tuning_flags(ram_gib, vram_gib, keep_pinned=None, sage=False):
+def tuning_flags(ram_gib, vram_gib, keep_pinned=None, sage=False, triton=False):
     """Every hardware-derived launch flag for a box with this RAM and VRAM.
 
     `keep_pinned` is None to use the RAM tier, or True/False for an explicit
     RACCOON_PINNED_MEMORY. Split out of tuning_main so the self-check can assert
     the assembled command line without needing a GPU to probe.
 
-    `sage` is an explicit boolean rather than a probe, and defaults to OFF, so
-    that this stays a pure function of its arguments — the self-check below
-    asserts exact argument lists, and a probe here would make them depend on
-    whether the machine running the tests happens to have the optional extra
+    `sage` and `triton` are explicit booleans rather than probes, and default to
+    OFF, so that this stays a pure function of its arguments — the self-check
+    below asserts exact argument lists, and a probe here would make them depend
+    on whether the machine running the tests happens to have the optional extra
     installed. tuning_main does the detecting.
     """
     if keep_pinned is None:
@@ -381,7 +457,7 @@ def tuning_flags(ram_gib, vram_gib, keep_pinned=None, sage=False):
 
     # The preview tier reads the REAL total either way: it sizes a per-step TAESD
     # decode and has nothing to do with which loader is in use.
-    return flags + preview_flags(vram_gib) + sage_flags(sage)
+    return flags + preview_flags(vram_gib) + sage_flags(sage) + triton_flags(triton)
 
 
 def tuning_main():
@@ -429,7 +505,28 @@ def tuning_main():
         sys.stderr.write('RACCOON_SAGE_ATTENTION=1 but sageattention will not import - ignoring\n')
         sage = False
 
-    flags = tuning_flags(ram, total, keep, sage)
+    # Same three-way contract as sage: 0 is the way back to the eager path and to
+    # the seeds an install produced before this flag shipped, 1 forces it on,
+    # unparseable falls back to detection.
+    raw_triton = os.environ.get('RACCOON_TRITON_BACKEND')
+    try:
+        triton = parse_triton_override(raw_triton)
+    except ValueError:
+        sys.stderr.write(
+            'RACCOON_TRITON_BACKEND=%r is not a number - detecting instead\n' % raw_triton)
+        triton = None
+    if triton is None:
+        triton = triton_backend_usable()
+    elif triton and not triton_backend_usable():
+        # Unlike sage, ComfyUI does NOT exit on this flag — it logs and falls back
+        # to eager. The reason to refuse a forced-on anyway is the AMD hang in
+        # triton_backend_usable(): on gfx10xx the INT8 path takes the GPU with it,
+        # and "the user asked for it" is a poor trade against a hard hang.
+        sys.stderr.write(
+            'RACCOON_TRITON_BACKEND=1 but the Triton INT8 backend is not usable here - ignoring\n')
+        triton = False
+
+    flags = tuning_flags(ram, total, keep, sage, triton)
 
     # Force LF. On Windows, text-mode stdout translates \n to \r\n, and the shell
     # reader then hands ComfyUI "--reserve-vram\r" — an unrecognised argument that
@@ -557,6 +654,19 @@ def _self_check():
     assert parse_sage_override('1') is True and parse_sage_override('0') is False
     assert parse_sage_override('') is None and parse_sage_override(None) is None
     assert parse_sage_override('  0 ') is False, 'whitespace must not read as "unset"'
+    # Triton INT8 backend: same opt-in shape as sage, and the same override contract.
+    assert triton_flags(True) == ['--enable-triton-backend']
+    assert triton_flags(False) == [], 'not usable means comfy-kitchen stays on eager'
+    assert parse_triton_override('1') is True and parse_triton_override('0') is False
+    assert parse_triton_override('') is None and parse_triton_override(None) is None
+    assert parse_triton_override('  0 ') is False, 'whitespace must not read as "unset"'
+    for bad in ('banana', 'off', 'yes'):
+        try:
+            parse_triton_override(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('parse_triton_override(%r) should raise ValueError' % bad)
     for bad in ('banana', 'off', 'yes'):
         try:
             parse_sage_override(bad)
@@ -617,6 +727,17 @@ def _self_check():
             'a 12 GB card gets sage with no tier flags at all'
         assert tuning_flags(63.7, 31.8) == ['--reserve-vram', '8', '--preview-size', '768'], \
             'sage defaults OFF'
+        # The Triton backend is additive too, and lands AFTER sage so the
+        # assembled command line has one stable order to assert against.
+        assert tuning_flags(63.7, 31.8, triton=True) == \
+            ['--reserve-vram', '8', '--preview-size', '768', '--enable-triton-backend'], \
+            'the triton backend must not displace the measured tiers'
+        assert tuning_flags(63.7, 31.8, sage=True, triton=True) == \
+            ['--reserve-vram', '8', '--preview-size', '768',
+             '--use-sage-attention', '--enable-triton-backend'], \
+            'both accelerators coexist - they patch different things'
+        assert tuning_flags(63.7, 31.8) == ['--reserve-vram', '8', '--preview-size', '768'], \
+            'the triton backend defaults OFF'
     finally:
         for var, val in (('RACCOON_RESERVE_VRAM', _saved), ('RACCOON_DYNAMIC_VRAM', _saved_dyn)):
             os.environ.pop(var, None)

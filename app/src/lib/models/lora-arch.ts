@@ -64,7 +64,7 @@ const MAX_HEADER_BYTES = 32 * 1024 * 1024
  * `lora_unet_input_blocks_` (SDXL), which is why both can be matched with a
  * plain startsWith.
  */
-const KEY_RULES: { family: LoraFamily; prefixes: string[] }[] = [
+const KEY_RULES: { family: LoraFamily; prefixes?: string[]; pattern?: RegExp }[] = [
   // verified: LTX2.3_DMD_reshaped_r256.safetensors
   { family: 'ltx', prefixes: ['diffusion_model.transformer_blocks.', 'diffusion_model.audio_'] },
   // verified: ZIT_muscgi_1.safetensors (dim 3840)
@@ -75,7 +75,27 @@ const KEY_RULES: { family: LoraFamily; prefixes: string[] }[] = [
   // is the only thing that can classify it). The bare `transformer.` prefix is
   // deliberately not used: QwenImage and SimpleTuner LoRAs share it. TextFusion
   // is unique to Krea2.
-  { family: 'krea2', prefixes: ['diffusion_model.txtfusion.', 'transformer.text_fusion.'] },
+  // `lora_unet_txtfusion_` is the sd-scripts spelling of the same TextFusion
+  // stack (verified: aria_muscgi_krea2_r32_ep08.safetensors, ss_network_module
+  // networks.lora_krea2). It MUST stay above the anima row: such a file also
+  // carries `lora_unet_blocks_*`, which is sd-scripts' generic block naming
+  // rather than an architecture marker, so anima would otherwise claim it.
+  { family: 'krea2', prefixes: ['diffusion_model.txtfusion.', 'transformer.text_fusion.', 'lora_unet_txtfusion_'] },
+  // verified: MysticXXX_MMH3-V2 (ComfyUI keys, MLP-only) and -V4 (sd-scripts
+  // keys). The two builds of one LoRA share no prefix, which is why this row
+  // needs a pattern as well: musubi-tuner spells H3 blocks `lora_unet_blocks_<n>_`,
+  // the same sd-scripts convention Anima uses. So it MUST stay above the anima
+  // row, or every Mystic download is filed as an Anima LoRA and offered on Anima
+  // image renders, where it can only fail. `attn_qkv_proj` is the discriminator:
+  // H3 fuses QKV, while Anima has adaLN modulation and separate wq/wk/wv.
+  // The `diffusion_model.blocks.` prefix additionally claims the Turbo and
+  // realism LoRAs this app already ships, which were unrecognised until now and
+  // therefore listed in every image picker.
+  {
+    family: 'h3',
+    prefixes: ['diffusion_model.blocks.'],
+    pattern: /^lora_unet_blocks_\d+_attn_qkv_proj\./,
+  },
   // verified: ANIMA_muscgi_2.safetensors (DiT adaLN blocks, dim 2048)
   { family: 'anima', prefixes: ['lora_unet_blocks_'] },
   { family: 'flux', prefixes: ['diffusion_model.double_blocks.', 'diffusion_model.single_blocks.', 'lora_unet_double_blocks_', 'lora_unet_single_blocks_'] },
@@ -134,7 +154,9 @@ export function classifyLoraHeader(header: SafetensorsHeader | null): LoraFamily
   const names = tensorNames(header)
 
   for (const rule of KEY_RULES) {
-    if (names.some((k) => rule.prefixes.some((p) => k.startsWith(p)))) return rule.family
+    if (names.some((k) => rule.prefixes?.some((p) => k.startsWith(p)) || rule.pattern?.test(k))) {
+      return rule.family
+    }
   }
   if (names.some((k) => UNET_BLOCK_PREFIXES.some((p) => k.startsWith(p)))) {
     return splitUnetFamily(header, names)

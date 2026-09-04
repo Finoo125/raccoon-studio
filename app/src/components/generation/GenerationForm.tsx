@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus, LayoutGrid, SlidersHorizontal } from 'lucide-react'
+import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus, LayoutGrid, Columns3, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -35,6 +35,12 @@ import type { MaskBrushHandle } from './MaskBrush'
 import PromptPresets from './PromptPresets'
 import WildcardManager from './WildcardManager'
 import { expandWildcards, hasWildcards } from '@/lib/prompts/wildcards-expand'
+import {
+  CHARACTER_SHEETS,
+  characterSheetFor,
+  withCharacterSheet,
+  promptLengthWarning,
+} from '@/lib/workflows/character-sheet'
 import { uploadImageBlob } from '@/lib/generation/upload'
 import type { WildcardLists } from '@/lib/prompts/store'
 import type { GenerationParams, WorkflowDefinition } from '@/types/workflow'
@@ -143,6 +149,9 @@ export default function GenerationForm() {
   // rejects an unknown lora_name outright, so none is ever passed until it has
   // been seen here.
   const [krea2Builtins, setKrea2Builtins] = useState({ refusal: false, projector: false, kroma: false })
+  // Which character-sheet LoRAs ComfyUI actually reports. Same confirm-then-inject
+  // rule as the Krea2 built-ins above: an unknown lora_name is rejected outright.
+  const [sheetLorasInstalled, setSheetLorasInstalled] = useState<Set<string>>(new Set())
   // Gate persistence until the saved session has been restored, so the first
   // render's defaults don't overwrite what we're about to load.
   const [restored, setRestored] = useState(false)
@@ -203,6 +212,21 @@ export default function GenerationForm() {
   }, [])
 
   const workflow = workflows.find((w) => w.id === workflowId)!
+  /** The character-sheet preset for whichever family is selected, if any. */
+  const sheetPreset = characterSheetFor(workflow?.loraFamily)
+  /**
+   * Character sheets are shown but switched off — turned back on by deleting
+   * this constant and the two places it is read.
+   *
+   * It folds into `sheetReady`, which already gates both the toggle's
+   * `disabled` and `sheetOn`, so nothing downstream needs a second check: the
+   * LoRA cannot be injected and a `characterSheet: true` left in a restored
+   * session or a saved preset stays inert.
+   */
+  const sheetInDevelopment: boolean = true
+  const sheetReady =
+    !sheetInDevelopment && Boolean(sheetPreset && sheetLorasInstalled.has(sheetPreset.file))
+  const sheetOn = params.characterSheet === true && sheetReady
 
   // Detect imported Aria models. SDXL-family workflows use Aria *checkpoints*
   // (CheckpointLoaderSimple); the diffusion families (z-image/ernie/anima) use
@@ -281,8 +305,14 @@ export default function GenerationForm() {
           projector: has(KREA2_PROJECTOR_LORA),
           kroma: has(KREA2_KROMA_LORA),
         })
+        // Same list, same call — the character-sheet presets are just more
+        // optional LoRAs, so they ride along rather than costing a second fetch.
+        setSheetLorasInstalled(
+          new Set(CHARACTER_SHEETS.filter((preset) => has(preset.file)).map((preset) => preset.file)),
+        )
       } catch {
         setKrea2Builtins({ refusal: false, projector: false, kroma: false })
+        setSheetLorasInstalled(new Set())
       }
     }
     void checkKrea2Builtins()
@@ -568,6 +598,16 @@ export default function GenerationForm() {
         // and the resolved text (not the template) is what's built + recorded.
         jobParams.prompt = expandWildcards(jobParams.prompt, wildcardLists)
         if (jobParams.negativePrompt) jobParams.negativePrompt = expandWildcards(jobParams.negativePrompt, wildcardLists)
+        // Character-sheet mode: one toggle stands in for picking the family's
+        // LoRA and remembering its trigger word. Appended to the user's stack
+        // rather than replacing it, and only when the file is confirmed present
+        // — every family reads `loras` through `selectedLoras`, so no builder
+        // needs to know this feature exists.
+        if (sheetOn && sheetPreset) {
+          jobParams.characterSheetLora = sheetPreset.file
+          jobParams.loras = [...(jobParams.loras ?? []), { name: sheetPreset.file, strength: 1 }]
+          jobParams.prompt = withCharacterSheet(jobParams.prompt, sheetPreset.file)
+        }
         const prompt = workflow.buildPrompt(jobParams)
         const prompt_id = await submitPrompt({ prompt, client_id: clientId, extra_data: { preview_method: 'auto' } })
         addJob(prompt_id, workflowId, workflow.name, jobParams.prompt, jobParams)
@@ -583,7 +623,8 @@ export default function GenerationForm() {
       setIsGenerating(false)
     }
   }, [params, workflow, workflowId, clientId, addJob, faceDetailerAvailable, faceSwapAvailable,
-      pixelBoostAvailable, sdxlVaeAvailable, krea2Builtins, wildcardLists, ariaModel])
+      pixelBoostAvailable, sdxlVaeAvailable, krea2Builtins, wildcardLists, ariaModel,
+      sheetOn, sheetPreset])
 
   // Cancel the in-flight generation: stop the batch submit loop, interrupt the
   // running prompt, drop any still-queued prompts, and mark our active jobs
@@ -847,7 +888,81 @@ export default function GenerationForm() {
             {(() => { void previewSeed; return expandWildcards(params.prompt, wildcardLists) })()}
           </button>
         )}
+        {/* Measured on the prompt that will actually be SENT: character-sheet
+            mode adds ~150 characters of trigger and layout, which is enough on
+            its own to cross Z-Image's black-frame cliff. Warning on the typed
+            text alone would stay silent until the render came back black. */}
+        {(() => {
+          const effective = sheetOn && sheetPreset
+            ? withCharacterSheet(params.prompt, sheetPreset.file)
+            : params.prompt
+          const warn = promptLengthWarning(workflow.loraFamily, effective)
+          return warn ? <p className="text-[11px] font-medium text-destructive">{warn}</p> : null
+        })()}
       </div>
+
+      {/* Character sheet — one toggle instead of "find the right LoRA for this
+          model, then remember its trigger word". Hidden outright for families
+          with no tested preset rather than offered and disappointing. */}
+      {sheetPreset && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={sheetOn}
+            disabled={!sheetReady}
+            onClick={() => set('characterSheet', !sheetOn)}
+            className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+              sheetOn ? 'border-primary/40 bg-primary/10' : 'border-border bg-muted/30 hover:bg-muted/50'
+            }`}
+          >
+            <span
+              className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${
+                sheetOn ? 'bg-primary' : 'bg-input'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-sm transition-transform mt-0.5 ${
+                  sheetOn ? 'translate-x-[1.375rem]' : 'translate-x-0.5'
+                }`}
+              />
+            </span>
+            <span className="min-w-0 flex items-center gap-2">
+              <Columns3 className="h-4 w-4 shrink-0 text-primary" />
+              <span className="min-w-0">
+                <span className="flex items-center gap-2 text-sm font-semibold">
+                  Character sheet
+                  {sheetInDevelopment && (
+                    <Badge variant="outline" className="text-[10px] font-normal">in development</Badge>
+                  )}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {sheetInDevelopment
+                    ? 'Render the same character from three angles — a reference sheet for MiniMax H3 video. Not ready yet.'
+                    : sheetReady
+                      ? 'Render the same character from three angles — a reference sheet for MiniMax H3 video'
+                      : `Needs ${sheetPreset.file} (${sheetPreset.sizeMb} MB) — get it on the Models page`}
+                </span>
+              </span>
+            </span>
+          </button>
+          {sheetReady && sheetOn && (
+            <p className="text-[11px] text-muted-foreground">
+              Describe the character only — the trigger word and the three-view layout are added for you.
+              Wide 16:9 gives each view the most room.
+            </p>
+          )}
+          {!sheetReady && !sheetInDevelopment && (
+            <p className="text-[11px] text-muted-foreground">
+              Download it from{' '}
+              <a href={sheetPreset.source} target="_blank" rel="noreferrer" className="underline hover:text-foreground">
+                {sheetPreset.source.replace('https://', '')}
+              </a>{' '}
+              into <span className="font-mono">models/loras/</span>, then restart ComfyUI.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Negative prompt — only where it does anything (see showNegativePrompt) */}
       {showNegativePrompt && (

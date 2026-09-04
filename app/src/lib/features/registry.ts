@@ -64,6 +64,10 @@ export const FEATURES: FeatureDef[] = [
   // A mode inside Generate Video, not a page — hence navHidden. `href` still
   // points at where it lives so the Add-ons entry can link somewhere real.
   { id: 'ltx-director',    label: 'LTX 2.3 Director', href: '/generate-videos', icon: 'Clapperboard',    kind: 'addon', group: 'studio', navHidden: true },
+  // A tab inside the Models page, not a page of its own — hence navHidden,
+  // exactly like ltx-director above. `href` points at where it lives so the
+  // Add-ons entry can link somewhere real.
+  { id: 'civitai-browser', label: 'Civitai Browser', href: '/models', icon: 'Package', kind: 'addon', group: 'studio', navHidden: true },
   { id: 'tools',           label: 'Tools',          href: '/tools',           icon: 'Wrench',            kind: 'core',  group: 'manage' },
   // Its own entry rather than a panel inside Tools: it is the one thing here
   // people go looking for by name, usually right before a reinstall.

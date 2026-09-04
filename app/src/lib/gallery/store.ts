@@ -87,8 +87,23 @@ export const useGalleryStore = create<GalleryState>((set) => ({
   setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
   // Switching media resets the browsed folder + open inspector, since the folder
   // tree and item list differ between images and videos.
+  // The workflow filter is reset with the mode because its options differ per
+  // mode: images offer presets, videos offer models, and the scanner matches
+  // the value by exact equality. Carrying "Anima" into video mode would match
+  // nothing and show an empty gallery with no obvious cause.
   setMediaMode: (mediaMode) =>
-    set((s) => (s.mediaMode === mediaMode ? s : { mediaMode, selectedFolder: null, selected: null, selectedIds: [], selecting: false })),
+    set((s) =>
+      s.mediaMode === mediaMode
+        ? s
+        : {
+            mediaMode,
+            selectedFolder: null,
+            selected: null,
+            selectedIds: [],
+            selecting: false,
+            filters: { ...s.filters, workflow: '' },
+          },
+    ),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
   setFilter: (key, value) =>

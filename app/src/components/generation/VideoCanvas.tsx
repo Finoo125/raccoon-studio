@@ -1,15 +1,20 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Download, Clapperboard, Clock, Check, Loader2 } from 'lucide-react'
+import { Download, Clapperboard, Clock, Check, Loader2, FastForward, Link2, RotateCcw } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { toast } from 'sonner'
 import { useQueueStore, isSeedHunt } from '@/lib/comfyui/queue'
 import SeedHuntGrid from './SeedHuntGrid'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import { formatEta } from '@/lib/generation/eta'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
+import { useRecentVideosStore } from '@/lib/generation/recent-videos-store'
+import { useContinueVideo, canContinue } from '@/lib/generation/useContinueVideo'
+import { deriveChain, clipRefFromUrl, refToPath } from '@/lib/video/join'
 import { useDirectorStage } from '@/lib/director/director-stage'
+import type { VideoGenerationParams } from '@/types/video-workflow'
 
 /**
  * Center stage for the Generate Videos page. While a video job samples it shows
@@ -29,6 +34,99 @@ export default function VideoCanvas({
   const director = useDirectorStage('video')
   const activeVideoUrl = useStudioStore((s) => s.activeVideoUrl)
   const jobs = useQueueStore((s) => s.jobs)
+  /**
+   * The finished clip as the gallery knows it, so the canvas can offer Continue
+   * on the render you are looking at.
+   *
+   * Matched on **filename**, not on the url. VideoInspector can compare urls
+   * because the rail hands it one of its own, but the canvas's url comes from
+   * the render itself — `/api/comfyui/view?filename=…` — while the gallery
+   * serves `/api/gallery/video?filename=…`. The two never string-match, so a
+   * url comparison here silently found nothing and the button never appeared.
+   * Both shapes carry `filename` in the query, which is what makes this work.
+   *
+   * The canvas only ever holds a url, and continuing needs the clip's subfolder
+   * and its recorded workflow. The rail re-scans whenever a video job
+   * completes, so the fresh clip is there a moment after the render lands;
+   * until then the button simply does not appear, which is better than
+   * offering one that cannot work.
+   */
+  const recentVideos = useRecentVideosStore((s) => s.videos)
+  const activeName = activeVideoUrl
+    ? (new URLSearchParams(activeVideoUrl.split('?')[1] ?? '').get('filename') ?? '')
+    : ''
+  const activeClip = activeName ? recentVideos.find((v) => v.filename === activeName) : undefined
+  const continueVideo = useContinueVideo()
+
+  // The job that produced the clip on screen, for Regenerate. Unlike the
+  // gallery lookup above this one can match on the url, because the url is the
+  // job's own output.
+  const setPrefill = useStudioStore((s) => s.setPrefill)
+  const activeJob = activeVideoUrl
+    ? jobs.find((j) => j.status === 'done' && j.outputVideos?.includes(activeVideoUrl))
+    : undefined
+
+  /**
+   * Reload this clip's settings into the form — **with a fresh seed**.
+   *
+   * Video deliberately differs from the image canvas's regenerate here. Keeping
+   * the seed would re-render the identical clip, and ComfyUI's execution cache
+   * serves that from the previous run, so the button would read as doing
+   * nothing. Beside Continue, "regenerate" means another take of this shot.
+   */
+  const handleRegenerate = () => {
+    if (!activeJob) return
+    setPrefill({
+      workflowId: activeJob.workflowId,
+      params: { ...activeJob.generationParams, seed: -1 },
+    })
+    toast.success('Settings loaded with a fresh seed — hit Generate')
+  }
+
+  /**
+   * The clips that lead to the one on screen, oldest first.
+   *
+   * Derived from job history rather than tracked: every continuation already
+   * records the clip it came from and the clip it produced, so a parallel list
+   * would only be something that can disagree with the truth. It also means a
+   * regenerated link drops its rejected take automatically — the discarded
+   * attempt is not on the path back.
+   */
+  const chain = deriveChain(
+    jobs
+      .filter((j) => j.kind === 'video' && j.status === 'done' && j.outputVideos?.length)
+      .map((j) => {
+        const ref = clipRefFromUrl(j.outputVideos![0])
+        return {
+          path: ref ? refToPath(ref) : '',
+          continueFrom: (j.generationParams as VideoGenerationParams).continueFrom,
+        }
+      })
+      .filter((j) => j.path),
+  )
+  const [joining, setJoining] = useState(false)
+
+  const handleJoin = async () => {
+    setJoining(true)
+    try {
+      const clips = chain.map((p) => {
+        const i = p.lastIndexOf('/')
+        return i < 0 ? { filename: p, subfolder: '' } : { filename: p.slice(i + 1), subfolder: p.slice(0, i) }
+      })
+      const res = await fetch('/api/video/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clips }),
+      })
+      const data = (await res.json()) as { filename?: string; error?: string }
+      if (!res.ok) throw new Error(data.error ?? `Finalize failed (${res.status})`)
+      toast.success(`Finalized ${clips.length} clips into ${data.filename}`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Finalize failed')
+    } finally {
+      setJoining(false)
+    }
+  }
 
   // Track the active video job from submit through completion (running, else the
   // freshly-queued pending one) so the progress bar appears immediately.
@@ -246,6 +344,48 @@ export default function VideoCanvas({
             >
               {director.selecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               Use this clip
+            </Button>
+          )}
+          {/* The moment you most want to continue a clip is right after it
+              renders, which is exactly here — the two inspectors are a detour.
+              All three clip actions take the Button default variant, i.e. the
+              theme's orange gradient: they are what this screen is for, and
+              they have to read as such rather than blend into the muted
+              Download icon beside them. No `variant`, no colour override — the
+              gradient is already the default. */}
+          {activeClip && canContinue(activeClip) && (
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 font-semibold"
+              title="Continue this clip — render the next few seconds from where it ends"
+              onClick={() => continueVideo(activeClip)}
+            >
+              <FastForward className="h-4 w-4" /> Continue
+            </Button>
+          )}
+          {activeJob && (
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 font-semibold"
+              title="Regenerate — reload this clip's settings with a fresh seed"
+              onClick={handleRegenerate}
+            >
+              <RotateCcw className="h-4 w-4" /> Regenerate
+            </Button>
+          )}
+          {/* Only once there is something to merge. The count moved off the
+              label into the tooltip when this became "Finalize Video", so it is
+              still knowable before anything is clicked. */}
+          {chain.length > 1 && (
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 font-semibold"
+              disabled={joining}
+              title={`Finalize — merge the ${chain.length} clips of this chain into one video`}
+              onClick={() => void handleJoin()}
+            >
+              {joining ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+              Finalize Video
             </Button>
           )}
           <Button

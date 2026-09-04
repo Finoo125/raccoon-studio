@@ -5,9 +5,9 @@ import {
 } from './registry'
 
 describe('feature registry', () => {
-  it('marks exactly the four paid features as add-ons', () => {
+  it('marks exactly the five paid features as add-ons', () => {
     expect(addonIds().sort()).toEqual([
-      'ltx-director', 'movie-maker', 'photo-editor', 'prompt-builder',
+      'civitai-browser', 'ltx-director', 'movie-maker', 'photo-editor', 'prompt-builder',
     ])
   })
 
@@ -91,12 +91,21 @@ describe('feature registry', () => {
 })
 
 describe('release gating', () => {
-  it('Photo Editing and LTX 2.3 Director are on sale', () => {
-    expect(sellableAddonIds()).toEqual(['photo-editor', 'ltx-director'])
+  it('Photo Editing, LTX 2.3 Director and Civitai Browser are on sale', () => {
+    expect(sellableAddonIds()).toEqual(['photo-editor', 'ltx-director', 'civitai-browser'])
   })
 
-  it('the Add-ons page lists Photo Editing then LTX 2.3 Director, and nothing else', () => {
-    expect(listedAddons().map((f) => f.id)).toEqual(['photo-editor', 'ltx-director'])
+  it('the Add-ons page lists exactly the three released add-ons, in registry order', () => {
+    expect(listedAddons().map((f) => f.id))
+      .toEqual(['photo-editor', 'ltx-director', 'civitai-browser'])
+  })
+
+  // navHidden keeps it out of the top bar — it is a tab inside the Models page,
+  // so a nav entry would lead somewhere that looks identical. It must still be
+  // sold, which is the same pairing ltx-director has.
+  it('Civitai Browser is sold but never a nav tab', () => {
+    expect(sellableAddonIds()).toContain('civitai-browser')
+    expect(visibleNav(['civitai-browser']).map((f) => f.id)).not.toContain('civitai-browser')
   })
 
   // Released 2026-08-22. Keys minted while it was held back listed photo-editor

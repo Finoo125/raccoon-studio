@@ -4,6 +4,7 @@ import { Clapperboard } from 'lucide-react'
 import { useVideoForm } from './video-form-context'
 import {
   BriefPanel,
+  ContinuationBanner,
   GenerateButton,
   GroupHeader,
   ModeSwitch,
@@ -32,6 +33,8 @@ export default function VideoGenerationForm() {
           <p className="text-xs text-muted-foreground mt-1">{workflow.name}</p>
         </div>
       </div>
+
+      <ContinuationBanner />
 
       <div className="space-y-2">
         <SectionLabel>Mode</SectionLabel>

@@ -31,3 +31,24 @@ describe('gallery multi-select', () => {
     expect(useGalleryStore.getState().selectedIds).toEqual(['b'])
   })
 })
+
+describe('gallery media mode', () => {
+  it('drops the workflow filter when the mode changes', () => {
+    // Images filter by preset ("Anima"), videos by model ("MinimaxH3"), and the
+    // scanner matches the value by exact equality — so a filter carried across
+    // the switch matches nothing and shows an empty gallery with no visible
+    // cause.
+    useGalleryStore.getState().setMediaMode('image')
+    useGalleryStore.getState().setFilter('workflow', 'Anima')
+    useGalleryStore.getState().setMediaMode('video')
+    expect(useGalleryStore.getState().filters.workflow).toBe('')
+    expect(useGalleryStore.getState().mediaMode).toBe('video')
+  })
+
+  it('leaves the filter alone when the mode is unchanged', () => {
+    useGalleryStore.getState().setMediaMode('video')
+    useGalleryStore.getState().setFilter('workflow', 'MinimaxH3')
+    useGalleryStore.getState().setMediaMode('video')
+    expect(useGalleryStore.getState().filters.workflow).toBe('MinimaxH3')
+  })
+})

@@ -52,7 +52,7 @@ export const KREA2_KROMA_DEFAULT = 1
  * Deliberately not `er_sde`, which the main pass uses.
  *
  * `er_sde` is stochastic — it injects fresh noise at every step. Sampling from
- * pure noise that is the point; in a denoise-0.2 refinement it is actively
+ * pure noise that is the point; in a denoise-0.15 refinement it is actively
  * harmful, because the injected noise has nowhere to go but into invented
  * texture. Skin features bloom: the light freckles in the base render come back
  * as blotches and moles, hair goes wiry, and the "upscale" reads as a quality
@@ -295,9 +295,9 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
       //
       // `steps` here is the full step count, not a fraction of one:
       // `comfy/samplers.py:1420` computes `int(steps/denoise)` sigmas and keeps
-      // the last `steps + 1`, so denoise 0.2 runs all 8 (RAW: all 52) steps over
-      // the tail 20% of the schedule. That is precisely why a stochastic sampler
-      // was so destructive here — it was 8 full noise injections, not a nudge.
+      // the last `steps + 1`, so denoise 0.15 runs all 8 (RAW: all 52) steps
+      // over the tail 15% of the schedule. That is precisely why a stochastic
+      // sampler was so destructive here — 8 full noise injections, not a nudge.
       if (params.upscale !== false) {
         appendHiresFix(wf, {
           saveNodeId: 'k:save',
@@ -314,7 +314,10 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
             cfg: v.cfg,
             sampler_name: KREA2_REFINE_SAMPLER,
             scheduler: 'simple',
-            denoise: 0.2,
+            // 0.15, down from 0.2: the pass was still restyling fine detail it
+            // was meant to sharpen. The face detailer below stays at 0.25 — it
+            // redraws a crop from scratch and wants the room.
+            denoise: 0.15,
             seed,
           },
         })

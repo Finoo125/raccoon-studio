@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { useQueueStore } from '@/lib/comfyui/queue'
 import { submitPrompt } from '@/lib/comfyui/submit'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
+import { useImagePicker } from '@/components/generation/PickImageDialog'
 import { uploadImageBlob } from '@/lib/generation/upload'
 import { buildFaceModelPrompt } from '@/lib/workflows/build-face-model'
 
@@ -35,6 +36,7 @@ export default function FaceModelBuilder() {
   const [building, setBuilding] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const { isDragging, dragProps } = useFileDrop((file) => addFiles([file]))
+  const { openPicker, pickerDialog } = useImagePicker(inputRef, (file) => addFiles([file]))
 
   function addFiles(files: File[]) {
     const images = files.filter((f) => f.type.startsWith('image/'))
@@ -142,6 +144,7 @@ export default function FaceModelBuilder() {
             e.target.value = ''
           }}
         />
+        {pickerDialog}
 
         {pics.length > 0 && (
           <div className="mb-3 grid grid-cols-4 gap-2 sm:grid-cols-6">
@@ -165,7 +168,7 @@ export default function FaceModelBuilder() {
 
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
+          onClick={openPicker}
           disabled={building}
           className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-60"
         >

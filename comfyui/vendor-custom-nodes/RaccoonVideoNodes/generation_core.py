@@ -92,13 +92,30 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
         return {"error": "No model selected", "elapsed_s": 0}
 
     # Director shots are optional, so an empty timeline simply writes blind.
-    # ref2v stays out on purpose: H3's reference doctrine was tuned without a
-    # vision pass, and turning one on here would silently change its prompts.
-    # fl2v/l2v are in for the opposite reason — their doctrine describes the
-    # attached frames by number ("Picture 1 is the opening frame, Picture 2 is
-    # the closing frame"), so without the vision pass the model would be writing
-    # about pictures it was never shown.
-    need_vision = bool(images) and mode in ("i2v", "fl2v", "l2v", "director")
+    # fl2v/l2v are in because their doctrine describes the attached frames by
+    # number ("Picture 1 is the opening frame, Picture 2 is the closing frame"),
+    # so without the vision pass the model would be writing about pictures it
+    # was never shown.
+    #
+    # ref2v is OPT-IN (`ref2v_vision`), default off, and the default is a real
+    # choice rather than an oversight -- there is an argument each way and only
+    # a measurement settles it:
+    #   against  the reference doctrine says "the references are NOT the first
+    #            frame ... do not write 'the image shows'; write the shot", so
+    #            showing the model the picture pushes it toward the one thing
+    #            that head spends a paragraph forbidding. The doctrine was also
+    #            tuned and live-verified blind, so flipping this silently
+    #            changes prompts nobody re-checked.
+    #   for      the same head asks it to "repeat the identity anchors it
+    #            carries every shot". Blind, it has to INVENT hair, build and
+    #            clothing, and H3 then gets a written description that
+    #            contradicts the reference image it can actually see.
+    # `h3_ab.py --arm ref2v-vision` scores both arms; flip the default here when
+    # it earns it, and delete this note with it.
+    vision_modes = ("i2v", "fl2v", "l2v", "director")
+    if body.get("ref2v_vision"):
+        vision_modes += ("ref2v",)
+    need_vision = bool(images) and mode in vision_modes
     if need_vision and mmproj_file == "None (text-only)" and llm.is_managed():
         return {"error": "I2V needs an mmproj (vision) file", "elapsed_s": 0}
 

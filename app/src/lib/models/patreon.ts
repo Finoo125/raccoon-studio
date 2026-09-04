@@ -4,6 +4,11 @@ import { selectionIsStale } from './installed'
 // of these tokens are surfaced as selectable "Aria / Patreon" models.
 export const PATREON_PATTERNS = ['muscgi', 'muscgro', 'aria'] as const
 
+/** The subset of `PATREON_PATTERNS` that names a LoRA. Outranks 'aria': a name
+ *  can carry both (`aria_muscgi_krea2_r32_ep08.safetensors` — an Aria-branded
+ *  LoRA), and a LoRA is never a full model however it is branded. */
+const LORA_PATTERNS = ['muscgi', 'muscgro'] as const
+
 /**
  * Per-family Patreon naming. `keywords` are matched against a normalized
  * filename (lowercased, separators removed) so "z_image", "z-image" and
@@ -38,10 +43,16 @@ export function isPatreonModel(name: string): boolean {
  * True when a model name is an "Aria" model specifically. The Generate form's
  * Model dropdown is limited to these — muscgi / muscgro models are excluded
  * even though they are still Patreon models elsewhere (e.g. Models page badges).
+ *
+ * The exclusion is a substring test, not "starts with aria", because the two
+ * tokens co-occur: `aria_muscgi_krea2_r32_ep08.safetensors` is a rank-32 LoRA
+ * wearing the Aria name. Letting 'aria' win sent it to `diffusion_models/` via
+ * `patreonSubfolder` and offered it in the Model dropdown, where UNETLoader
+ * cannot load it.
  */
 export function isAriaModel(name: string): boolean {
   const base = (name.split('/').pop() ?? name).toLowerCase()
-  return base.includes('aria')
+  return base.includes('aria') && !LORA_PATTERNS.some((p) => base.includes(p))
 }
 
 /**

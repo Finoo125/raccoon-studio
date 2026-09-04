@@ -4,6 +4,7 @@ import { useRef, type RefObject } from 'react'
 import Link from 'next/link'
 import { Upload, Loader2, X, ImagePlus, FolderOpen, History, Layers } from 'lucide-react'
 import MaskBrush, { type MaskBrushHandle } from './MaskBrush'
+import { useImagePicker } from './PickImageDialog'
 import type { GenerationParams } from '@/types/workflow'
 
 type EditMode = NonNullable<GenerationParams['editMode']>
@@ -41,6 +42,7 @@ export default function BaseImageInput({
   params, set, preview, busy, lastResultUrl, brushRef, onUploadFile, onUseLastResult, onRemove,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
+  const { openPicker, pickerDialog } = useImagePicker(fileRef, onUploadFile)
   const mode: EditMode = params.editMode ?? 'img2img'
   const hasBase = !!params.baseImage
 
@@ -58,10 +60,19 @@ export default function BaseImageInput({
     />
   )
 
+  // Rendered wherever `fileInput` is, so whichever half of this component is on
+  // screen carries the picker its own Upload/Replace button opens.
+  const inputs = (
+    <>
+      {fileInput}
+      {pickerDialog}
+    </>
+  )
+
   if (!hasBase) {
     return (
       <div className="space-y-2">
-        {fileInput}
+        {inputs}
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-3">
           <div className="mb-2.5 flex items-center gap-2 text-sm font-semibold">
             <ImagePlus className="h-4 w-4 text-primary" /> Start from an image
@@ -70,7 +81,7 @@ export default function BaseImageInput({
           <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
+              onClick={openPicker}
               disabled={busy}
               className="flex flex-col items-center gap-1 rounded-lg border border-border bg-background px-2 py-3 text-xs font-medium hover:bg-muted/50 disabled:opacity-60"
             >
@@ -100,7 +111,7 @@ export default function BaseImageInput({
 
   return (
     <div className="space-y-3 rounded-xl border border-primary/30 bg-primary/[0.04] p-3">
-      {fileInput}
+      {inputs}
       {/* Header: thumbnail + replace/remove */}
       <div className="flex items-center gap-3">
         {preview ? (
@@ -114,7 +125,7 @@ export default function BaseImageInput({
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5 text-sm font-semibold"><Layers className="h-4 w-4 text-primary" /> Base image</p>
           <div className="mt-1 flex items-center gap-3 text-xs">
-            <button type="button" onClick={() => fileRef.current?.click()} disabled={busy} className="text-primary hover:underline disabled:opacity-60">
+            <button type="button" onClick={openPicker} disabled={busy} className="text-primary hover:underline disabled:opacity-60">
               {busy ? 'Working…' : 'Replace'}
             </button>
             <button type="button" onClick={onRemove} className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground">

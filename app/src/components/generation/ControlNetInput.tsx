@@ -5,6 +5,7 @@ import { Upload, Loader2, Move3d } from 'lucide-react'
 import { toast } from 'sonner'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
 import { uploadImageBlob } from '@/lib/generation/upload'
+import { useImagePicker } from './PickImageDialog'
 import type { GenerationParams } from '@/types/workflow'
 
 type ControlNet = NonNullable<GenerationParams['controlNet']>
@@ -38,6 +39,7 @@ export default function ControlNetInput({ value, available, unavailableHint, onC
   const [preview, setPreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const { isDragging, dragProps } = useFileDrop((file) => void handleFile(file))
+  const { openPicker, pickerDialog } = useImagePicker(inputRef, (file) => void handleFile(file))
 
   // Revoke the local preview URL if the parent clears the value externally
   // (e.g. a form reset), since toggle() only fires on user-driven toggle-off.
@@ -133,7 +135,8 @@ export default function ControlNetInput({ value, available, unavailableHint, onC
             )}
             <div className="min-w-0 flex-1">
               <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f) }} />
-              <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading} className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-60">
+              {pickerDialog}
+              <button type="button" onClick={openPicker} disabled={uploading} className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-60">
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                 {value?.image ? 'Replace' : 'Upload reference'}
               </button>

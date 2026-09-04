@@ -84,7 +84,7 @@ function GalleryPageInner() {
       {/* Main grid area */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <GalleryToolbar onRefresh={() => load(true)} loading={loading} />
-        <GalleryBulkBar onCompare={() => setCompareOpen(true)} />
+        <GalleryBulkBar onCompare={() => setCompareOpen(true)} onJoined={() => void load(true)} />
         <div className="flex-1 min-h-0">
           <GalleryGrid />
         </div>

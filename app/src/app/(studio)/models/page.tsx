@@ -3,20 +3,22 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   CheckCircle, Download, AlertCircle, Package,
-  Upload, FolderOpen, ChevronDown, ChevronUp, Lock,
+  ChevronDown, ChevronUp,
   Trash2, HardDrive, RefreshCw, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
-import { PATREON_PATTERNS, isPatreonModel, patreonSubfolder, matchesPatreonPreset } from '@/lib/models/patreon'
 import { LTX23_ASSETS, assetInstalled, type ModelAsset } from '@/lib/models/ltx23-assets'
 import { MINIMAX_H3_ASSETS } from '@/lib/models/minimax-h3-assets'
+import { CHARACTER_SHEET_ASSETS } from '@/lib/workflows/character-sheet'
 import { comboOptions } from '@/lib/models/installed'
 import { restartComfyUI } from '@/lib/comfyui/restart'
 import { createTransferTracker } from '@/lib/models/transfer-tracker'
+import ImportPanel from '@/components/models/ImportPanel'
+import dynamic from 'next/dynamic'
+const MyModelsTab = dynamic(() => import('@/components/models/MyModelsTab'))
 // Type-only: lib/models/transfers.ts is server code (fs, https) and this import
 // is erased at build, so none of it reaches the browser bundle.
 import type { Transfer } from '@/lib/models/transfers'
@@ -44,13 +46,6 @@ interface DownloadState {
   /** Bytes received / total — total is 0 when the server sent no content-length. */
   received?: number
   total?: number
-  error?: string
-}
-
-interface PatreonEntry {
-  name: string
-  subfolder: 'loras' | 'checkpoints' | 'diffusion_models'
-  status: 'active' | 'importing' | 'error'
   error?: string
 }
 
@@ -285,6 +280,16 @@ const PRESETS: PresetDefinition[] = [
 
 // Synthetic preset so the LTX section can reuse the page's download flow + state
 // map (keyed `ltx23::<filename>`) without a real PRESETS entry.
+// Same rule as the H3 preset below: `id` must match the state-key prefix the
+// status probe writes, or every row sits at "idle" while the download reports
+// progress under a key nothing is reading.
+const CHARACTER_SHEET_PRESET: PresetDefinition = {
+  id: 'character-sheets',
+  name: 'Character sheets',
+  description: 'Multi-view reference sheet LoRAs for the Generate Image toggle',
+  files: [],
+}
+
 const LTX_PRESET: PresetDefinition = {
   id: 'ltx23',
   name: 'LTX 2.3 (Video)',
@@ -490,34 +495,16 @@ const REFERENCE_PRESET: PresetDefinition = {
   files: [],
 }
 
-const LOCAL_SUBFOLDERS = [
-  { value: 'diffusion_models', label: 'Diffusion models' },
-  { value: 'text_encoders', label: 'Text encoders' },
-  { value: 'vae', label: 'VAE' },
-  { value: 'loras', label: 'LoRAs' },
-  { value: 'checkpoints', label: 'Checkpoints' },
-  { value: 'controlnet', label: 'ControlNet' },
-  { value: 'model_patches', label: 'Model patches (Z-Image ControlNet)' },
-  { value: 'ipadapter', label: 'IP-Adapter' },
-  { value: 'clip_vision', label: 'CLIP vision (IP-Adapter)' },
-  { value: 'ultralytics/bbox', label: 'Ultralytics bbox (detailer)' },
-  { value: 'sams', label: 'SAM models (detailer)' },
-  { value: 'hyperswap', label: 'Hyperswap (face swap)' },
-  { value: 'facerestore_models', label: 'Face restore (face swap)' },
-]
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ModelsPage() {
   const [states, setStates] = useState<Record<string, DownloadState>>({})
-  const [modelsDir, setModelsDir] = useState<string | null>(null)
-  const [detectedPatreon, setDetectedPatreon] = useState<string[]>([])
-  const [patreonImports, setPatreonImports] = useState<Record<string, PatreonEntry[]>>({})
 
   useEffect(() => {
     fetch('/api/models/paths')
       .then((r) => r.json())
-      .then((d: { modelsDir: string | null }) => setModelsDir(d.modelsDir))
+      .then(() => {})
       .catch(() => {})
   }, [])
 
@@ -529,17 +516,15 @@ export default function ModelsPage() {
       const safeFetch = async (url: string) => {
         try { return await (await fetch(url)).json() } catch { return null }
       }
-      const [unetData, clipData, vaeData, loraData, ckptData] = await Promise.all([
+      const [unetData, clipData, vaeData, ckptData] = await Promise.all([
         safeFetch('/api/comfyui/object_info/UNETLoader'),
         safeFetch('/api/comfyui/object_info/CLIPLoader'),
         safeFetch('/api/comfyui/object_info/VAELoader'),
-        safeFetch('/api/comfyui/object_info/LoraLoader'),
         safeFetch('/api/comfyui/object_info/CheckpointLoaderSimple'),
       ])
       const unetNames = comboOptions(unetData, 'UNETLoader', 'unet_name')
       const clipNames = comboOptions(clipData, 'CLIPLoader', 'clip_name')
       const vaeNames  = comboOptions(vaeData,  'VAELoader', 'vae_name')
-      const loraNames = comboOptions(loraData, 'LoraLoader', 'lora_name')
       const ckptNames = comboOptions(ckptData, 'CheckpointLoaderSimple', 'ckpt_name')
 
       const allPresent = [...unetNames, ...clipNames, ...vaeNames, ...ckptNames]
@@ -550,11 +535,6 @@ export default function ModelsPage() {
           patchState(key, { status: present ? 'present' : 'missing', progress: 0 })
         }
       }
-      // Patreon models live across loras (muscgi/muscgro) and checkpoints (aria).
-      const detected = [...loraNames, ...ckptNames]
-        .filter(isPatreonModel)
-        .map((n) => n.split('/').pop() ?? n)
-      setDetectedPatreon(detected)
     }
     void check()
   }, [])
@@ -593,6 +573,13 @@ export default function ModelsPage() {
       }
       for (const asset of MINIMAX_H3_ASSETS) {
         patchState(`minimax-h3::${asset.name}`, {
+          status: assetInstalled(asset.name, available) ? 'present' : 'missing',
+          progress: 0,
+        })
+      }
+      // Character-sheet LoRAs live in models/loras, already unioned above.
+      for (const asset of CHARACTER_SHEET_ASSETS) {
+        patchState(`character-sheets::${asset.name}`, {
           status: assetInstalled(asset.name, available) ? 'present' : 'missing',
           progress: 0,
         })
@@ -691,6 +678,43 @@ export default function ModelsPage() {
   // downloads and Patreon imports both register with one tracker, so a bulk
   // download or a run of imports asks once, when the last transfer settles.
   const [restartOpen, setRestartOpen] = useState(false)
+  const [tab, setTab] = useState<'catalog' | 'mine' | 'civitai'>('catalog')
+  const [justConnected, setJustConnected] = useState(false)
+
+  /**
+   * The Civitai sign-in result, read HERE rather than inside `MyModelsTab`.
+   *
+   * The callback redirects to `/models?civitai=…`, and this page opens on the
+   * Catalog tab — so while the tab owned this effect, `next/dynamic` kept it
+   * unmounted and **a failed sign-in reported nothing at all**: no toast, and
+   * the query string left in the URL to replay on the next refresh. Landing on
+   * the tab the user was signing in to reach is the other half of the fix.
+   */
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search)
+    const r = q.get('civitai')
+    if (!r) return
+    window.history.replaceState({}, '', window.location.pathname)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot read of the sign-in result on arrival
+    setTab('civitai')
+    if (r === 'connected') setJustConnected(true)
+
+    // Deferred a tick, NOT decoration. Effects run child-before-parent, so on
+    // the hard navigation the OAuth callback always arrives as, this effect
+    // fires before `<Toaster>` in the studio layout has subscribed to sonner's
+    // store — and a toast emitted with no subscriber is dropped silently.
+    // Measured: the effect ran and called toast.error, and no toast element
+    // ever appeared. Every later toast on this page works, which is exactly what
+    // makes it look like the sign-in result specifically is broken.
+    const id = setTimeout(() => {
+      if (r === 'connected') toast.success('Connected to Civitai')
+      else toast.error(`Civitai sign-in failed: ${q.get('reason') ?? 'unknown error'}`)
+    }, 0)
+    return () => clearTimeout(id)
+  }, [])
+  /** Live server transfers, so the Civitai browser can show its own progress
+   *  without standing up a second poller. */
+  const [liveTransfers, setLiveTransfers] = useState<Transfer[]>([])
   const transfers = useRef(createTransferTracker(() => setRestartOpen(true))).current
 
   /** Last poll result, so Cancel can turn a page key into a server key. */
@@ -711,6 +735,7 @@ export default function ModelsPage() {
    */
   const applyTransfers = useCallback((incoming: Transfer[]) => {
     serverTransfers.current = incoming
+    setLiveTransfers(incoming)
     if (incoming.length) {
       setStates((s) => {
         const next = { ...s }
@@ -813,24 +838,6 @@ export default function ModelsPage() {
     }
   }
 
-  // These two are also how an import reports its progress: PatreonPanel adds the
-  // entry as 'importing' when the copy starts and flips it to 'active' (the file
-  // landed — new or replaced) or 'error' when it settles. That is exactly the
-  // begin/end pair the restart prompt needs, so imports join the same counter as
-  // downloads without an extra prop.
-  const addPatreonEntry = (presetId: string, entry: PatreonEntry) => {
-    if (entry.status === 'importing') transfers.begin()
-    setPatreonImports((prev) => ({ ...prev, [presetId]: [...(prev[presetId] ?? []), entry] }))
-  }
-
-  const updatePatreonEntry = (presetId: string, name: string, patch: Partial<PatreonEntry>) => {
-    if (patch.status && patch.status !== 'importing') transfers.end(patch.status === 'active')
-    setPatreonImports((prev) => ({
-      ...prev,
-      [presetId]: (prev[presetId] ?? []).map((e) => (e.name === name ? { ...e, ...patch } : e)),
-    }))
-  }
-
   return (
     <div className="p-6 md:p-8 space-y-5">
 
@@ -842,20 +849,60 @@ export default function ModelsPage() {
         <div>
           <h1 className="font-heading text-2xl font-semibold tracking-tight leading-none">Models</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
-            Manage your Patreon models, or download a preset to start generating.
+            Download a preset to start generating, import your own, or browse Civitai.
           </p>
         </div>
       </div>
 
-      {/* Patreon panel — full width, prominent */}
-      <PatreonPanel
-        presets={PRESETS}
-        modelsDir={modelsDir}
-        detectedFiles={detectedPatreon}
-        patreonImports={patreonImports}
-        onAdd={addPatreonEntry}
-        onUpdate={updatePatreonEntry}
-      />
+      {/* Tab strip */}
+      <div className="flex gap-1 bg-muted rounded-lg p-1 w-fit">
+        {([
+          ['catalog', 'Catalog'],
+          ['mine', 'My Models'],
+          ['civitai', 'Civitai Browser'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`text-xs font-semibold px-3.5 py-1.5 rounded-md ${
+              tab === id
+                ? 'bg-gradient-to-br from-primary to-[#ffa64d] text-primary-foreground'
+                : 'text-muted-foreground'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Two tabs, one gated component: the add-on lock, the locked panel and
+          the dynamic chunk are shared, and only the Civitai pane pays for the
+          sign-in state. What is installed no longer sits behind a Civitai
+          account, which it never needed. */}
+      {tab === 'mine' && <MyModelsTab pane="library" />}
+
+      {tab === 'civitai' && (
+        <MyModelsTab
+          pane="civitai"
+          activeTransfers={liveTransfers}
+          justConnected={justConnected}
+          onStarted={(t) => {
+            // Arm the restart prompt only. Settlement, its toast and the prompt
+            // itself are the poll's job — calling end() here fired the dialog
+            // the instant a download STARTED, because the POST returns as soon
+            // as the server job is registered.
+            if (t.status === 'done') return // already on disk; nothing landed
+            if (watched.current.has(t.key)) return
+            watched.current.add(t.key)
+            transfers.begin()
+          }}
+        />
+      )}
+
+      {tab === 'catalog' && (<>
+
+      {/* Import any LoRA or checkpoint — no filename rules, no Patreon key. */}
+      <ImportPanel onBegin={() => transfers.begin()} onEnd={(ok) => transfers.end(ok)} />
 
       {/* Preset cards — 3-column grid */}
       <div className="space-y-3">
@@ -876,8 +923,26 @@ export default function ModelsPage() {
       </div>
       </div>
 
+      {/* Character-sheet LoRAs for the Generate Image toggle */}
+      <ModelAssetSection
+        title="Character sheets (Image)"
+        blurb="Turns on the Character sheet switch in Generate Image, which renders your subject from three angles as a reference for MiniMax H3 video. One per model family — install only the ones you generate with. The Anima LoRA has no public mirror (its licence forbids re-hosting); import it below, or grab it from the Civitai link."
+        assets={CHARACTER_SHEET_ASSETS}
+        keyPrefix={CHARACTER_SHEET_PRESET.id}
+        states={states}
+        onDownload={(asset) =>
+          void handleDownload(CHARACTER_SHEET_PRESET, {
+            name: asset.name,
+            path: asset.folder,
+            url: asset.url ?? '',
+            sizeMb: asset.sizeMb,
+          })
+        }
+        onCancel={(asset) => cancelDownload(`${CHARACTER_SHEET_PRESET.id}::${asset.name}`)}
+      />
+
       {/* LTX 2.3 video models */}
-      <VideoModelSection
+      <ModelAssetSection
         title="LTX 2.3 (Video)"
         blurb={`Models for the Generate Videos workflow. ${LTX23_ASSETS.filter((a) => !a.url).length} files have no public mirror — import them below (or copy from an existing ComfyUI install).`}
         assets={LTX23_ASSETS}
@@ -895,9 +960,9 @@ export default function ModelsPage() {
       />
 
       {/* MiniMax H3 video models */}
-      <VideoModelSection
+      <ModelAssetSection
         title="MiniMax H3 (Video)"
-        blurb="Video with natively synced stereo audio, 24 fps. The first four files are required — the audio VAE included, or clips come out silent — and total ~42.5 GB; the rest are optional and each unlocks one mode in the video form. Needs ComfyUI 0.30.0 or newer."
+        blurb="Video with natively synced stereo audio, 24 fps. The first four files are required — the audio VAE included, or clips come out silent — and total ~42.5 GB; the rest are optional — the Turbo/ref2v/realism files each unlock one mode in the video form, 10Eros Max is an uncensored finetune you pick as a checkpoint there, and the Mystic style LoRAs are picked by hand in its LoRA slots. Needs ComfyUI 0.30.0 or newer."
         assets={MINIMAX_H3_ASSETS}
         keyPrefix={MINIMAX_H3_PRESET.id}
         states={states}
@@ -1002,12 +1067,14 @@ export default function ModelsPage() {
         onCancel={(asset) => cancelDownload(`${KREA2_STYLE_PRESET.id}::${asset.name}`)}
       />
 
-      {/* ponytail: local-import section hidden (LocalImportSection below); re-render this when it's wanted back */}
-
       {/* Manage installed models — disk usage + delete */}
       <ManageModelsSection />
 
-      {/* Raised once every started download and import has finished. */}
+      </>)}
+
+      {/* Raised once every started download and import has finished. Outside the
+          tab switch on purpose: a download started in My Models must still be
+          able to raise it. */}
       <ConfirmDialog
         open={restartOpen}
         onOpenChange={setRestartOpen}
@@ -1176,14 +1243,14 @@ function FileRow({
   )
 }
 
-// ─── VideoModelSection ────────────────────────────────────────────────────────
+// ─── ModelAssetSection ───────────────────────────────────────────────────────
 
 /**
  * One video family's model files. Shared by LTX 2.3 and MiniMax H3 — the two
  * differ only in title, blurb, asset list and state-key prefix, so they render
  * through the same component rather than a copied one.
  */
-function VideoModelSection({
+function ModelAssetSection({
   title,
   blurb,
   assets,
@@ -1387,454 +1454,6 @@ function AssetSection({
           )
         })}
       </div>
-    </div>
-  )
-}
-
-// ─── PatreonPanel ─────────────────────────────────────────────────────────────
-
-function PatreonPanel({
-  presets,
-  modelsDir,
-  detectedFiles,
-  patreonImports,
-  onAdd,
-  onUpdate,
-}: {
-  presets: PresetDefinition[]
-  modelsDir: string | null
-  detectedFiles: string[]
-  patreonImports: Record<string, PatreonEntry[]>
-  onAdd: (presetId: string, entry: PatreonEntry) => void
-  onUpdate: (presetId: string, name: string, patch: Partial<PatreonEntry>) => void
-}) {
-  const [activeId, setActiveId] = useState(presets[0].id)
-  const [validationError, setValidationError] = useState<string | null>(null)
-  const [localPath, setLocalPath] = useState('')
-
-  // Flatten this session's imports (across all tabs) and merge with models already
-  // present in ComfyUI, deduped by filename. Then keep only those matching the
-  // active family's keywords, so each tab shows just its own checkpoints/loras.
-  const byName = new Map<string, PatreonEntry>()
-  for (const e of Object.values(patreonImports).flat()) byName.set(e.name, e)
-  for (const n of detectedFiles) {
-    if (!byName.has(n)) byName.set(n, { name: n, subfolder: patreonSubfolder(n), status: 'active' })
-  }
-  const combined = [...byName.values()].filter((e) => matchesPatreonPreset(e.name, activeId))
-
-  const importByName = async (filename: string, doImport: (subfolder: string) => Promise<{ ok?: boolean; replaced?: boolean; error?: string; name?: string }>) => {
-    setValidationError(null)
-    const lname = filename.toLowerCase()
-    if (!lname.endsWith('.safetensors')) {
-      setValidationError('Only .safetensors files are supported.')
-      return
-    }
-    if (!PATREON_PATTERNS.some((p) => lname.includes(p))) {
-      setValidationError('Filename must contain "muscgi", "muscgro", or "aria".')
-      return
-    }
-    if (combined.some((e) => e.name === filename)) {
-      setValidationError(`${filename} is already listed.`)
-      return
-    }
-
-    const subfolder = patreonSubfolder(filename)
-    const entry: PatreonEntry = { name: filename, subfolder, status: 'importing' }
-    onAdd(activeId, entry)
-
-    try {
-      const json = await doImport(subfolder)
-      onUpdate(activeId, filename, { status: 'active' })
-      toast.success(`${filename} ${json.replaced ? 'replaced' : 'imported'}`)
-    } catch (e) {
-      onUpdate(activeId, filename, { status: 'error', error: String(e) })
-      toast.error(`Import failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-  }
-
-  // Import a model the server can read directly via its path — copy-local streams
-  // the file (fs.copyFile), so this works for multi-GB models with no upload.
-  const importFromPath = (fullPath: string) => {
-    const filename = fullPath.split(/[/\\]/).pop() ?? fullPath
-    void importByName(filename, async (subfolder) => {
-      const res = await fetch('/api/models/copy-local', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourcePath: fullPath, subfolder }),
-      })
-      const json = (await res.json()) as { ok?: boolean; replaced?: boolean; error?: string; name?: string }
-      if (!res.ok) throw new Error(json.error ?? res.statusText)
-      return json
-    })
-  }
-
-  const handleLocalPath = () => {
-    const trimmed = localPath.trim()
-    if (!trimmed) return
-    importFromPath(trimmed)
-    setLocalPath('')
-  }
-
-  // Open a native OS file dialog (server-side) so non-technical users can browse
-  // and pick a model file. Returns a real path, which copy-local then imports.
-  const handleBrowse = async () => {
-    if (!modelsDir) {
-      toast.error('Set COMFYUI_MODELS_DIR in .env.local to enable imports')
-      return
-    }
-    try {
-      const res = await fetch('/api/models/pick-file', { method: 'POST' })
-      const json = (await res.json()) as { path?: string | null; error?: string }
-      if (!res.ok) throw new Error(json.error ?? res.statusText)
-      if (json.path) importFromPath(json.path) // null = cancelled
-    } catch (e) {
-      toast.error(`Could not open file picker: ${e instanceof Error ? e.message : String(e)}`)
-    }
-  }
-
-  return (
-    <div className="rounded-xl border border-primary/25 bg-primary/[0.04]">
-
-      {/* Panel header */}
-      <div className="flex items-start gap-4 px-6 py-5 border-b border-primary/15">
-        <div className="h-11 w-11 rounded-xl bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0 mt-0.5">
-          <Lock className="h-5 w-5 text-primary" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h2 className="font-heading font-bold text-lg tracking-tight">Patreon Models</h2>
-          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-            Exclusive models provided via Patreon. Accepted filenames contain{' '}
-            <code className="text-xs text-primary/90">muscgi</code>,{' '}
-            <code className="text-xs text-primary/90">muscgro</code>, or{' '}
-            <code className="text-xs text-primary/90">aria</code>.
-          </p>
-          {/* Import controls — subfolder is derived from filename automatically */}
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            {/* Local path (recommended for large files — no browser upload needed) */}
-            <input
-              type="text"
-              value={localPath}
-              onChange={(e) => { setLocalPath(e.target.value); setValidationError(null) }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleLocalPath() }}
-              placeholder="/home/…/aria_model.safetensors"
-              className="h-8 w-80 rounded-md border border-primary/30 bg-background px-3 text-xs font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/50"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 h-8 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary hover:border-primary/50"
-              disabled={!localPath.trim()}
-              onClick={() => {
-                if (!modelsDir) {
-                  toast.error('Set COMFYUI_MODELS_DIR in .env.local to enable imports')
-                  return
-                }
-                handleLocalPath()
-              }}
-            >
-              <Upload className="h-3.5 w-3.5" />
-              Import from path
-            </Button>
-            {/* Browse the OS file explorer (native dialog) and import the chosen file */}
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 h-8 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary hover:border-primary/50"
-              onClick={() => void handleBrowse()}
-            >
-              <FolderOpen className="h-3.5 w-3.5" />
-              Import File
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Preset tabs */}
-      <div className="flex gap-0 border-b border-primary/15 px-5">
-        {presets.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => setActiveId(p.id)}
-            className={`px-5 py-3 text-base font-semibold transition-colors border-b-2 -mb-px ${
-              activeId === p.id
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-            }`}
-          >
-            {p.name}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab content */}
-      <div className="p-5 space-y-3">
-        {validationError && (
-          <p className="text-xs text-destructive">{validationError}</p>
-        )}
-        {!modelsDir && (
-          <p className="text-xs text-primary/70">
-            Set <code>COMFYUI_MODELS_DIR</code> in <code>.env.local</code> to enable import.
-          </p>
-        )}
-
-        {combined.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground/50">
-            <Lock className="h-8 w-8 opacity-30" />
-            <p className="text-sm">No Patreon models imported yet for {presets.find((p) => p.id === activeId)?.name}.</p>
-            <p className="text-xs">Paste the file path above and click Import, or use Upload file.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            {combined.map((entry) => (
-              <PatreonFileRow key={entry.name} entry={entry} />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── PatreonFileRow ───────────────────────────────────────────────────────────
-
-function PatreonFileRow({
-  entry,
-}: {
-  entry: { name: string; subfolder: string; status: string; error?: string }
-}) {
-  return (
-    <div className="relative flex items-center gap-2.5 rounded-lg border border-primary/15 bg-primary/[0.03] px-3 py-2.5 overflow-hidden">
-      {entry.status === 'importing' ? (
-        <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" />
-      ) : entry.status === 'active' ? (
-        <CheckCircle className="h-4 w-4 text-green-400 shrink-0" />
-      ) : (
-        <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
-      )}
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-mono truncate">{entry.name}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{entry.subfolder}</p>
-        {entry.status === 'error' && entry.error && (
-          <p className="text-xs text-destructive">{entry.error}</p>
-        )}
-      </div>
-      <div className="flex flex-col items-end gap-1 shrink-0">
-        {entry.status === 'active' && (
-          <Badge className="text-[11px] h-5 px-2 bg-green-500/15 text-green-400 border-green-500/20 border">
-            Active
-          </Badge>
-        )}
-        <Badge className="text-[11px] h-5 px-2 bg-primary/15 text-primary border-primary/20 border">
-          Patreon
-        </Badge>
-      </div>
-
-      {/* Thin bar */}
-      <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary/10">
-        {entry.status === 'active' && (
-          <div className="h-full w-full" style={{ backgroundColor: '#22c55e88' }} />
-        )}
-        {entry.status === 'importing' && (
-          <div className="h-full w-1/3 animate-pulse bg-primary/60" />
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── LocalImportSection ───────────────────────────────────────────────────────
-
-interface ImportResult {
-  name: string
-  status: 'importing' | 'done' | 'replaced' | 'error'
-  error?: string
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept, just not rendered (see above)
-function LocalImportSection({ modelsDir }: { modelsDir: string | null }) {
-  const [open, setOpen] = useState(false)
-  const [subfolder, setSubfolder] = useState('diffusion_models')
-  const [results, setResults] = useState<ImportResult[]>([])
-  const [localPath, setLocalPath] = useState('')
-  const [copyStatus, setCopyStatus] = useState<ImportResult | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  const handleFiles = async (files: FileList) => {
-    const arr = Array.from(files)
-    setResults(arr.map((f) => ({ name: f.name, status: 'importing' as const })))
-    await Promise.all(
-      arr.map(async (file, i) => {
-        const fd = new FormData()
-        fd.append('file', file)
-        fd.append('subfolder', subfolder)
-        try {
-          const res = await fetch('/api/models/import', { method: 'POST', body: fd })
-          const json = (await res.json()) as { ok?: boolean; replaced?: boolean; error?: string }
-          if (!res.ok) throw new Error(json.error ?? res.statusText)
-          setResults((prev) => {
-            const next = [...prev]
-            next[i] = { name: file.name, status: json.replaced ? 'replaced' : 'done' }
-            return next
-          })
-          toast.success(`${file.name} ${json.replaced ? 'replaced' : 'imported'}`)
-        } catch (e) {
-          setResults((prev) => {
-            const next = [...prev]
-            next[i] = { name: file.name, status: 'error', error: String(e) }
-            return next
-          })
-          toast.error(`Failed to import ${file.name}`)
-        }
-      })
-    )
-  }
-
-  const handleCopyLocal = useCallback(async () => {
-    const trimmed = localPath.trim()
-    if (!trimmed) return
-    const name = trimmed.split('/').pop() ?? trimmed
-    setCopyStatus({ name, status: 'importing' })
-    try {
-      const res = await fetch('/api/models/copy-local', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourcePath: trimmed, subfolder }),
-      })
-      const json = (await res.json()) as { ok?: boolean; replaced?: boolean; error?: string; name?: string }
-      if (!res.ok) throw new Error(json.error ?? res.statusText)
-      setCopyStatus({ name: json.name ?? name, status: json.replaced ? 'replaced' : 'done' })
-      toast.success(`${json.name ?? name} ${json.replaced ? 'replaced' : 'copied'}`)
-      setLocalPath('')
-    } catch (e) {
-      setCopyStatus({ name, status: 'error', error: String(e) })
-      toast.error(`Copy failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-  }, [localPath, subfolder])
-
-  return (
-    <div className="rounded-lg border border-border bg-card">
-      <button
-        className="w-full flex items-center justify-between px-4 py-3 text-left"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <FolderOpen className="h-3.5 w-3.5" />
-          <span>Import any local model file</span>
-        </div>
-        {open ? (
-          <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-        )}
-      </button>
-
-      {open && (
-        <div className="border-t border-border px-4 py-4 space-y-4">
-          {!modelsDir ? (
-            <p className="text-xs text-primary">
-              Set <code>COMFYUI_MODELS_DIR</code> in <code>.env.local</code> to enable.
-            </p>
-          ) : (
-            <>
-              <div className="flex items-center gap-3">
-                <Select value={subfolder} onValueChange={(v) => { if (v) setSubfolder(v) }}>
-                  <SelectTrigger className="h-8 text-sm w-56">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LOCAL_SUBFOLDERS.map((s) => (
-                      <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs font-mono text-muted-foreground truncate">
-                  → {modelsDir}/{subfolder}/
-                </p>
-              </div>
-
-              {/* Local path copy — for large files that can't be uploaded via browser */}
-              <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">Copy from local path (recommended for large files):</p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={localPath}
-                    onChange={(e) => { setLocalPath(e.target.value); setCopyStatus(null) }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void handleCopyLocal() }}
-                    placeholder="/home/user/Downloads/model.safetensors"
-                    className="flex-1 h-8 rounded-md border border-input bg-background px-3 text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5 shrink-0"
-                    disabled={!localPath.trim() || copyStatus?.status === 'importing'}
-                    onClick={() => void handleCopyLocal()}
-                  >
-                    {copyStatus?.status === 'importing' ? (
-                      <div className="h-3.5 w-3.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                    ) : (
-                      <Upload className="h-3.5 w-3.5" />
-                    )}
-                    Copy
-                  </Button>
-                </div>
-                {copyStatus && copyStatus.status !== 'importing' && (
-                  <div className="flex items-center gap-2 text-xs pt-0.5">
-                    {(copyStatus.status === 'done' || copyStatus.status === 'replaced') ? (
-                      <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
-                    ) : (
-                      <AlertCircle className="h-3 w-3 text-destructive shrink-0" />
-                    )}
-                    <span className="font-mono truncate">{copyStatus.name}</span>
-                    {copyStatus.status === 'replaced' && <Badge variant="outline" className="text-[10px] h-4 px-1">Replaced</Badge>}
-                    {copyStatus.status === 'done' && <Badge variant="secondary" className="text-[10px] h-4 px-1">Copied</Badge>}
-                    {copyStatus.status === 'error' && <span className="text-destructive">{copyStatus.error}</span>}
-                  </div>
-                )}
-              </div>
-
-              {/* Browser file upload — limited to small files by browser/server constraints */}
-              <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">Or upload via browser (small files only):</p>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  multiple
-                  accept=".safetensors,.ckpt,.pt,.bin,.gguf,.pth"
-                  className="hidden"
-                  onChange={(e) => { if (e.target.files?.length) void handleFiles(e.target.files) }}
-                />
-                <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} className="gap-1.5">
-                  <Upload className="h-3.5 w-3.5" />
-                  Choose files…
-                </Button>
-              </div>
-
-              {results.length > 0 && (
-                <div className="space-y-1">
-                  {results.map((r, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs">
-                      {r.status === 'importing' && (
-                        <div className="h-3 w-3 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" />
-                      )}
-                      {(r.status === 'done' || r.status === 'replaced') && (
-                        <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
-                      )}
-                      {r.status === 'error' && <AlertCircle className="h-3 w-3 text-destructive shrink-0" />}
-                      <span className="font-mono truncate">{r.name}</span>
-                      {r.status === 'replaced' && <Badge variant="outline" className="text-[10px] h-4 px-1">Replaced</Badge>}
-                      {r.status === 'done' && <Badge variant="secondary" className="text-[10px] h-4 px-1">Imported</Badge>}
-                      {r.status === 'error' && <span className="text-destructive">{r.error}</span>}
-                    </div>
-                  ))}
-                  <p className="text-xs text-muted-foreground pt-1">Restart ComfyUI for new files to appear.</p>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
     </div>
   )
 }

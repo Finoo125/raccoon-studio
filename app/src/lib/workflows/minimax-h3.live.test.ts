@@ -222,6 +222,18 @@ describe.skipIf(!LIVE)('MiniMax H3 live', () => {
     await expectOnlyMissingModels(minimaxH3Workflow.buildPrompt(params()))
   })
 
+  it('the sharpen + RIFE graph validates too', async () => {
+    // Covers the two spliced non-core nodes in one POST. What it catches is a
+    // node being renamed out from under us on a pack bump; what it canNOT catch
+    // is `method.strength` losing its prefix convention, because ComfyUI drops
+    // unrecognised inputs at validation and only dies at execution. That one is
+    // pinned by the unit test and was proven live 2026-08-30 the only way it
+    // can be: rendering at strength 0 (a documented no-op) and confirming the
+    // output came back byte-identical, which it would not have had the key been
+    // dropped and the node's own 0.8 default applied.
+    await expectOnlyMissingModels(minimaxH3Workflow.buildPrompt(params({ sharpen: true, rife: true })))
+  })
+
   it('ref2v graph validates too — only missing model files, no wiring errors', async () => {
     // Note what this canNOT catch: a wrong autogrow key. ComfyUI ignores inputs
     // it does not recognise, so `ref_imagez.ref_image_0` would validate happily

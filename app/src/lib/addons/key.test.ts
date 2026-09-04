@@ -56,7 +56,7 @@ describe('verifyKey', () => {
     const r = verifyKey(token, kp.publicKey)
     // Never every add-on in the registry: a wildcard key must not hand out
     // add-ons that are built but deliberately not part of this release.
-    expect(r.ok && r.features.sort()).toEqual(['ltx-director', 'photo-editor'])
+    expect(r.ok && r.features.sort()).toEqual(['civitai-browser', 'ltx-director', 'photo-editor'])
   })
 
   it('rejects a tampered payload', () => {

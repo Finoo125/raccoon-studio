@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect } from 'react'
-import { X, Download, ChevronLeft, ChevronRight, Check } from 'lucide-react'
+import { X, Download, ChevronLeft, ChevronRight, Check, FastForward } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import { useRecentVideosStore } from '@/lib/generation/recent-videos-store'
 import { useDirectorStage } from '@/lib/director/director-stage'
+import { useContinueVideo, canContinue } from '@/lib/generation/useContinueVideo'
 
 /**
  * Centered modal that plays a recent gallery video. Opened by the RecentVideoRail
@@ -19,6 +20,7 @@ export default function VideoInspector() {
   const inspectVideoUrl = useStudioStore((s) => s.inspectVideoUrl)
   const setInspectVideo = useStudioStore((s) => s.setInspectVideo)
   const director = useDirectorStage('video')
+  const continueVideo = useContinueVideo()
 
   const idx = videos.findIndex((v) => v.url === inspectVideoUrl)
   const video = idx >= 0 ? videos[idx] : null
@@ -112,6 +114,15 @@ export default function VideoInspector() {
                   onClick={async () => { await director.onSelect(video.url); setInspectVideo(null) }}
                 >
                   <Check className="h-4 w-4 mr-2" /> Use this for {director.label}
+                </Button>
+              )}
+              {canContinue(video) && (
+                <Button
+                  variant="outline"
+                  className="mb-2 h-11 w-full text-sm font-semibold"
+                  onClick={() => { continueVideo(video); setInspectVideo(null) }}
+                >
+                  <FastForward className="h-4 w-4 mr-2" /> Continue this clip
                 </Button>
               )}
               <Button variant="outline" className="h-11 w-full text-sm font-semibold" onClick={handleDownload}>

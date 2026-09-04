@@ -2,9 +2,13 @@ import path from 'path'
 import { getSettings } from '@/lib/settings/settings'
 
 /**
- * FFmpeg binary resolution for Movie Maker export/probing. A configured
- * Settings path wins; otherwise the bare command relies on PATH. ffprobe is
- * assumed to sit next to a configured ffmpeg (that is how FFmpeg ships).
+ * FFmpeg binary resolution, shared by Movie Maker export/probing and the free
+ * continue-video join. A configured Settings path wins; otherwise the bare
+ * command relies on PATH. ffprobe is assumed to sit next to a configured
+ * ffmpeg (that is how FFmpeg ships).
+ *
+ * Settings lookup only — no entitlement logic lives here, which is why a free
+ * feature may import it despite the `movies/` folder.
  */
 
 export function ffmpegBin(): string {

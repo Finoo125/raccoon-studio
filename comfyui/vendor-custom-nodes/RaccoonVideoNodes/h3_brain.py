@@ -37,9 +37,14 @@ Public entry mirrors brain.py so `generation_core` can pick between them:
 
 import re
 
-# H3's own hard limits. Duration is clamped rather than rejected: the form's
-# slider goes to 30 s and the model simply will not honour that.
-MIN_DURATION_S = 4
+# H3's own hard limits, in seconds at 24 fps. Clamped rather than rejected.
+# These are the trained frame range 124-362 expressed as time, and both ends sit
+# exactly on the 17k+5 grid, so 5 -> 124 and 15 -> 362 with no rounding slack.
+# The floor was 4 while the app's builder had no clamp at all; now that
+# `h3ClampDuration` (minimax-h3.ts) clamps the render to the same 5-15, the two
+# have to agree -- a writer sizing a 4 s shot for a 5.17 s render puts the
+# keyframe alignment timestamp most of a second early.
+MIN_DURATION_S = 5
 MAX_DURATION_S = 15
 
 # Length of the main description, straight from MiniMax's own guide
@@ -595,6 +600,97 @@ def _normalise_timestamp(m):
     return "At %02d:%06.3f," % (int(mm), rem)
 
 
+# A shot marker and the timestamp that follows it, in the canonical shape
+# `_normalise_timestamp` has already forced everything into. Run AFTER that sub,
+# never before: matching the raw shapes here would mean re-implementing the
+# format repair, and the two would drift.
+_SHOT_STAMP = re.compile(r"(\[Shot (\d+)\])(\s*At (\d{2}):(\d{2}\.\d{3}),)")
+
+
+def _redistribute(times, cap):
+    """Replace out-of-range or non-increasing stamps, keeping the good ones.
+
+    A rejected stamp is spaced evenly between its surviving neighbours (or 0 and
+    `cap` at the ends). Deliberately NOT the two obvious alternatives:
+
+      clamp to `cap`        puts the cut on the final frame, so the shot it
+                            opens gets no duration at all -- the prose still
+                            describes content that cannot render.
+      rescale proportionally works only when EVERY stamp shares one unit error.
+                            With `[2.0, 4.0, 240.5]` it would squash two
+                            perfectly good stamps to fix one outlier.
+
+    Monotonic by construction, so the result cannot fail the ordering rule the
+    contract also imposes.
+    """
+    good, last = [], 0.0
+    for t in times:
+        if 0.0 < t <= cap and t > last:
+            good.append(t)
+            last = t
+        else:
+            good.append(None)
+
+    i, n = 0, len(good)
+    while i < n:
+        if good[i] is not None:
+            i += 1
+            continue
+        j = i
+        while j < n and good[j] is None:
+            j += 1
+        lo = good[i - 1] if i > 0 else 0.0
+        hi = good[j] if j < n else cap
+        step = (hi - lo) / float(j - i + 1)
+        for k in range(i, j):
+            good[k] = lo + step * (k - i + 1)
+        i = j
+    return good
+
+
+def _fit_timestamps(out, duration_s):
+    """Force the shot timeline inside the clip that will actually render.
+
+    Two defects, both measured live, both invisible to `_normalise_timestamp`
+    because by then the text is already perfectly well-formed:
+
+      * **[Shot 1] carrying a timestamp.** The contract says it has none -- it
+        IS the opening. Seen on qwen3.8-heretic and qwen3.5:9b.
+      * **A stamp past the end of the clip.** Gemma-26B put a cut at 240.5 s
+        inside an 8 s render, on every seed of the same brief. `04:00.500` is
+        valid MM:SS.mmm, so the format repair passes it straight through and H3
+        receives a cut it can never reach.
+
+    The ceiling is `effective_duration_s`, not the requested duration: frames
+    snap up to the 17k+5 grid, so a stamp between 10.0 and 10.125 on a 10 s clip
+    is legal and must not be "repaired". With no duration to check against this
+    is a no-op rather than a guess.
+    """
+    if duration_s is None:
+        return out
+    cap = effective_duration_s(duration_s)
+    hits = list(_SHOT_STAMP.finditer(out))
+    if not hits:
+        return out
+
+    times = [int(m.group(4)) * 60 + float(m.group(5))
+             for m in hits if int(m.group(2)) != 1]
+    fixed = _redistribute(times, cap)
+
+    pieces, prev, k = [], 0, 0
+    for m in hits:
+        pieces.append(out[prev:m.start()])
+        if int(m.group(2)) == 1:
+            pieces.append(m.group(1))          # Shot 1 keeps the marker, loses the stamp
+        else:
+            mm, rem = divmod(fixed[k], 60)
+            k += 1
+            pieces.append("%s At %02d:%06.3f," % (m.group(1), int(mm), rem))
+        prev = m.end()
+    pieces.append(out[prev:])
+    return "".join(pieces)
+
+
 def finalize(text, mode="i2v", intent="", ref_counts=None, duration_s=None, **_ignored):
     """Deterministic cleanup — never trust the model to have obeyed the contract.
 
@@ -604,6 +700,12 @@ def finalize(text, mode="i2v", intent="", ref_counts=None, duration_s=None, **_i
     two things the prompt asks for and does not reliably get:
       * timestamps arriving as `03:500` instead of `00:03.500`, and
       * an extra invented section tacked on after the last field.
+
+    A third was added on 2026-08-29 after `h3_ab.py` measured it across four
+    writers: a timestamp can be flawless MM:SS.mmm and still name a moment
+    outside the clip, or sit on [Shot 1] which must carry none. See
+    `_fit_timestamps` -- that one is not a formatting fault, so nothing above it
+    in this function could ever have caught it.
     """
     out = (text or "").strip()
     out = _FENCE.sub("", out).strip()
@@ -659,6 +761,9 @@ def finalize(text, mode="i2v", intent="", ref_counts=None, duration_s=None, **_i
     out = out[:tail_from].rstrip()
 
     out = _TS.sub(_normalise_timestamp, out)
+    # Strictly after the format repair: `_fit_timestamps` matches the canonical
+    # shape that sub produces, and a well-formed stamp can still be nonsense.
+    out = _fit_timestamps(out, duration_s)
     out = _COMPOUND_ID.sub(lambda m: re.sub(r"\s*,\s*", ",", m.group(0)), out)
     out = _strip_stray_continuity(out)
 
@@ -892,10 +997,50 @@ def _self_check():
     assert shot_budget(5) == (1, 2)
     assert shot_budget(8) == (2, 3)
     assert shot_budget(14) == (3, 5)
-    # The form's slider reaches 30 s; H3 tops out at 15 and must be clamped, not
-    # passed through, or the model silently ignores the target.
+    # H3's trained range is 124-362 frames = 5-15 s, and both ends must be
+    # clamped rather than passed through or the model silently ignores the
+    # target. These two bounds are the same numbers `h3ClampDuration`
+    # (minimax-h3.ts) caps the render at -- if one side moves, move both, or the
+    # writer sizes a shot for a length that will not be rendered.
+    # --- _fit_timestamps: well-formed but impossible timelines --------------
+    # The exact defect measured off Gemma-26B: a cut 30x past the end of an 8 s
+    # clip, on every seed. `04:00.500` is valid MM:SS.mmm, so every repair above
+    # this one passes it through untouched.
+    late = ("integrated_multimodal_description: [Shot 1] the kitchen at dawn.\n"
+            "[Shot 2] At 04:00.500, the camera cuts to the window.")
+    fixed = finalize(late, mode="t2v", duration_s=8)
+    stamps = [int(m.group(4)) * 60 + float(m.group(5))
+              for m in _SHOT_STAMP.finditer(fixed)]
+    assert stamps and all(0 < t <= effective_duration_s(8) for t in stamps), fixed
+    assert "04:00.500" not in fixed
+
+    # [Shot 1] must lose a timestamp it should never have carried, and keep its
+    # marker and its prose (seen on qwen3.8-heretic and qwen3.5:9b).
+    first = finalize("integrated_multimodal_description: [Shot 1] At 00:04.200, the room.",
+                     mode="t2v", duration_s=8)
+    assert "[Shot 1]" in first and "the room" in first and "At 00:04.200" not in first
+
+    # A good stamp must NOT be disturbed to fix a later bad one -- the reason
+    # this redistributes instead of rescaling.
+    mixed = ("integrated_multimodal_description: [Shot 1] a.\n"
+             "[Shot 2] At 00:02.000, b.\n[Shot 3] At 04:00.500, c.")
+    out_mixed = finalize(mixed, mode="t2v", duration_s=8)
+    assert "At 00:02.000" in out_mixed, out_mixed
+    got = [int(m.group(4)) * 60 + float(m.group(5))
+           for m in _SHOT_STAMP.finditer(out_mixed)]
+    assert got == sorted(got) and got[-1] <= effective_duration_s(8), out_mixed
+
+    # A stamp inside the SNAP margin is legal and must survive: 10 s renders as
+    # 10.125 s, so 10.05 is a real moment, not something to repair.
+    keep = ("integrated_multimodal_description: [Shot 1] a.\n"
+            "[Shot 2] At 00:10.050, b.")
+    assert "At 00:10.050" in finalize(keep, mode="t2v", duration_s=10)
+
+    # No duration to check against: leave the text alone rather than guess.
+    assert "At 04:00.500" in finalize(late, mode="t2v")
+
     assert "duration 15.00 seconds" in build_system(mode="t2v", duration_s=30)
-    assert "duration 4.00 seconds" in build_system(mode="t2v", duration_s=1)
+    assert "duration 5.00 seconds" in build_system(mode="t2v", duration_s=1)
 
     silent = build_system(mode="t2v", dialogue_tier="none")
     assert "(S1), (S2)" not in silent and "nobody speaks" in silent
