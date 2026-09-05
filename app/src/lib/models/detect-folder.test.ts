@@ -101,6 +101,24 @@ describe('detectFolderFromKeys', () => {
     ])).toBe('checkpoints')
   })
 
+  it('calls LyCORIS adapters (LoKr/LoHa/OFT) LoRAs', () => {
+    // famegrid_spicy, an ai-toolkit LoKr for Krea2, carries no `lora_*` key at
+    // all and was filed under diffusion_models/, where the LoRA picker can
+    // never see it. Suffixes taken from ComfyUI's own comfy/weight_adapter/.
+    expect(detectFolderFromKeys([
+      'diffusion_model.blocks.0.attn.wq.alpha',
+      'diffusion_model.blocks.0.attn.wq.lokr_w1',
+      'diffusion_model.blocks.0.attn.wq.lokr_w2',
+    ])).toBe('loras')
+    expect(detectFolderFromKeys([
+      'lora_unet_blocks_0_attn.hada_w1_a',
+      'lora_unet_blocks_0_attn.hada_w2_b',
+    ])).toBe('loras')
+    expect(detectFolderFromKeys([
+      'diffusion_model.blocks.0.attn.wq.oft_blocks',
+    ])).toBe('loras')
+  })
+
   it('lets the LoRA rule outrank the checkpoint rule', () => {
     // A LoRA that also patches the text encoder carries cond_stage_model keys.
     // It is still a LoRA, and putting it in checkpoints/ makes it unloadable.

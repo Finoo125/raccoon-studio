@@ -20,8 +20,15 @@ export type ModelFolder = 'loras' | 'checkpoints' | 'diffusion_models' | 'vae' |
  * them — `minimax_h3_audio_vae_fp32` has 163 and `ltx2310eros1.4` has 200, with
  * zero LoRA keys between them. Matching on it filed a VAE and a 29 GB checkpoint
  * as LoRAs. Every LoRA carries a down/up or A/B pair anyway, so nothing is lost.
+ *
+ * LoRA is not the only adapter `LoraLoader` takes: LyCORIS LoKr/LoHa/OFT files
+ * carry none of the `lora_*` names and were falling through to
+ * diffusion_models/, where no picker can reach them (found on famegrid_spicy,
+ * an ai-toolkit LoKr for Krea2 — 768 tensors, every one `lokr_w1|lokr_w2|alpha`).
+ * These stems are LyCORIS inventions, so they cannot collide with base weights;
+ * the full list is ComfyUI's own `comfy/weight_adapter/`.
  */
-const LORA_KEY = /(^|\.)lora_(a|b|down|up)(\.|$)/
+const LORA_KEY = /(^|\.)(lora_(a|b|down|up)(\.|$)|lokr_[wt]\d|hada_[wt]\d|oft_blocks$)/
 
 /**
  * Components that only appear bundled INSIDE a full checkpoint. `first_stage_model`
