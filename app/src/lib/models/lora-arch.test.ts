@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { classifyLoraHeader, readSafetensorsHeader, classifyLoraFile, type SafetensorsHeader } from './lora-arch'
-import { visibleLoras } from './lora-family'
+import { classifyLoraHeader, classifyBaseHeader, readSafetensorsHeader, classifyLoraFile, type SafetensorsHeader } from './lora-arch'
+import { visibleForFamily } from './lora-family'
 
 /** Build a header from tensor names alone (shapes only matter for the SDXL/SD1.5 split). */
 const h = (names: string[]): SafetensorsHeader =>
@@ -220,7 +220,79 @@ describe('readSafetensorsHeader', () => {
   })
 })
 
-describe('visibleLoras', () => {
+describe('classifyBaseHeader - checkpoints and diffusion models', () => {
+  // Every key set below is the head of a real file's header in the reference
+  // install, read with `struct.unpack('<Q', f.read(8))` + json.loads.
+  it('identifies an SDXL checkpoint by its two text encoders', () => {
+    // waiMatureIllustrious_v30 (a user import) and aria_illu share this shape;
+    // the import is the case that motivated all of this - it was invisible in
+    // the Model dropdown because its *filename* carried no Patreon token.
+    expect(classifyBaseHeader(h([
+      'conditioner.embedders.0.transformer.text_model.embeddings.token_embedding.weight',
+      'first_stage_model.decoder.conv_in.bias',
+      'model.diffusion_model.input_blocks.0.0.weight',
+    ]))).toBe('sdxl')
+  })
+
+  it('identifies SD1.5 by its single encoder in the same slot', () => {
+    expect(classifyBaseHeader(h([
+      'cond_stage_model.transformer.text_model.embeddings.token_embedding.weight',
+      'first_stage_model.decoder.conv_in.bias',
+    ]))).toBe('sd15')
+  })
+
+  it('identifies the LTX 2.3 checkpoint by its audio branch', () => {
+    // Lives in checkpoints/ next to the SDXL models, so this is what keeps a
+    // 29 GB video model out of the image pickers.
+    expect(classifyBaseHeader(h([
+      'model.diffusion_model.transformer_blocks.10.attn1.to_k.weight_scale',
+      'vocoder.vocoder.conv_pre.bias',
+      'audio_vae.decoder.conv_in.weight',
+    ]))).toBe('ltx')
+  })
+
+  it('splits Krea2 from H3, which share the bare blocks.N. naming', () => {
+    expect(classifyBaseHeader(h([
+      'blocks.0.attn.wk.weight_scale',
+      'txtfusion.layerwise_blocks.0.weight',
+    ]))).toBe('krea2')
+    expect(classifyBaseHeader(h([
+      'adaln_t_table',
+      'audio_patch_proj.weight',
+      'blocks.0.attn_qkv_proj.weight',
+    ]))).toBe('h3')
+  })
+
+  it('identifies Z-Image with and without ComfyUI\'s ModelSave prefix', () => {
+    expect(classifyBaseHeader(h(['cap_embedder.0.weight', 'layers.0.attention.qkv.weight']))).toBe('zimage')
+    expect(classifyBaseHeader(h([
+      'model.diffusion_model.cap_embedder.0.weight',
+      'model.diffusion_model.layers.0.attention.qkv.weight',
+    ]))).toBe('zimage')
+  })
+
+  it('identifies Anima in both of its key layouts', () => {
+    expect(classifyBaseHeader(h([
+      'net.blocks.0.adaln_modulation_cross_attn.1.weight',
+      'net.llm_adapter.0.weight',
+    ]))).toBe('anima')
+    // anima-turbo-v1.0 is a ComfyUI re-save: no `net.` wrapper, so it lands on
+    // the bare `blocks.N.` naming Krea2 and H3 also use. It read as unrecognised
+    // (and so showed in every family's picker) until the adaLN pattern went in.
+    expect(classifyBaseHeader(h([
+      'model.diffusion_model.blocks.0.adaln_modulation_cross_attn.1.weight',
+      'model.diffusion_model.blocks.0.attention.wq.weight',
+    ]))).toBe('anima')
+  })
+
+  it('falls back to metadata, then to null for an unknown architecture', () => {
+    const meta = { __metadata__: { 'modelspec.architecture': 'stable-diffusion-xl-v1-base/lora' } }
+    expect(classifyBaseHeader({ ...h(['some.unknown.weight']), ...meta })).toBe('sdxl')
+    expect(classifyBaseHeader(h(['some.unknown.weight']))).toBeNull()
+  })
+})
+
+describe('visibleForFamily', () => {
   // Captured live: ComfyUI's /object_info LoRA list and this app's
   // /api/models/lora-arch response, on an install holding all three.
   const names = [
@@ -235,39 +307,39 @@ describe('visibleLoras', () => {
   } as const
 
   it('shows a model only its own LoRAs', () => {
-    expect(visibleLoras(names, families, 'zimage')).toEqual(['ZIT_muscgi_1.safetensors'])
-    expect(visibleLoras(names, families, 'anima')).toEqual(['ANIMA_muscgi_2.safetensors'])
-    expect(visibleLoras(names, families, 'ltx')).toEqual(['LTX2.3_DMD_reshaped_r256.safetensors'])
+    expect(visibleForFamily(names, families, 'zimage')).toEqual(['ZIT_muscgi_1.safetensors'])
+    expect(visibleForFamily(names, families, 'anima')).toEqual(['ANIMA_muscgi_2.safetensors'])
+    expect(visibleForFamily(names, families, 'ltx')).toEqual(['LTX2.3_DMD_reshaped_r256.safetensors'])
   })
 
   it('keeps the video LoRA out of the image pickers', () => {
     // The bug that motivated this: an LTX video LoRA was offered for image gen.
-    expect(visibleLoras(names, families, 'sdxl')).toEqual([])
+    expect(visibleForFamily(names, families, 'sdxl')).toEqual([])
   })
 
   it('shows everything when the workflow declares no family', () => {
-    expect(visibleLoras(names, families, undefined)).toEqual(names)
+    expect(visibleForFamily(names, families, undefined)).toEqual(names)
   })
 
   it('keeps unrecognised LoRAs visible for every family', () => {
     const withUnknown = [...names, 'mystery.safetensors']
     const map = { ...families, 'mystery.safetensors': null }
-    expect(visibleLoras(withUnknown, map, 'sdxl')).toEqual(['mystery.safetensors'])
+    expect(visibleForFamily(withUnknown, map, 'sdxl')).toEqual(['mystery.safetensors'])
     // Missing from the map entirely (e.g. API failed) behaves the same way.
-    expect(visibleLoras(withUnknown, families, 'sdxl')).toEqual(['mystery.safetensors'])
+    expect(visibleForFamily(withUnknown, families, 'sdxl')).toEqual(['mystery.safetensors'])
   })
 
   it('shows every LoRA when the arch API returned nothing', () => {
-    expect(visibleLoras(names, {}, 'zimage')).toEqual(names)
+    expect(visibleForFamily(names, {}, 'zimage')).toEqual(names)
   })
 
   it('matches ComfyUI subfolder names that use OS separators', () => {
-    expect(visibleLoras(['style\ZIT_muscgi_1.safetensors'], { 'style/ZIT_muscgi_1.safetensors': 'zimage' }, 'zimage'))
+    expect(visibleForFamily(['style\ZIT_muscgi_1.safetensors'], { 'style/ZIT_muscgi_1.safetensors': 'zimage' }, 'zimage'))
       .toEqual(['style\ZIT_muscgi_1.safetensors'])
   })
 
   it('never drops the current selection', () => {
-    expect(visibleLoras(names, families, 'zimage', 'ANIMA_muscgi_2.safetensors'))
+    expect(visibleForFamily(names, families, 'zimage', 'ANIMA_muscgi_2.safetensors'))
       .toEqual(['ANIMA_muscgi_2.safetensors', 'ZIT_muscgi_1.safetensors'])
   })
 })

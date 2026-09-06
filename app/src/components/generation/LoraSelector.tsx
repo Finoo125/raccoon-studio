@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { loraIsMissing, visibleLoras, type LoraFamily } from '@/lib/models/lora-family'
+import { loraIsMissing, visibleForFamily, type LoraFamily } from '@/lib/models/lora-family'
 import { comboOptions } from '@/lib/models/installed'
 
 interface Props {
@@ -59,7 +59,7 @@ export default function LoraSelector({ label, value, strength, onChange, onRemov
   }, [])
 
   const visible = useMemo(
-    () => visibleLoras(loras, families, family, value),
+    () => visibleForFamily(loras, families, family, value),
     [loras, families, family, value],
   )
 

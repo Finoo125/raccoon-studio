@@ -112,6 +112,42 @@ const UNET_BLOCK_PREFIXES = [
 ]
 
 /**
+ * The same fingerprinting for **base models** — full checkpoints and diffusion
+ * models — so the Model dropdown can filter an imported checkpoint by family
+ * exactly as the LoRA pickers do. It used to show only files whose *name*
+ * carried a Patreon token, which hid every model a user imported themselves.
+ *
+ * A separate table because base weights share no naming with adapters (nothing
+ * is `lora_*`). Two traps, both verified against the reference install:
+ *   - ComfyUI's own `ModelSave` writes a `model.diffusion_model.` prefix that a
+ *     raw download doesn't have (`aria_zit_01_00001_` vs `z_image_turbo_bf16`),
+ *     so every name is matched with and without it.
+ *   - `blocks.N.` belongs to Krea2 *and* H3, so neither may claim it: Krea2 is
+ *     TextFusion (as in the LoRA table) and H3 is its audio stack.
+ */
+const BASE_KEY_RULES: { family: LoraFamily; prefixes?: string[]; pattern?: RegExp }[] = [
+  // verified: ltx2310eros1.4 — the audio branch is unique to LTX 2.3.
+  { family: 'ltx', prefixes: ['vocoder.', 'audio_vae.'] },
+  // verified: aria_illu, waiMatureIllustrious_v30 — SDXL's two text encoders.
+  { family: 'sdxl', prefixes: ['conditioner.embedders.'] },
+  // SD1.5's single encoder sits in the same slot under a different name.
+  { family: 'sd15', prefixes: ['cond_stage_model.transformer.'] },
+  // verified: krea2_turbo_fp8_scaled
+  { family: 'krea2', prefixes: ['txtfusion.'] },
+  // verified: minimax_h3_fl2va_pruned_int8_convrot, 10Eros_Max beta4
+  { family: 'h3', prefixes: ['audio_patch_proj.', 'adaln_t_table'] },
+  // verified: z_image_turbo_bf16, aria_zit_01_00001_
+  { family: 'zimage', prefixes: ['cap_embedder.'] },
+  // verified: anima-base-v1.0 (`net.` wrapper) and anima-turbo-v1.0, which is a
+  // ComfyUI re-save and has none — leaving bare `blocks.N.`, the naming Krea2 and
+  // H3 also use. Both claim it above, so the discriminator is Anima's adaLN
+  // modulation (H3 fuses QKV; Krea2 has neither).
+  { family: 'anima', prefixes: ['net.llm_adapter.', 'net.blocks.'], pattern: /^blocks\.\d+\.adaln_modulation_/ },
+  // ponytail: no Ernie checkpoint on hand to fingerprint — it falls through to
+  // the metadata rules, then to null, which every picker shows rather than hides.
+]
+
+/**
  * Metadata fallback, consulted only when the tensor keys didn't resolve. Read
  * the warning at the top before extending this: these strings are whatever the
  * trainer felt like writing.
@@ -162,14 +198,32 @@ export function classifyLoraHeader(header: SafetensorsHeader | null): LoraFamily
     return splitUnetFamily(header, names)
   }
 
+  return classifyMetadata(header)
+}
+
+/** The metadata fallback, shared by both classifiers. Only ever consulted when
+ *  the tensor keys didn't resolve — see the warning at the top of this file. */
+function classifyMetadata(header: SafetensorsHeader): LoraFamily | null {
   const meta = header.__metadata__
-  if (meta) {
-    const hint = META_FIELDS.map((f) => meta[f] ?? '').join(' ').toLowerCase()
-    for (const rule of META_RULES) {
-      if (rule.needles.some((n) => hint.includes(n))) return rule.family
-    }
+  if (!meta) return null
+  const hint = META_FIELDS.map((f) => meta[f] ?? '').join(' ').toLowerCase()
+  for (const rule of META_RULES) {
+    if (rule.needles.some((n) => hint.includes(n))) return rule.family
   }
   return null
+}
+
+/** Classify a base model (checkpoint or diffusion model). Null = unrecognised,
+ *  which the pickers show rather than hide. */
+export function classifyBaseHeader(header: SafetensorsHeader | null): LoraFamily | null {
+  if (!header) return null
+  const names = tensorNames(header).map((k) => k.replace(/^model\.diffusion_model\./, ''))
+  for (const rule of BASE_KEY_RULES) {
+    if (names.some((k) => rule.prefixes?.some((p) => k.startsWith(p)) || rule.pattern?.test(k))) {
+      return rule.family
+    }
+  }
+  return classifyMetadata(header)
 }
 
 /**
@@ -207,4 +261,9 @@ export function readSafetensorsHeader(file: string): SafetensorsHeader | null {
 /** Convenience: read a LoRA file and classify it. Null = unrecognised (show it). */
 export function classifyLoraFile(file: string): LoraFamily | null {
   return classifyLoraHeader(readSafetensorsHeader(file))
+}
+
+/** Convenience: read a checkpoint / diffusion model and classify it. */
+export function classifyBaseFile(file: string): LoraFamily | null {
+  return classifyBaseHeader(readSafetensorsHeader(file))
 }

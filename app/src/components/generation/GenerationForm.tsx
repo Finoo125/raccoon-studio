@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Shuffle, RotateCcw, Wand2, Loader2, Sparkles, Maximize2, Square, ScanFace, Plus, LayoutGrid, Columns3, SlidersHorizontal } from 'lucide-react'
@@ -18,8 +18,9 @@ import {
   KREA2_KROMA_LORA, KREA2_KROMA_DEFAULT,
 } from '@/lib/workflows/krea2'
 import { FACE_SWAP_NODE, PIXEL_BOOST_NODE } from '@/lib/workflows/face-swap'
-import { comboOptions, presetAvailable } from '@/lib/models/installed'
-import { isAriaModel, effectiveAriaModel, matchesPatreonPreset } from '@/lib/models/patreon'
+import { comboOptions, presetAvailable, fileInstalled } from '@/lib/models/installed'
+import { effectiveAriaModel } from '@/lib/models/patreon'
+import { visibleForFamily, type LoraFamily } from '@/lib/models/lora-family'
 import { DEFAULT_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
 import { negativePromptApplies } from '@/lib/workflows/expert-sampler'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
@@ -112,15 +113,25 @@ export default function GenerationForm() {
   // Set by Cancel to abort an in-flight batch submit loop (jobCount > 1) so it
   // stops queuing further prompts once the user has bailed out.
   const cancelledRef = useRef(false)
-  // Aria models come from three ComfyUI loaders; which one the active workflow
-  // uses is decided by workflow.ariaModelKind: 'checkpoint' (SDXL family →
+  // Everything the three ComfyUI loaders offer; which one the active workflow
+  // reads is decided by workflow.ariaModelKind: 'checkpoint' (SDXL family →
   // CheckpointLoaderSimple), 'unet' (z-image/ernie/anima → UNETLoader), or
-  // 'lora' (legacy LoraLoader).
-  const [ariaCheckpoints, setAriaCheckpoints] = useState<string[]>([])
-  const [ariaLoras, setAriaLoras] = useState<string[]>([])
-  const [ariaUnets, setAriaUnets] = useState<string[]>([])
+  // 'lora' (legacy LoraLoader). These used to be filtered to Patreon "Aria"
+  // filenames, which left a checkpoint the user imported themselves invisible
+  // in the Model dropdown while ComfyUI was offering it. Family filtering now
+  // happens below, off each file's own header.
+  const [ckptNames, setCkptNames] = useState<string[]>([])
+  const [loraNames, setLoraNames] = useState<string[]>([])
+  const [unetNames, setUnetNames] = useState<string[]>([])
+  // Architecture read from each base model's safetensors header, keyed by the
+  // name ComfyUI reports. Same source and same rules as the LoRA slots; a failed
+  // fetch leaves the maps empty, which shows every model unfiltered.
+  const [baseFamilies, setBaseFamilies] = useState<{
+    checkpoints: Record<string, LoraFamily | null>
+    diffusion_models: Record<string, LoraFamily | null>
+  }>({ checkpoints: {}, diffusion_models: {} })
   // True once all three lists above reflect a real answer from ComfyUI. Until
-  // then they are indistinguishable from "this install has no Aria models", and
+  // then they are indistinguishable from "this install has no extra models", and
   // a stale `params.ariaModel` must not be cleared on that basis.
   const [ariaLoaded, setAriaLoaded] = useState(false)
   // Every checkpoint + diffusion model ComfyUI offers (not just the Aria ones),
@@ -228,10 +239,10 @@ export default function GenerationForm() {
     !sheetInDevelopment && Boolean(sheetPreset && sheetLorasInstalled.has(sheetPreset.file))
   const sheetOn = params.characterSheet === true && sheetReady
 
-  // Detect imported Aria models. SDXL-family workflows use Aria *checkpoints*
-  // (CheckpointLoaderSimple); the diffusion families (z-image/ernie/anima) use
-  // Aria *diffusion models* (UNETLoader). The LoraLoader list is kept for the
-  // legacy 'lora' kind.
+  // What each loader can load. SDXL-family workflows swap *checkpoints*
+  // (CheckpointLoaderSimple); the diffusion families (z-image/ernie/anima) swap
+  // *diffusion models* (UNETLoader). The LoraLoader list is kept for the legacy
+  // 'lora' kind.
   useEffect(() => {
     // Resolves true only when ComfyUI actually answered, so `ariaLoaded` below
     // never treats an offline install as "no Aria models".
@@ -239,7 +250,7 @@ export default function GenerationForm() {
       try {
         const d = await (await fetch(`/api/comfyui/object_info/${node}`)).json()
         const names = comboOptions(d, node, field)
-        set(names.filter(isAriaModel))
+        set(names)
         return names
       } catch { /* ComfyUI offline — leave list empty */ return null }
     }
@@ -255,15 +266,30 @@ export default function GenerationForm() {
       }
     }
     void Promise.all([
-      load('CheckpointLoaderSimple', 'ckpt_name', setAriaCheckpoints),
-      load('LoraLoader', 'lora_name', setAriaLoras),
-      load('UNETLoader', 'unet_name', setAriaUnets),
+      load('CheckpointLoaderSimple', 'ckpt_name', setCkptNames),
+      load('LoraLoader', 'lora_name', setLoraNames),
+      load('UNETLoader', 'unet_name', setUnetNames),
     ]).then(([ckpt, lora, unet]) => {
       setAriaLoaded([ckpt, lora, unet].every(Boolean))
-      // Same two answers, unfiltered: which base models this install actually
-      // has decides which model presets are offered below.
+      // Same two answers: which base models this install actually has decides
+      // which model presets are offered below.
       setInstalledBaseModels([...(ckpt ?? []), ...(unet ?? [])])
     })
+    const loadBaseFamilies = async () => {
+      const one = async (folder: 'checkpoints' | 'diffusion_models') => {
+        try {
+          const d = (await (await fetch(`/api/models/lora-arch?folder=${folder}`)).json()) as {
+            families?: Record<string, LoraFamily | null>
+          }
+          return d.families ?? {}
+        } catch {
+          return {}
+        }
+      }
+      const [checkpoints, diffusionModels] = await Promise.all([one('checkpoints'), one('diffusion_models')])
+      setBaseFamilies({ checkpoints, diffusion_models: diffusionModels })
+    }
+    void loadBaseFamilies()
     void checkDetailer()
     const checkFaceSwap = async () => {
       // Probed independently: ReActor failing and RaccoonSwapNodes failing are
@@ -501,22 +527,45 @@ export default function GenerationForm() {
 
   const showNegativePrompt = negativePromptApplies(params, workflow)
 
-  // The Aria/Patreon model picker swaps the generation model once an Aria model
-  // has been imported (muscgi/muscgro are excluded upstream by isAriaModel).
-  // SDXL-family picks an Aria checkpoint; diffusion families (z-image/ernie/
-  // anima) pick an Aria diffusion model (UNET); the legacy lora kind picks an
-  // Aria LoRA.
-  const ariaModels =
-    workflow.ariaModelKind === 'checkpoint'
-      ? ariaCheckpoints
-      : workflow.ariaModelKind === 'unet'
-        ? ariaUnets
-        : ariaLoras
-  // `ariaModel` is persisted and shared across families, so it outlives both the
-  // preset switch that makes it wrong and the install that made it exist.
-  // Derived rather than written back to state: leaving the raw value in storage
-  // means re-importing the model restores the choice instead of losing it.
-  const ariaModel = effectiveAriaModel(params.ariaModel, ariaModels, ariaLoaded)
+  // The Model picker swaps the generation model for another of the same family:
+  // SDXL-family picks a checkpoint, the diffusion families (z-image/ernie/anima/
+  // krea2) a diffusion model, the legacy lora kind a LoRA. Narrowed by each
+  // file's own header exactly like the LoRA slots, so an unrecognised file stays
+  // listed — a family we haven't fingerprinted shows too much rather than hiding
+  // what the user imported.
+  //
+  // Both values come out of one useMemo because the React Compiler otherwise
+  // stops memoizing this whole component: a locally-built array is still live
+  // where the JSX reads it, below `handleGenerate`, so the selection derived
+  // from it reads as "may be modified later" in that useCallback's deps.
+  const kind = workflow.ariaModelKind
+  const family = workflow.loraFamily
+  const baseModelFile = workflow.baseModel
+  const selected = params.ariaModel
+  const baseModelInstalled = fileInstalled(baseModelFile, installedBaseModels)
+  const { models: ariaModels, model: ariaModel } = useMemo(() => {
+    const names = kind === 'checkpoint' ? ckptNames : kind === 'unet' ? unetNames : loraNames
+    // No `selected` pass-through, unlike the LoRA slots: keeping the current
+    // selection listed whatever its family would defeat `effectiveAriaModel`
+    // below, which drops a pick the *new* family's loader cannot load. With one,
+    // an Anima model chosen under Anima followed the user into Illustrious.
+    const models = visibleForFamily(
+      // The preset's own model is already the "Base X" entry below; twice is noise.
+      names.filter((n) => !fileInstalled(baseModelFile, [n])),
+      kind === 'checkpoint' ? baseFamilies.checkpoints : baseFamilies.diffusion_models,
+      family,
+    )
+    // `selected` is persisted and shared across families, so it outlives both the
+    // preset switch that makes it wrong and the install that made it exist; it is
+    // resolved here rather than written back, so re-importing a model restores
+    // the choice instead of losing it. And a preset whose own model is missing
+    // falls back to the first of its family: leaving "Base X" selected sends
+    // ComfyUI a filename it does not have, which returns as a bare "Generation
+    // failed" (the picker disables that entry for the same reason).
+    const fallback = ariaLoaded && !baseModelInstalled ? models[0] : undefined
+    return { models, model: effectiveAriaModel(selected, models, ariaLoaded) ?? fallback }
+  }, [kind, family, baseModelFile, baseModelInstalled, selected, ariaLoaded,
+      ckptNames, unetNames, loraNames, baseFamilies])
 
   const handleGenerate = useCallback(async () => {
     if (!params.prompt.trim()) {
@@ -677,19 +726,23 @@ export default function GenerationForm() {
    * `workflow` to a locally-declared function makes the React Compiler treat it
    * as possibly-mutated and bail out of memoizing this component.
    *
-   * The Aria list is narrowed to this family's own naming first. All the UNET
-   * families share one list, so an unfiltered check let a single Aria Z-Image
-   * model light up Anima, Ernie and Krea2 as well — every preset colourful on
-   * an install that could render two of them.
+   * The list is narrowed to models whose header says they *are* this family.
+   * All the UNET families share one list, so an unfiltered check let a single
+   * Z-Image model light up Anima, Ernie and Krea2 as well — every preset
+   * colourful on an install that could render two of them. Unrecognised files
+   * are excluded here while the dropdown still offers them: an unknown file may
+   * be selectable, but it must not advertise a preset as ready.
    */
-  const presetOk = (id: string, baseModel: string, kind: WorkflowDefinition['ariaModelKind']) =>
-    presetAvailable(
+  const presetOk = (baseModel: string, presetKind: WorkflowDefinition['ariaModelKind'], presetFamily?: LoraFamily) => {
+    const families = presetKind === 'checkpoint' ? baseFamilies.checkpoints : baseFamilies.diffusion_models
+    const names = presetKind === 'checkpoint' ? ckptNames : presetKind === 'unet' ? unetNames : loraNames
+    return presetAvailable(
       baseModel,
       installedBaseModels,
-      (kind === 'checkpoint' ? ariaCheckpoints : kind === 'unet' ? ariaUnets : ariaLoras)
-        .filter((n) => matchesPatreonPreset(n, id)),
+      names.filter((n) => Boolean(presetFamily) && families[n.replace(/\\/g, '/')] === presetFamily),
       ariaLoaded,
     )
+  }
 
   const showModelPicker =
     ariaModels.length > 0 &&
@@ -717,7 +770,7 @@ export default function GenerationForm() {
             model is the first thing to do on this page. */}
         <div className="flex gap-2 flex-wrap" data-tour="/generate">
           {workflows.map((w) => {
-            const available = presetOk(w.id, w.baseModel, w.ariaModelKind)
+            const available = presetOk(w.baseModel, w.ariaModelKind, w.loraFamily)
             return (
             <Button
               key={w.id}
@@ -756,7 +809,7 @@ export default function GenerationForm() {
         {/* The selected preset can be one that isn't installed — it is restored
             from localStorage, which outlives any reinstall. Say so here, since a
             greyed-out button the user cannot click explains nothing on its own. */}
-        {!presetOk(workflow.id, workflow.baseModel, workflow.ariaModelKind) && (
+        {!presetOk(workflow.baseModel, workflow.ariaModelKind, workflow.loraFamily) && (
           <p className="text-xs text-muted-foreground leading-snug">
             Greyed-out presets aren&apos;t downloaded yet.{' '}
             <Link href="/models" className="font-medium text-foreground underline">Get models</Link>{' '}
@@ -770,10 +823,7 @@ export default function GenerationForm() {
       <div className="grid grid-cols-2 gap-x-4 gap-y-3">
         {showModelPicker && (
           <div className="space-y-2">
-            <SectionLabel>
-              Model
-              <Badge variant="outline" className="ml-2 text-[10px] font-normal">Aria</Badge>
-            </SectionLabel>
+            <SectionLabel>Model</SectionLabel>
             <Select
               value={ariaModel || 'base'}
               onValueChange={(v) => set('ariaModel', (v ?? 'base') === 'base' ? undefined : v)}
@@ -782,7 +832,9 @@ export default function GenerationForm() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="base">Base {workflow.name}</SelectItem>
+                <SelectItem value="base" disabled={!baseModelInstalled}>
+                  Base {workflow.name}{baseModelInstalled ? '' : ' — not installed'}
+                </SelectItem>
                 {ariaModels.map((m) => (
                   <SelectItem key={m} value={m}>{(m.split('/').pop() ?? m).replace('.safetensors', '')}</SelectItem>
                 ))}

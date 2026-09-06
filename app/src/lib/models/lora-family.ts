@@ -14,16 +14,17 @@ import { selectionIsStale } from './installed'
 export type LoraFamily = 'sdxl' | 'zimage' | 'anima' | 'ernie' | 'krea2' | 'ltx' | 'h3' | 'sd15' | 'flux'
 
 /**
- * Narrow ComfyUI's LoRA list to the ones that can load on `family`.
+ * Narrow a list of ComfyUI model filenames to the ones that belong to `family` —
+ * LoRAs in the LoRA slots, checkpoints and diffusion models in the Model picker.
  *
  * `names` come from ComfyUI (`/object_info`), `families` from
  * `/api/models/lora-arch`. ComfyUI reports subfolders with OS separators while
  * the API keys use '/', so names are normalised before lookup. Two deliberate
- * pass-throughs: an unrecognised LoRA (no entry, or null) stays listed rather
+ * pass-throughs: an unrecognised file (no entry, or null) stays listed rather
  * than silently vanishing, and a `selected` value is always kept so a live
  * selection never leaves the picker rendering blank.
  */
-export function visibleLoras(
+export function visibleForFamily(
   names: string[],
   families: Record<string, LoraFamily | null>,
   family?: LoraFamily,
