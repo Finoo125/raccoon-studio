@@ -21,8 +21,9 @@ import { FACE_SWAP_NODE, PIXEL_BOOST_NODE } from '@/lib/workflows/face-swap'
 import { comboOptions, presetAvailable, fileInstalled } from '@/lib/models/installed'
 import { effectiveAriaModel } from '@/lib/models/patreon'
 import { visibleForFamily, type LoraFamily } from '@/lib/models/lora-family'
-import { DEFAULT_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS, EMPTY_LORA_PARAMS } from '@/lib/workflows/lora-chain'
+import { DEFAULT_LORA_PARAMS, MAX_LORAS, FREE_LORA_SLOTS, lorasForSwitch } from '@/lib/workflows/lora-chain'
 import { negativePromptApplies } from '@/lib/workflows/expert-sampler'
+import { swapPromptPrefix } from '@/lib/workflows/anime-prompts'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { useQueueStore } from '@/lib/comfyui/queue'
 import { submitPrompt } from '@/lib/comfyui/submit'
@@ -44,8 +45,9 @@ import {
 } from '@/lib/workflows/character-sheet'
 import { uploadImageBlob } from '@/lib/generation/upload'
 import type { WildcardLists } from '@/lib/prompts/store'
-import type { GenerationParams, WorkflowDefinition } from '@/types/workflow'
+import type { GenerationParams, LoraParam, WorkflowDefinition } from '@/types/workflow'
 import { parseGalleryLoras } from '@/lib/gallery/lora-transfer'
+import { presetStamp } from '@/lib/gallery/reuse-settings'
 
 // Persists the workflow choice and all form params across reloads (localStorage).
 const FORM_STORAGE_KEY = 'raccoon-studio:generate-form'
@@ -86,12 +88,12 @@ export default function GenerationForm() {
     loras: DEFAULT_LORA_PARAMS.map((lora) => ({ ...lora })),
     ...workflows[0].defaultParams,
   })
-  // Per-model prompt memory: each model preset keeps its own last-used
-  // prompt/negative for this session, so switching presets restores that
-  // model's text (or its defaults on first visit) instead of leaking one
-  // family's quality-tag convention into another.
-  // ponytail: in-memory only (resets on reload); persist per-model if users ask.
-  const [promptStash, setPromptStash] = useState<Record<string, { prompt: string; negativePrompt: string }>>({})
+  // Per-preset LoRA memory for this session: a stack that cannot load on the
+  // preset being switched to is parked here and comes back on return, instead
+  // of being reset on every switch. (Prompts are not stashed — they follow the
+  // user with the family's tag prefix swapped, see the switch handler.)
+  // ponytail: in-memory only (resets on reload); persist per-preset if users ask.
+  const [loraStash, setLoraStash] = useState<Record<string, LoraParam[] | undefined>>({})
   const [isGenerating, setIsGenerating] = useState(false)
   const [loraWarnOpen, setLoraWarnOpen] = useState(false)
   const [expertWarnOpen, setExpertWarnOpen] = useState(false)
@@ -409,6 +411,9 @@ export default function GenerationForm() {
     const seed = searchParams.get('seed')
     const wf = searchParams.get('workflow')
     const loras = parseGalleryLoras(searchParams.get('loras'))
+    // The checkpoint the image used, or 'base' for the preset's own — either way
+    // it replaces the pick left in the form, which is what "the wrong model" was.
+    const model = searchParams.get('model')
     if (prompt || negative || seed || wf || loras) {
       if (wf) {
         const found = workflows.find((w) => w.id === wf || w.name.toLowerCase() === wf.toLowerCase())
@@ -421,6 +426,7 @@ export default function GenerationForm() {
         ...(negative ? { negativePrompt: negative } : {}),
         ...(seed ? { seed: Number(seed) } : {}),
         ...(loras ? { loras } : {}),
+        ...(model ? { ariaModel: model === 'base' ? undefined : model } : {}),
       }))
     }
   }, [searchParams])
@@ -658,7 +664,7 @@ export default function GenerationForm() {
           jobParams.prompt = withCharacterSheet(jobParams.prompt, sheetPreset.file)
         }
         const prompt = workflow.buildPrompt(jobParams)
-        const prompt_id = await submitPrompt({ prompt, client_id: clientId, extra_data: { preview_method: 'auto' } })
+        const prompt_id = await submitPrompt({ prompt, client_id: clientId, extra_data: presetStamp(workflowId) })
         addJob(prompt_id, workflowId, workflow.name, jobParams.prompt, jobParams)
         queued++
       }
@@ -782,21 +788,20 @@ export default function GenerationForm() {
               title={available ? undefined : `${w.name} isn't downloaded — get it on the Models page`}
               onClick={() => {
                 if (w.id === workflowId) return
-                // Stash the outgoing model's prompt boxes, then restore the
-                // incoming model's last-used text — or its own defaults (e.g.
-                // Anima's quality tags) on first visit, else empty.
-                setPromptStash((s) => ({ ...s, [workflowId]: { prompt: params.prompt, negativePrompt: params.negativePrompt ?? '' } }))
+                setLoraStash((s) => ({ ...s, [workflowId]: params.loras }))
                 setWorkflowId(w.id)
-                const stashed = promptStash[w.id]
-                // LoRAs are model-family-specific (an SDXL LoRA won't load on
-                // Z-Image, etc.), so a switch always resets both slots to None
-                // rather than carrying a now-invalid selection into the new model.
+                // The description follows the user; only the family's default
+                // text swaps (Pony's score ladder for Illustrious's booru tags,
+                // nothing at all for the photoreal families). LoRAs are
+                // family-specific (an SDXL LoRA won't load on Z-Image), so they
+                // only travel between presets that share a pool; across
+                // families the incoming preset's own last stack comes back.
                 setParams((p) => ({
                   ...p,
-                  ...EMPTY_LORA_PARAMS,
                   ...w.defaultParams,
-                  prompt: stashed?.prompt ?? w.defaultParams.prompt ?? '',
-                  negativePrompt: stashed?.negativePrompt ?? w.defaultParams.negativePrompt ?? '',
+                  loras: lorasForSwitch(p.loras, workflow.loraFamily, w.loraFamily, loraStash[w.id]),
+                  prompt: swapPromptPrefix(p.prompt, workflow.defaultParams.prompt, w.defaultParams.prompt),
+                  negativePrompt: swapPromptPrefix(p.negativePrompt ?? '', workflow.defaultParams.negativePrompt, w.defaultParams.negativePrompt),
                 }))
               }}
             >

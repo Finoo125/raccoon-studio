@@ -2,9 +2,19 @@ import { workflows } from '@/lib/workflows'
 import type { ImageMetadata } from '@/types/gallery'
 import type { GenerationParams, WorkflowDefinition } from '@/types/workflow'
 
-/** Convert embedded Gallery metadata into the image form's reusable settings. */
+/**
+ * Convert embedded Gallery metadata into the image form's reusable settings.
+ *
+ * `ariaModel` is always present: the checkpoint the render used when that is
+ * not the preset's own base model, else `undefined` — which, spread over the
+ * form's params, clears a pick left over from the previous render instead of
+ * quietly keeping it. A name the loader no longer offers is dropped by the
+ * form's stale-selection guard.
+ */
 export function galleryMetadataToGenerationParams(metadata: ImageMetadata): Partial<GenerationParams> {
+  const model = metadata.model?.trim()
   return {
+    ariaModel: model && model !== resolveWorkflowFromMetadata(metadata)?.baseModel ? model : undefined,
     ...(metadata.prompt ? { prompt: metadata.prompt } : {}),
     ...(metadata.negativePrompt ? { negativePrompt: metadata.negativePrompt } : {}),
     ...(metadata.seed !== undefined ? { seed: metadata.seed } : {}),
@@ -14,6 +24,15 @@ export function galleryMetadataToGenerationParams(metadata: ImageMetadata): Part
       ? { loras: metadata.loras.map((lora) => ({ ...lora })) }
       : {}),
   }
+}
+
+/**
+ * What every image job carries in `extra_data`, so the PNG records which preset
+ * made it (ComfyUI writes each `extra_pnginfo` key as a tEXt chunk, and
+ * `extractPreset` reads it back). `preview_method` keeps the live preview on.
+ */
+export function presetStamp(workflowId: string) {
+  return { preview_method: 'auto', extra_pnginfo: { raccoon: { preset: workflowId } } }
 }
 
 /**
@@ -50,11 +69,20 @@ export function resolveWorkflowFromMetadata(metadata: ImageMetadata): WorkflowDe
   const wf = metadata.workflow?.trim()
   const model = metadata.model?.trim()
 
+  // 0. The preset the app stamped into the file when it submitted the job. The
+  //    only evidence that survives an imported checkpoint: the Model picker
+  //    offers every SDXL-family file, and a Pony render on one of those matches
+  //    no baseModel below, so it used to come back as plain SDXL.
+  if (metadata.preset) {
+    const stamped = workflows.find((w) => w.id === metadata.preset)
+    if (stamped) return stamped
+  }
   // 1. The checkpoint / diffusion model the PNG actually recorded — the
-  //    strongest evidence there is, and the only thing that separates the three
-  //    SDXL presets or the two Krea2/Anima ones. It has to be tried *before*
-  //    the name match below: the SDXL folder is spelled exactly like the SDXL
-  //    preset's name, so a Pony render would otherwise come back as plain SDXL.
+  //    strongest evidence left, and the only thing that separates the three
+  //    SDXL presets or the two Krea2/Anima ones on a render made before the
+  //    stamp existed. It has to be tried *before* the name match below: the
+  //    SDXL folder is spelled exactly like the SDXL preset's name, so a Pony
+  //    render would otherwise come back as plain SDXL.
   if (model) {
     const byModel = workflows.find((w) => w.baseModel.toLowerCase() === model.toLowerCase())
     if (byModel) return byModel

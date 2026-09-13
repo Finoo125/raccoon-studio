@@ -28,3 +28,16 @@ export const ANIMA_DEFAULT_NEGATIVE =
 export const PONY_DEFAULT_POSITIVE = 'score_9, score_8_up, score_7_up, score_6_up, '
 export const PONY_DEFAULT_NEGATIVE =
   'score_4, score_3, score_2, score_1, worst quality, low quality, lowres, bad anatomy, bad hands, watermark'
+
+/**
+ * Move a prompt between two presets: the outgoing family's default text is
+ * swapped for the incoming family's, and everything the user typed after it
+ * comes along. Undefined stands for a family with no default (an empty
+ * prefix), so a bare description gains tags on the way to Pony and loses them
+ * on the way back. Text that no longer starts with the outgoing default was
+ * rewritten by the user and is carried verbatim — injecting another family's
+ * tags into it would corrupt it.
+ */
+export function swapPromptPrefix(text: string, from = '', to = ''): string {
+  return text.startsWith(from) ? to + text.slice(from.length) : text
+}

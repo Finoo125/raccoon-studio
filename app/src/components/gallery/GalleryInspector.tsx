@@ -16,7 +16,7 @@ import { useSendToVideo } from '@/lib/generation/useSendToVideo'
 import { useContinueVideo, canContinue } from '@/lib/generation/useContinueVideo'
 import { useRouter } from 'next/navigation'
 import { serializeGalleryLoras } from '@/lib/gallery/lora-transfer'
-import { resolveWorkflowFromMetadata } from '@/lib/gallery/reuse-settings'
+import { galleryMetadataToGenerationParams, resolveWorkflowFromMetadata } from '@/lib/gallery/reuse-settings'
 import { useKiosk } from '@/app/providers'
 
 export default function GalleryInspector() {
@@ -148,6 +148,9 @@ export default function GalleryInspector() {
     else if (selected.metadata.workflow) params.set('workflow', selected.metadata.workflow.toLowerCase())
     const loras = serializeGalleryLoras(selected.metadata.loras)
     if (loras) params.set('loras', loras)
+    // The checkpoint too: a Pony render on an imported finetune is only that
+    // render again with the same file in the Model picker.
+    if (preset) params.set('model', galleryMetadataToGenerationParams(selected.metadata).ariaModel ?? 'base')
     router.push(`${isVideo ? '/generate-videos' : '/generate'}?${params}`)
     toast.success(`Settings sent to ${isVideo ? 'Generate Videos' : 'Generate'} page`)
   }

@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import type { GalleryImage } from '@/types/gallery'
-import { parsePngTextChunks, extractMetadataFromPromptChunk, extractMetadataFromParameters } from './metadata'
+import { parsePngTextChunks, extractMetadataFromPromptChunk, extractMetadataFromParameters, extractPreset } from './metadata'
 import { log } from '@/lib/logging/logger'
 
 const OUTPUT_DIR = process.env.COMFYUI_OUTPUT_DIR ?? ''
@@ -150,8 +150,10 @@ function extractMetadataFromFile(filePath: string) {
     const chunks = parsePngTextChunks(buf)
     // ComfyUI embeds a `prompt` JSON; sd-webui/Forge tools embed a flat
     // `parameters` text block. Support both so metadata is extracted either way.
-    if (chunks.prompt) return extractMetadataFromPromptChunk(chunks.prompt)
-    if (chunks.parameters) return extractMetadataFromParameters(chunks.parameters)
+    const preset = extractPreset(chunks)
+    const meta = chunks.prompt ? extractMetadataFromPromptChunk(chunks.prompt)
+      : chunks.parameters ? extractMetadataFromParameters(chunks.parameters) : {}
+    return preset ? { ...meta, preset } : meta
   } catch { /* non-readable or non-png */ }
   return {}
 }

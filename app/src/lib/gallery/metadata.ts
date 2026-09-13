@@ -79,6 +79,21 @@ export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadat
 }
 
 /**
+ * The preset id the app stamps into every job it submits (see `presetStamp`):
+ * ComfyUI writes each `extra_pnginfo` key as its own JSON-encoded tEXt chunk.
+ * Absent on anything the app did not render, and on renders from before the
+ * stamp existed.
+ */
+export function extractPreset(chunks: Record<string, string>): string | undefined {
+  try {
+    const preset: unknown = JSON.parse(chunks.raccoon ?? '').preset
+    return typeof preset === 'string' ? preset : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Parse the A1111 / Forge / reForge "parameters" tEXt chunk. Many images in the
  * gallery were produced by sd-webui-style tools rather than ComfyUI, so they
  * carry this flat text format instead of ComfyUI's `prompt` JSON. Example:

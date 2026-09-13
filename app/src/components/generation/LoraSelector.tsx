@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { loraIsMissing, visibleForFamily, type LoraFamily } from '@/lib/models/lora-family'
 import { comboOptions } from '@/lib/models/installed'
@@ -15,9 +15,12 @@ interface Props {
   onRemove?: () => void
   /**
    * Base-model family of the workflow this picker belongs to. When set, LoRAs
-   * known to belong to a *different* family are hidden — an SDXL LoRA can't load
-   * on Z-Image, so offering it only buys a failed job. LoRAs whose architecture
-   * we can't identify are always listed, so nothing silently disappears.
+   * known to belong to a *different* family drop to a greyed "Other models"
+   * group at the bottom — ComfyUI skips their weights on this model (logged as
+   * `NOT LOADED`, the render itself succeeds), so they are still selectable:
+   * the family is read off a heuristic header fingerprint, and hiding them
+   * outright left a misread with no recourse. LoRAs whose architecture we
+   * can't identify are listed normally, so nothing silently disappears.
    */
   family?: LoraFamily
 }
@@ -62,6 +65,7 @@ export default function LoraSelector({ label, value, strength, onChange, onRemov
     () => visibleForFamily(loras, families, family, value),
     [loras, families, family, value],
   )
+  const others = useMemo(() => loras.filter((l) => !visible.includes(l)), [loras, visible])
 
   // Selections outlive the file they name: they persist across reloads and ride
   // in on gallery "Send to Generate" links. Drop one the moment ComfyUI's own
@@ -94,6 +98,21 @@ export default function LoraSelector({ label, value, strength, onChange, onRemov
             {visible.map((l) => (
               <SelectItem key={l} value={l}>{l.replace('.safetensors', '')}</SelectItem>
             ))}
+            {others.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>Other models — skipped on this one</SelectLabel>
+                {others.map((l) => (
+                  <SelectItem
+                    key={l}
+                    value={l}
+                    className="opacity-50"
+                    title={`Built for ${families[l.replace(/\\/g, '/')]?.toUpperCase()} — ComfyUI loads nothing from it here`}
+                  >
+                    {l.replace('.safetensors', '')}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
           </SelectContent>
         </Select>
       </div>

@@ -6,6 +6,7 @@ import { useQueueStore } from '@/lib/comfyui/queue'
 import { useGenerationWebSocket } from '@/lib/comfyui/useGenerationWebSocket'
 import { buildRerunPrompt } from '@/lib/comfyui/rerun'
 import { submitPrompt } from '@/lib/comfyui/submit'
+import { presetStamp } from '@/lib/gallery/reuse-settings'
 import type { JobRecord } from '@/lib/queue/history'
 
 /**
@@ -46,7 +47,7 @@ export default function QueueProvider() {
         const prompt_id = await submitPrompt({
           prompt,
           client_id: useQueueStore.getState().clientId,
-          extra_data: { preview_method: 'auto' },
+          extra_data: presetStamp(job.workflowId),
         })
         addJob(prompt_id, job.workflowId, workflowName, job.prompt, job.generationParams, job.kind)
       } catch (err) {

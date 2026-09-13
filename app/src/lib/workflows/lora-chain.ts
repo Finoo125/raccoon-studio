@@ -1,5 +1,6 @@
 import type { ComfyUIPrompt } from '@/types/comfyui'
 import type { GenerationParams } from '@/types/workflow'
+import type { LoraFamily } from '@/lib/models/lora-family'
 
 /**
  * Shared LoRA plumbing for the image workflows.
@@ -38,12 +39,20 @@ export const DEFAULT_LORA_PARAMS: SelectedLora[] = Array.from(
 )
 
 /**
- * Every LoRA slot cleared. Spread over params wherever selections must not
- * survive — a new session, or a model switch — since a LoRA that was since
- * uninstalled (or belongs to another family) fails ComfyUI validation.
+ * The LoRA rows to show after a preset switch. Presets that share a LoRA pool
+ * (SDXL/Pony/Illustrious) keep the live stack — the same files load on all of
+ * them. Across families the outgoing stack cannot load, so the incoming
+ * preset's own last stack comes back instead, or empty rows on a first visit.
+ * A file uninstalled in between is dropped by the picker's stale guard.
  */
-export const EMPTY_LORA_PARAMS: Partial<GenerationParams> = {
-  loras: DEFAULT_LORA_PARAMS.map((lora) => ({ ...lora })),
+export function lorasForSwitch(
+  live: SelectedLora[] | undefined,
+  fromFamily: LoraFamily | undefined,
+  toFamily: LoraFamily | undefined,
+  stashed: SelectedLora[] | undefined,
+): SelectedLora[] {
+  const shared = Boolean(fromFamily) && fromFamily === toFamily
+  return (shared ? live : stashed) ?? DEFAULT_LORA_PARAMS.map((lora) => ({ ...lora }))
 }
 
 type Ref = [string, number]

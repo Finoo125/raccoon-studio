@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { selectedLoras, prependLoraChain, DEFAULT_LORA_PARAMS, EMPTY_LORA_PARAMS, FREE_LORA_SLOTS, MAX_LORAS } from './lora-chain'
+import { selectedLoras, prependLoraChain, lorasForSwitch, DEFAULT_LORA_PARAMS, FREE_LORA_SLOTS, MAX_LORAS } from './lora-chain'
 import { animaWorkflow } from './anima'
 import { zImageTurboWorkflow } from './z-image-turbo'
 import { ernieTurboWorkflow } from './ernie-turbo'
@@ -167,10 +167,26 @@ describe('dynamic array defaults', () => {
     // which the arbitrary-N suite above proves with 12.
     expect(many.length).toBeGreaterThan(MAX_LORAS)
   })
+})
 
-  it('EMPTY_LORA_PARAMS resets the array', () => {
-    const cleared = { ...base, loras: many, ...EMPTY_LORA_PARAMS } as GenerationParams
-    expect(selectedLoras(cleared)).toEqual([])
-    expect(cleared.loras).toHaveLength(FREE_LORA_SLOTS)
+describe('lorasForSwitch', () => {
+  const live = [{ name: 'detail.safetensors', strength: 0.8 }]
+  const stashed = [{ name: 'style.safetensors', strength: 1 }]
+
+  it('carries the live stack between presets that share a LoRA pool', () => {
+    // SDXL → Pony → Illustrious all load the same files; resetting on every
+    // switch made the user re-pick them each time.
+    expect(lorasForSwitch(live, 'sdxl', 'sdxl', stashed)).toBe(live)
+  })
+
+  it('restores what the incoming preset last had across families', () => {
+    // An SDXL LoRA cannot load on Z-Image, but Z-Image's own last stack can.
+    expect(lorasForSwitch(live, 'sdxl', 'zimage', stashed)).toBe(stashed)
+  })
+
+  it('starts empty on a first visit across families', () => {
+    expect(lorasForSwitch(live, 'sdxl', 'zimage', undefined)).toEqual(DEFAULT_LORA_PARAMS)
+    // No family at all means nothing is known to be shareable.
+    expect(lorasForSwitch(live, undefined, undefined, undefined)).toEqual(DEFAULT_LORA_PARAMS)
   })
 })

@@ -31,6 +31,9 @@ export interface ImageMetadata {
   width?: number
   height?: number
   workflow?: string
+  /** Id of the app preset that submitted the render, read back from the
+   *  `raccoon` chunk the app stamps into every job (`presetStamp`). */
+  preset?: string
   loras?: Array<{
     name: string
     strength?: number

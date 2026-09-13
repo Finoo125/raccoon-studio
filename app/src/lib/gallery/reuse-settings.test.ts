@@ -27,6 +27,19 @@ describe('galleryMetadataToGenerationParams', () => {
     expect(galleryMetadataToGenerationParams({ prompt: 'x', loras: [] }))
       .toEqual({ prompt: 'x' })
   })
+
+  it('restores the checkpoint the render used, as the Model pick', () => {
+    // An imported Pony finetune is selected through `ariaModel`; reusing the
+    // image has to bring that pick back or the preset renders on its base model.
+    expect(galleryMetadataToGenerationParams({ preset: 'pony', model: 'cyberrealisticPony_v8.safetensors' }).ariaModel)
+      .toBe('cyberrealisticPony_v8.safetensors')
+    // The preset's own base model is the "Base Pony" entry, not a pick — and an
+    // explicit undefined is what clears a stale pick left in the form.
+    const pony = workflows.find((w) => w.id === 'pony')!
+    const params = galleryMetadataToGenerationParams({ preset: 'pony', model: pony.baseModel })
+    expect('ariaModel' in params).toBe(true)
+    expect(params.ariaModel).toBeUndefined()
+  })
 })
 
 describe('resolveWorkflowFromMetadata', () => {
@@ -48,6 +61,17 @@ describe('resolveWorkflowFromMetadata', () => {
     for (const w of workflows) {
       expect(resolveWorkflowFromMetadata({ workflow: 'SDXL', model: w.baseModel })?.id).toBe(w.id)
     }
+  })
+
+  it('trusts the preset the app stamped into the PNG over everything else', () => {
+    // The checkpoint only identifies a preset when it is that preset's *base*
+    // model. Since the Model picker offers every installed SDXL-family
+    // checkpoint, a Pony render on an imported finetune matches no baseModel and
+    // used to come back as plain SDXL — different tags, sampler and upscaler.
+    expect(resolveWorkflowFromMetadata({ workflow: 'SDXL', model: 'cyberrealisticPony_v8.safetensors', preset: 'pony' })?.id)
+      .toBe('pony')
+    // A stamp naming a preset that no longer exists falls through to the old rules.
+    expect(resolveWorkflowFromMetadata({ workflow: 'ZIT', preset: 'retired-preset' })?.id).toBe('z-image-turbo')
   })
 
   it('still honours an id or a preset name', () => {

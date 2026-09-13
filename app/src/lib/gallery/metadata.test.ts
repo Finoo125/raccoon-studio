@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { crc32 } from 'zlib'
-import { extractMetadataFromPromptChunk, injectPngTextChunks, parsePngTextChunks } from './metadata'
+import { extractMetadataFromPromptChunk, extractPreset, injectPngTextChunks, parsePngTextChunks } from './metadata'
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 
@@ -120,5 +120,18 @@ describe('extractMetadataFromPromptChunk LoRAs', () => {
       { name: 'one.safetensors', strength: 0.4 },
       { name: 'three.safetensors', strength: 0.9 },
     ])
+  })
+})
+
+describe('extractPreset', () => {
+  it('reads the preset id the app stamps through extra_pnginfo', () => {
+    // ComfyUI writes each extra_pnginfo key as its own tEXt chunk, JSON-encoded.
+    expect(extractPreset({ raccoon: '{"preset": "pony"}' })).toBe('pony')
+  })
+
+  it('ignores images without a stamp, or with a malformed one', () => {
+    expect(extractPreset({ prompt: '{}' })).toBeUndefined()
+    expect(extractPreset({ raccoon: 'not json' })).toBeUndefined()
+    expect(extractPreset({ raccoon: '{"preset": 42}' })).toBeUndefined()
   })
 })
