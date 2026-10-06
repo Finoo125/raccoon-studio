@@ -41,4 +41,15 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 # The registered ids are ASCII by construction; the display names are not.
 print("[RaccoonVideo] loaded: " + ", ".join(sorted(NODE_CLASS_MAPPINGS)))
 
+# comfy-kitchen's Triton kernels index in int32: long H3 clips crash, long LTX
+# clips silently lose their ending - see triton_int32.py. Guarded like the print
+# above: a failure here must never drop the pack's nodes.
+try:
+    from .triton_int32 import install as _install_triton_int32
+    _n = _install_triton_int32()
+    if _n:
+        print("[RaccoonVideo] triton int32 guard on %d comfy-kitchen functions" % _n)
+except Exception as e:
+    print("[RaccoonVideo] triton int32 guard not installed: %r" % (e,))
+
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
