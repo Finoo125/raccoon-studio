@@ -25,6 +25,8 @@ export const PATREON_FAMILIES: Record<string, { keywords: string[]; ariaKind: 'l
   'z-image-turbo': { keywords: ['zit', 'zimage'], ariaKind: 'diffusion_models' },
   'krea2-turbo': { keywords: ['krea'], ariaKind: 'diffusion_models' },
   'krea2-raw': { keywords: ['krea'], ariaKind: 'diffusion_models' },
+  'qwen21-turbo': { keywords: ['qwen'], ariaKind: 'diffusion_models' },
+  qwen21: { keywords: ['qwen'], ariaKind: 'diffusion_models' },
   sdxl: { keywords: ['sdxl'], ariaKind: 'checkpoints' },
   pony: { keywords: ['pony'], ariaKind: 'checkpoints' },
   illustrious: { keywords: ['illustrious', 'illu'], ariaKind: 'checkpoints' },

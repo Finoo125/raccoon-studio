@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { guard } from '@/lib/system/request-guard'
 import fs from 'fs'
 import path from 'path'
 import { assertEntitled } from '@/lib/addons/guard'
@@ -61,6 +62,8 @@ export function nextCopyName(
 }
 
 export async function POST(req: NextRequest) {
+  const refused = guard(req)
+  if (refused) return refused
   const denied = await assertEntitled('photo-editor')
   if (denied) return denied
   if (!OUTPUT_DIR) {

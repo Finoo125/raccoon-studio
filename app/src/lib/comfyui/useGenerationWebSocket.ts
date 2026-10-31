@@ -29,6 +29,7 @@ function toRecord(job: ReturnType<typeof useQueueStore.getState>['jobs'][number]
     generationParams: job.generationParams,
     status: job.status as JobRecord['status'],
     createdAt: job.createdAt,
+    startedAt: job.startedAt,
     endedAt: job.endedAt,
     outputImages: job.outputImages,
     outputVideos: job.outputVideos,

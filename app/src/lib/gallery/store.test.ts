@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useGalleryStore } from './store'
+import { useGalleryStore, visibleImages } from './store'
 import type { GalleryImage } from '@/types/gallery'
 
 const img = (id: string): GalleryImage => ({
@@ -50,5 +50,30 @@ describe('gallery media mode', () => {
     useGalleryStore.getState().setFilter('workflow', 'MinimaxH3')
     useGalleryStore.getState().setMediaMode('video')
     expect(useGalleryStore.getState().filters.workflow).toBe('MinimaxH3')
+  })
+})
+
+describe('bulk selection follows what the grid shows', () => {
+  const dated = (id: string, day: string): GalleryImage => ({ ...img(id), subfolder: `images/ZIT/${day}` })
+  beforeEach(() => {
+    useGalleryStore.setState({
+      images: [dated('a', '2026-10-12'), dated('b', '2026-10-12'), dated('c', '2026-10-13')],
+      selectedFolder: null, selectedIds: [],
+    })
+  })
+  it('visibleImages is the browsed date folder, or everything', () => {
+    const { images } = useGalleryStore.getState()
+    expect(visibleImages(images, '2026-10-12').map((i) => i.id)).toEqual(['a', 'b'])
+    expect(visibleImages(images, null)).toHaveLength(3)
+  })
+  it('opening a folder drops selected items outside it — Delete must never hit what is not shown', () => {
+    useGalleryStore.setState({ selectedIds: ['a', 'c'] })
+    useGalleryStore.getState().setSelectedFolder('2026-10-12')
+    expect(useGalleryStore.getState().selectedIds).toEqual(['a'])
+  })
+  it('a reload (search, filter, sort) drops selected items that are gone', () => {
+    useGalleryStore.setState({ selectedIds: ['a', 'b', 'c'] })
+    useGalleryStore.getState().setImages([dated('b', '2026-10-12')])
+    expect(useGalleryStore.getState().selectedIds).toEqual(['b'])
   })
 })

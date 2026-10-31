@@ -86,9 +86,9 @@ describe('entitlement service', () => {
     // The whole point of the release gate: an older key that still lists an
     // unreleased add-on installs fine and grants only what has shipped.
     const { installKey, isFeatureUnlocked } = await load()
-    const r = await installKey(key(['prompt-builder', 'ltx-director']))
+    const r = await installKey(key(['movie-maker', 'ltx-director']))
     expect(r.ok && r.features).toEqual(['ltx-director'])
-    expect(await isFeatureUnlocked('prompt-builder')).toBe(false)
+    expect(await isFeatureUnlocked('movie-maker')).toBe(false)
     expect(await isFeatureUnlocked('ltx-director')).toBe(true)
   })
 
@@ -118,8 +118,28 @@ describe('assertEntitled', () => {
     process.env.RACCOON_ENTITLEMENTS_FILE = path.join(dir, 'h.json')
     const { installKey } = await load()
     const { assertEntitled } = await import('./guard')
-    await installKey(key(['prompt-builder', 'movie-maker', 'ltx-director']))
-    expect((await assertEntitled('prompt-builder'))?.status).toBe(403)
+    await installKey(key(['movie-maker', 'ltx-director']))
     expect((await assertEntitled('movie-maker'))?.status).toBe(403)
+  })
+})
+
+describe('RACCOON_PRIVATE_ADDONS (the creator\'s local switch)', () => {
+  afterEach(() => { delete process.env.RACCOON_PRIVATE_ADDONS })
+  it('opens a held-back add-on on this machine with no key at all', async () => {
+    process.env.RACCOON_PRIVATE_ADDONS = 'movie-maker'
+    const { getUnlockedFeatures } = await import('./entitlement')
+    expect(await getUnlockedFeatures()).toContain('movie-maker')
+  })
+  it('never unlocks an add-on that is for sale, nor an unknown id', async () => {
+    process.env.RACCOON_PRIVATE_ADDONS = 'ltx-director, nope ,movie-maker'
+    const { getUnlockedFeatures } = await import('./entitlement')
+    const got = await getUnlockedFeatures()
+    expect(got).not.toContain('ltx-director')
+    expect(got).not.toContain('nope')
+    expect(got).toContain('movie-maker')
+  })
+  it('does nothing when unset', async () => {
+    const { getUnlockedFeatures } = await import('./entitlement')
+    expect(await getUnlockedFeatures()).not.toContain('movie-maker')
   })
 })

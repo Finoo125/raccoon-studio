@@ -40,11 +40,18 @@ ComfyUI runs the copy at `comfyui/ComfyUI/custom_nodes/RaccoonSwapNodes/`,
 
 | File | Responsibility |
 |---|---|
-| `swap_math.py` | pure numpy: arcface_128 template, similarity affine, pixel-unshuffle implode/explode, feathered box mask |
-| `swapper.py` | cached onnxruntime sessions, per-model config, source-embedding prep (inswapper emap / hyperswap normed), the tile swap loop |
+| `swap_math.py` | pure numpy: arcface_128 template, similarity affine, pixel-unshuffle implode/explode, feathered box mask, cosine, landmark EMA, loose crop |
+| `swapper.py` | cached onnxruntime sessions, per-model config, source-embedding prep (inswapper emap / hyperswap normed), the tile swap loop, the xseg occlusion mask |
 | `analyzer.py` | self-contained buffalo_l runner: SCRFD det_10g decode (strides 8/16/32, 2 anchors/cell, NMS) + w600k_r50 arcface embedding |
-| `node.py` | the ComfyUI node: tensor⇄BGR conversion, source/target resolution, align → swap → paste-back |
+| `node.py` | the image node, plus the helpers both node layers share: tensor⇄BGR conversion, source-face resolution, align → swap → paste-back |
+| `video_node.py` | the video node + the picker's detector: character matching, per-character landmark smoothing, occlusion, coverage report |
 | `tests/` | one assert-based file per module; model-dependent checks skip when files are absent |
+
+⚠️ `video_node.py` imports helpers **by value** (`from .node import _resolve_model`),
+so a test that patches `node._resolve_model` silently does nothing and then loads
+a real model off disk. Patch them on `video_node`. `_analyser` is the exception:
+it is a function that reads `node._ANALYSER` at call time, so patching the global
+does work.
 
 Imports are package-relative with a plain-import fallback so `tests/` can run
 the modules directly.

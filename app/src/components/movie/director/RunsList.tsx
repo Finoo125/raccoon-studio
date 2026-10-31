@@ -35,6 +35,7 @@ export default function RunsList() {
     void (async () => {
       try {
         const res = await fetch('/api/director', { cache: 'no-store' })
+        if (!res.ok) throw new Error(`director ${res.status}`)   // an error answer is no list of runs
         const data = (await res.json()) as { runs: DirectorRunSummary[] }
         if (!cancelled) setRuns(data.runs)
       } catch {

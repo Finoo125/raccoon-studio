@@ -1,5 +1,6 @@
 import type { WorkflowDefinition, GenerationParams } from '@/types/workflow'
 import type { ComfyUIPrompt } from '@/types/comfyui'
+import type { LoraFamily } from '@/lib/models/lora-family'
 import baseWorkflow from '../../../workflows/image_z_image_turbo.json'
 import { appendFaceDetailer } from './face-detailer'
 import { selectedLoras, prependLoraChain } from './lora-chain'
@@ -104,17 +105,17 @@ export const zImageTurboWorkflow: WorkflowDefinition = {
     // current model so it composes with the LoRA tail + img2img. Main pass only.
     appendZImageControlNet(wf, params, { ksamplerId: '57:3', vae: ['57:29', 0] })
 
-    // Face swap (ReActor) is applied LAST — after hires-fix + detailer — because
-    // a latent resample / face redraw re-diffuses the face from the scene prompt
-    // and erodes the swapped identity. We only need to know up front whether it
-    // is active; the actual nodes are appended after the diffusion passes below.
+    // Face swap runs after hires-fix — a full-strength latent resample re-diffuses
+    // the face from the scene prompt and erodes the swapped identity. The detailer
+    // follows the swap at POST_SWAP_DENOISE, low enough to re-seat the face in the
+    // scene without redrawing it. We only need to know up front whether it is
+    // active; the nodes are appended after the diffusion passes below.
     const faceFromModel = params.faceSwapSource === 'model'
     const faceSwapActive = Boolean(
       params.faceSwap && (faceFromModel ? params.faceModel : params.inputImage),
     )
 
-    // Hires-fix and the detailer operate on the plain generated (pre-swap)
-    // image (`decoded`, above); the swap is layered on at the very end.
+    // Hires-fix operates on the plain generated (pre-swap) image (`decoded`).
 
     // The legacy ESRGAN-only upscale nodes are always replaced by the latent
     // hires-fix below.
@@ -149,7 +150,24 @@ export const zImageTurboWorkflow: WorkflowDefinition = {
     }
 
     // Face detailer (optional, on by default): detect-crop-redraw-paste over faces.
-    if (params.detailer !== false) {
+    // Kept ON alongside the face swap, and that is load-bearing rather than
+    // cosmetic. Measured 2026-09-05 on ComfyUI v0.34.2: with the detailer in
+    // the graph, repeated face-swap renders are clean (12/12 across 3 fresh
+    // ComfyUI sessions); WITHOUT it, only the first render of a session works
+    // and every one after comes back a pure black frame (3/12). Removing this
+    // pass to save its ~3 s puts users straight into that failure.
+    //
+    // It also has to run BEFORE the swap. A redraw over an already-swapped
+    // face destroys the identity: ArcFace cosine vs the source photo is 0.853
+    // detailer-then-swap, 0.851 swap-only, and 0.534 swap-then-detailer even
+    // at 0.15 denoise. See swap-detailer-order.test.ts.
+    // Forced ON whenever a swap is active, overriding an explicit `detailer:
+    // false`. This is a workaround for a live bug, not a preference: without the
+    // detailer in the graph, only the FIRST face-swap render of a ComfyUI session
+    // succeeds and every one after comes back a pure black frame (measured
+    // 2026-09-05 on ComfyUI v0.34.2 -- 12/12 renders clean with it, 3/12 without).
+    // The user's toggle is honoured for every render that has no swap.
+    if (params.detailer !== false || faceSwapActive) {
       appendFaceDetailer(wf, {
         saveNodeId: '9',
         model: ['57:11', 0],
@@ -161,8 +179,13 @@ export const zImageTurboWorkflow: WorkflowDefinition = {
       })
     }
 
-    // FaceFusion-grade swap (mask + color-match + tuned enhancer), applied last
-    // so the swapped identity survives the diffusion passes above.
+    // FaceFusion-grade swap (mask + color-match + tuned enhancer), applied
+    // LAST — after the detailer — because a face redraw over a swapped
+    // face destroys the identity. Measured 2026-09-05, 3 seeds, ArcFace
+    // cosine vs the source photo: detailer-then-swap 0.853, swap only
+    // 0.851, swap-then-detailer at just 0.15 denoise **0.534**. The
+    // detailer runs on ALL faces while the swap only replaces one, so
+    // this order is also what keeps the other faces detailed.
     if (faceSwapActive) {
       appendFaceSwap(wf, {
         saveNodeId: '9',
@@ -172,6 +195,7 @@ export const zImageTurboWorkflow: WorkflowDefinition = {
         swapModel: params.faceSwapModel,
         pixelBoost: params.faceSwapPixelBoost,
         pixelBoostSize: params.faceSwapPixelBoostSize,
+        identity: params.faceSwapIdentity,
       })
     }
 
@@ -182,4 +206,36 @@ export const zImageTurboWorkflow: WorkflowDefinition = {
 
     return wf
   },
+}
+
+/**
+ * Z-Image Turbo renders a **pure black image** once the prompt gets long enough,
+ * with no error at all — ComfyUI reports `status_str: success` and writes a
+ * black PNG. Measured live 2026-08-23 on ComfyUI 0.30.0, holding seed and
+ * resolution fixed and growing only the prompt: 430 characters renders, 440 is
+ * black. It is a text-encoder cliff, so the true unit is tokens and the exact
+ * cutoff moves with wording — hence a margin below the measured edge.
+ *
+ * Only Z-Image is affected; Krea2, Anima, SDXL and Ernie all render long
+ * prompts fine.
+ */
+export const ZIMAGE_PROMPT_LIMIT = 400
+
+/** The characters a family's prompt must stay under, or undefined when it has no cliff. */
+export function promptLimit(family: LoraFamily | undefined): number | undefined {
+  return family === 'zimage' ? ZIMAGE_PROMPT_LIMIT : undefined
+}
+
+/**
+ * A warning for the prompt as sent (after wildcard expansion it can only grow).
+ * Returns null when there is nothing to say.
+ */
+export function promptLengthWarning(
+  family: LoraFamily | undefined,
+  effectivePrompt: string,
+): string | null {
+  const limit = promptLimit(family)
+  const n = effectivePrompt.length
+  if (!limit || n <= limit) return null
+  return `Z-Image renders a black image past roughly ${limit} characters — this prompt is ${n}. Shorten it, or switch model.`
 }

@@ -37,6 +37,20 @@ export function resolveSharedModelsDir(dir: string): string {
 }
 
 /**
+ * `comfyDir` holds an `extra_model_paths.yaml` this app did not write — every
+ * file we write starts with MARKER — so ComfyUI also loads folders we cannot see.
+ * An empty (or whitespace-only) file lists nothing and counts as absent.
+ */
+export function hasForeignExtraModelPaths(comfyDir: string): boolean {
+  try {
+    const text = fs.readFileSync(path.join(comfyDir, FILENAME), 'utf8')
+    return text.trim() !== '' && !text.startsWith(MARKER)
+  } catch {
+    return false
+  }
+}
+
+/**
  * One `raccoon_shared:` block: an absolute `base_path` plus one entry per
  * subfolder. Sub-paths use block scalars so several directories can collapse
  * onto one key (`unet` + `diffusion_models`) and need no quoting.

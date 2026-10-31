@@ -1,6 +1,8 @@
+import { missingFiles, missingFilesMessage, nodeErrorsOf } from './missing-file'
+
 interface NodeError {
   class_type?: string
-  errors?: { message?: string; details?: string }[]
+  errors?: { type?: string; message?: string; details?: string; extra_info?: { input_name?: string; received_value?: unknown } }[]
 }
 
 interface SubmitResponse {
@@ -85,7 +87,12 @@ export async function submitPrompt(body: Record<string, unknown>): Promise<strin
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) {
+    const text = await res.text()
+    // Every other error keeps ComfyUI's own text — nothing is hidden.
+    const missing = missingFiles(nodeErrorsOf(text))
+    throw new Error(missing.length ? missingFilesMessage(missing) : text)
+  }
   const j = (await res.json()) as SubmitResponse
   const errs = Object.values(j.node_errors ?? {})
   if (errs.length > 0) {
@@ -94,6 +101,8 @@ export async function submitPrompt(body: Record<string, unknown>): Promise<strin
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ delete: [j.prompt_id] }),
     }).catch(() => {})
+    const missing = missingFiles(j.node_errors)
+    if (missing.length) throw new Error(missingFilesMessage(missing))
     const summary = errs
       .slice(0, 3)
       .map((n) => {

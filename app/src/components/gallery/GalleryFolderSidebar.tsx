@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo } from 'react'
 import { Images } from 'lucide-react'
+import VideoPoster from './VideoPoster'
 import { useGalleryStore } from '@/lib/gallery/store'
 import { buildFolders } from '@/lib/gallery/folders'
 
@@ -61,18 +62,15 @@ export default function GalleryFolderSidebar() {
                     : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                 }`}
               >
-                {f.coverIsVideo ? (
-                  <video
-                    src={f.coverUrl}
-                    muted
-                    playsInline
-                    preload="metadata"
+                {f.cover.media === 'video' ? (
+                  <VideoPoster
+                    video={f.cover}
                     className="h-10 w-10 shrink-0 rounded-md object-cover ring-1 ring-border bg-muted"
                   />
                 ) : (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={f.coverUrl}
+                    src={f.cover.thumbnailUrl}
                     alt=""
                     className="h-10 w-10 shrink-0 rounded-md object-cover ring-1 ring-border bg-muted"
                   />

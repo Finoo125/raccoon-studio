@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
-import { decodeImageId, getSidecarDir } from '@/lib/gallery/scanner'
+import { decodeImageId, forgetImages, getSidecarDir } from '@/lib/gallery/scanner'
+import { thumbPath } from '@/lib/gallery/thumbs'
 
 export async function POST(req: NextRequest) {
   const output = process.env.COMFYUI_OUTPUT_DIR ?? ''
@@ -26,11 +27,13 @@ export async function POST(req: NextRequest) {
     try {
       fs.rmSync(filePath, { force: true }) // force: a missing file is not an error
       try { fs.rmSync(path.join(getSidecarDir(), `${id}.json`), { force: true }) } catch { /* best effort */ }
+      try { fs.rmSync(thumbPath(id), { force: true }) } catch { /* best effort */ }
       deleted.push(id)
     } catch {
       failed.push(id)
     }
   }
 
+  forgetImages(deleted)
   return NextResponse.json({ deleted, failed })
 }

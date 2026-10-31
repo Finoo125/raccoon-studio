@@ -32,7 +32,7 @@ def env_block(env_key, mode="t2v", seed=0):
     loc = val[0] if len(val) > 0 else ""
     light = val[1] if len(val) > 1 else ""
     sound = val[2] if len(val) > 2 else ""
-    if (mode or "").lower() == "i2v":
+    if (mode or "").lower() in ("i2v", "continue"):
         # frame is truth — env is a gentle nudge, must not contradict pixels
         return ("━━ ENVIRONMENT (I2V — nudge only) ━━\n"
                 f"If it fits the frame, lean the light and mood toward: {loc}. "

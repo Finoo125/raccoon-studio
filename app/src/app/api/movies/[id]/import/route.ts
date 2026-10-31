@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { guard } from '@/lib/system/request-guard'
 import fs from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
@@ -41,6 +42,8 @@ async function buildAsset(filePath: string, source: MovieAsset['source']): Promi
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const refused = guard(req)
+  if (refused) return refused
   const denied = await assertEntitled('movie-maker')
   if (denied) return denied
   const { id } = await params

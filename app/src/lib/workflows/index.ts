@@ -1,6 +1,7 @@
 import { animaWorkflow, animaTurboWorkflow } from './anima'
 import { ernieTurboWorkflow } from './ernie-turbo'
 import { krea2TurboWorkflow, krea2RawWorkflow } from './krea2'
+import { qwen21TurboWorkflow, qwen21BaseWorkflow, qwen21EditWorkflow } from './qwen21'
 import { zImageTurboWorkflow } from './z-image-turbo'
 import { sdxlWorkflow, ponyWorkflow, illustriousWorkflow } from './sdxl'
 import { applyTiledVaeDecode } from './tiled-vae'
@@ -31,6 +32,9 @@ export const workflows: WorkflowDefinition[] = [
   ernieTurboWorkflow,
   krea2TurboWorkflow,
   krea2RawWorkflow,
+  qwen21TurboWorkflow,
+  qwen21BaseWorkflow,
+  qwen21EditWorkflow,
   zImageTurboWorkflow,
   sdxlWorkflow,
   ponyWorkflow,

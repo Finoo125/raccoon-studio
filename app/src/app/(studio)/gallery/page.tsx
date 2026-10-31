@@ -12,6 +12,8 @@ import GalleryBulkBar from '@/components/gallery/GalleryBulkBar'
 import CompareOverlay from '@/components/gallery/CompareOverlay'
 
 interface GalleryResponse {
+  /** The poll's answer when nothing was rescanned since `since`. */
+  unchanged?: true
   images: GalleryImage[]
   total: number
   scannedAt: string
@@ -19,8 +21,9 @@ interface GalleryResponse {
   cached: boolean
 }
 
-// Automatic background rescan cadence (matches the server-side cache TTL).
-const AUTO_SCAN_MS = 10 * 60 * 1000
+// How often an open gallery looks for new files. Cheap: the server answers
+// "unchanged" until a gallery folder changes.
+const POLL_MS = 15 * 1000
 
 export default function GalleryPage() {
   return (
@@ -35,8 +38,10 @@ function GalleryPageInner() {
   const { filters, mediaMode, setImages, setLoading, loading, selected, setScanMeta } = useGalleryStore()
   const [compareOpen, setCompareOpen] = useState(false)
 
-  const load = useCallback(async (refresh = false) => {
-    setLoading(true)
+  // `poll` is the quiet background check: no loading skeleton (it would remount
+  // every tile), and only a changed list comes back.
+  const load = useCallback(async (refresh = false, poll = false) => {
+    if (!poll) setLoading(true)
     try {
       const params = new URLSearchParams()
       params.set('media', mediaMode)
@@ -51,22 +56,25 @@ function GalleryPageInner() {
       if (filters.dimensions) params.set('dimensions', filters.dimensions)
       params.set('sort', filters.sortBy)
       if (refresh) params.set('refresh', 'true')
+      const since = useGalleryStore.getState().scannedAt
+      if (poll && since) params.set('since', since)
       const res = await fetch(`/api/gallery?${params}`, { cache: 'no-store' })
       const data = (await res.json()) as GalleryResponse
+      if (data.unchanged) return
       setImages(data.images)
       setScanMeta(data.imagesDir, data.scannedAt)
     } finally {
-      setLoading(false)
+      if (!poll) setLoading(false)
     }
   }, [filters, mediaMode, setImages, setLoading, setScanMeta])
 
   useEffect(() => { void load() }, [load])
 
-  // Auto-scan for new images every 10 minutes (only while the tab is visible).
+  // Pick up new renders while the tab is visible.
   useEffect(() => {
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible') void load(true)
-    }, AUTO_SCAN_MS)
+      if (document.visibilityState === 'visible') void load(false, true).catch(() => { /* next tick retries */ })
+    }, POLL_MS)
     return () => clearInterval(id)
   }, [load])
 

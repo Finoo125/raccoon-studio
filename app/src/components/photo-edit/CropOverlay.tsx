@@ -193,22 +193,6 @@ export default function CropOverlay() {
         </div>
       </div>
 
-      {/* What you will actually get, in pixels — percentages of an unstated
-          original never answered the question anyone is asking here. */}
-      {source && (
-        <div
-          data-crop-readout=""
-          className="rounded-md bg-muted/40 px-2 py-1.5 text-[10px] text-muted-foreground"
-        >
-          Output:{' '}
-          <span className="font-medium tabular-nums text-foreground">
-            {placement(source.width, source.height, editState).cw}
-            {' × '}
-            {placement(source.width, source.height, editState).ch} px
-          </span>
-        </div>
-      )}
-
       {/* Confirm pair. The crop is non-destructive either way — Apply commits it
           and closes the tool, so the edit reads as finished instead of leaving
           the overlay hanging around with no obvious way to say "done". */}

@@ -162,6 +162,29 @@ check(gate(video_mode="director", image_b64=[]) == "boot-stub",
 # ref2v is deliberately excluded — H3's reference doctrine was tuned without a
 # vision pass, and switching one on would silently rewrite every ref2v prompt.
 check(gate(video_mode="ref2v", image_b64=PIC) == "boot-stub", "ref2v grew a vision pass")
+# A continuation is written from the previous clip's last frame. Blind, the
+# writer invents the person, the outfit and the room the render then has to
+# fight (seen live 2026-09-14), so no picture is an error, never a blind write.
+check(gate(video_mode="continue", image_b64="") == "CONTINUE needs an image", "continuation writes blind")
+check(NEEDS_MM in gate(video_mode="continue", image_b64="aaa"), "continuation never reaches vision")
+# A reference render that continues a clip or must hit keyframes IS shown those
+# pictures (the tail first, then the keyframes) — never the references — and
+# refuses when one is missing, since the doctrine numbers them.
+KF = {"images": 1, "keyframes": [{"slot": "start", "at_s": 0}, {"slot": "end", "at_s": 15.04}]}
+READ_FAIL = "could not be read"
+check(READ_FAIL in gate(video_mode="ref2v", image_b64=["aaa"], ref_counts=KF),
+      "a missing keyframe picture is written for anyway")
+check(NEEDS_MM in gate(video_mode="ref2v", image_b64=PIC, ref_counts=KF), "keyframes never reach vision")
+# ...and the refusal names what needs vision: there is no I2V in reference mode.
+check(gate(video_mode="ref2v", image_b64=PIC, ref_counts=KF).startswith("Keyframes"),
+      "reference-mode vision error still says I2V")
+check(READ_FAIL in gate(video_mode="ref2v", image_b64=[], ref_counts={"images": 1, "continuing": True}),
+      "a reference continuation writes blind")
+check(NEEDS_MM in gate(video_mode="ref2v", image_b64=["tail", "end"], ref_counts={
+    "images": 1, "continuing": True, "keyframes": [{"slot": "end", "at_s": 10.08}]}),
+      "a reference continuation with a keyframe never reaches vision")
+check(gate(video_mode="ref2v", image_b64=PIC, ref_counts={"images": 1}) == "boot-stub",
+      "plain ref2v grew a vision pass")
 
 gc.llm.CONN["backend"] = llm_backend_was
 
@@ -180,6 +203,12 @@ _DOCTRINE_CALL = dict(
     dialogue_tier="standard", energy=5, intent="x", environment_block="",
     scenario_block="", camera_block="", music_block="", seed=1, ref_counts=None,
 )
+# Adults and consent in both writers' rules, every mode (the image writer's line, enhance.ts).
+for _doc, _modes in ((brain, ("i2v", "t2v", "director")), (h3_brain, ("t2v", "i2v", "ref2v", "continue"))):
+    for _m in _modes:
+        _sys = _doc.build_system(**{**_DOCTRINE_CALL, "mode": _m, "explicit": True})
+        check("never describe anyone as a child" in _sys and "anyone who has not consented" in _sys,
+              f"{_doc.__name__} {_m}: no adults-and-consent rule")
 for _doc in (brain, h3_brain):
     for _fn in ("build_system", "finalize"):
         try:

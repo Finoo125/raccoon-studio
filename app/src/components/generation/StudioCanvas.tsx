@@ -10,11 +10,11 @@ import { canvasMediaKey } from '@/lib/generation/canvas-preview'
 import { useSendToVideo } from '@/lib/generation/useSendToVideo'
 import SendToVideoDialog from './SendToVideoDialog'
 import { formatEta } from '@/lib/generation/eta'
-import { workflows } from '@/lib/workflows'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import type { GenerationParams } from '@/types/workflow'
 import { useDirectorStage } from '@/lib/director/director-stage'
+import { GuideInvite } from '@/components/GuideLink'
 
 const EXAMPLE_PROMPTS = [
   'A lone raccoon astronaut on a moonlit dune, cinematic, 35mm',
@@ -23,7 +23,8 @@ const EXAMPLE_PROMPTS = [
   'Cozy rainy café window, warm light, soft bokeh, film grain',
 ]
 
-export default function StudioCanvas() {
+/** `guide`: the guide the empty canvas invites a Simple user to read (the Generate page passes it; Movie Maker does not). */
+export default function StudioCanvas({ guide }: { guide?: string } = {}) {
   const [isHovered, setIsHovered] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [sendVideoOpen, setSendVideoOpen] = useState(false)
@@ -33,7 +34,7 @@ export default function StudioCanvas() {
   const jobs = useQueueStore((s) => s.jobs)
 
   const handleExample = (prompt: string) => {
-    setPrefill({ workflowId: workflows[0].id, params: { prompt } as GenerationParams })
+    setPrefill({ params: { prompt } as GenerationParams })
     toast.success('Prompt loaded — tweak it or hit Generate')
   }
 
@@ -170,6 +171,12 @@ export default function StudioCanvas() {
                   </button>
                 ))}
               </motion.div>
+
+              {guide && (
+                <motion.div variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} className="flex w-full justify-center">
+                  <GuideInvite slug={guide} />
+                </motion.div>
+              )}
 
               <motion.p
                 variants={{ hidden: { opacity: 0 }, show: { opacity: 1 } }}

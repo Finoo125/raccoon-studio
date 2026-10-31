@@ -52,3 +52,84 @@ def box_mask(size):
     mask[pad:size - pad, pad:size - pad] = 1.0
     blur = int(size * 0.15) | 1  # odd kernel
     return cv2.GaussianBlur(mask, (blur, blur), 0).clip(0.0, 1.0)
+
+
+def cosine(a, b):
+    """Cosine similarity of two arcface embeddings. -1.0 for a degenerate
+    (zero-norm) vector, which sorts below any real match."""
+    na, nb = np.linalg.norm(a), np.linalg.norm(b)
+    if na == 0 or nb == 0:
+        return -1.0
+    return float(np.dot(np.asarray(a).ravel(), np.asarray(b).ravel()) / (na * nb))
+
+
+def smooth_kps(prev, cur, alpha):
+    """EMA this frame's 5 landmarks toward the previous frame's.
+
+    A per-frame swap re-fits the alignment from scratch every frame, and the
+    sub-pixel wobble in the detector's landmarks reads as flicker on the swapped
+    face. Averaging the landmarks (not the pixels) fixes it at the source and
+    costs nothing.
+
+    `alpha` is the weight on the PREVIOUS frame, so 0 is off.
+
+    The jump guard is load-bearing: on a cut, or when the head moves fast, the
+    smoothed crop would lag behind the actual face and the swap would visibly
+    slide off it. Interocular distance is the natural scale for "a lot" —
+    landmarks that moved more than half a face-width are a new position, not
+    jitter, so they are taken as-is.
+    """
+    if prev is None or alpha <= 0:
+        return cur
+    scale = float(np.linalg.norm(cur[1] - cur[0]))
+    if scale <= 1e-6 or float(np.linalg.norm(cur - prev, axis=1).mean()) > scale * 0.5:
+        return cur
+    return prev * alpha + cur * (1.0 - alpha)
+
+
+# Symmetric 1k3d68 landmark pairs (left, right): outer and inner eye corners,
+# nostril wings, mouth corners. The jaw contour is left out — on a turned head
+# its far side is a silhouette guess.
+_YAW_PAIRS = ((36, 45), (39, 42), (31, 35), (48, 54))
+
+
+def head_yaw(points68):
+    """Head turn in degrees (0 = facing the camera, sign = which way) from
+    1k3d68's 68 points, which carry depth: the left-to-right line across the
+    face tilts into the picture as the head turns."""
+    p = np.asarray(points68, dtype=np.float32)
+    v = sum(p[r] - p[l] for l, r in _YAW_PAIRS)
+    return float(np.degrees(np.arctan2(v[2], np.hypot(v[0], v[1]))))
+
+
+def gate_weights(risky):
+    """Per-frame swap strength from per-frame "risky" flags: 0 on a risky frame
+    and the 3 frames either side, then a fade back to 1 over ~0.25 s (sigma 2
+    frames at 24 fps), so the swap never pops in or out. The Video Helper's
+    gate, as it was tuned there (tools/swap/refine.py)."""
+    risky = np.asarray(risky, dtype=np.float32)
+    if risky.size == 0:
+        return risky
+    wide = cv2.dilate(risky[None], np.ones((1, 7), np.uint8))[0] > 0
+    weight = 1 - np.clip(cv2.GaussianBlur(wide.astype(np.float32)[None], (0, 0), 2)[0] * 1.5, 0, 1)
+    weight[wide] = 0
+    return weight
+
+
+def loose_crop(frame, bbox, scale=1.6, size=256):
+    """Square, padded crop around a detection box — the picker's thumbnail and
+    the reference image the matcher embeds.
+
+    Loose rather than tight on purpose: a tight face crop upscaled into the
+    detector's 640 letterbox outgrows its anchor scales and scores below
+    threshold, so a tight reference can fail to re-detect (the analyzer's 320
+    fallback exists for exactly that). It also simply reads better as a
+    thumbnail. `getRectSubPix` replicates the border, so a face at the frame
+    edge crops without a black wedge.
+    """
+    cx = float(bbox[0] + bbox[2]) / 2.0
+    cy = float(bbox[1] + bbox[3]) / 2.0
+    side = int(max(bbox[2] - bbox[0], bbox[3] - bbox[1]) * scale)
+    side = max(side, 16)
+    patch = cv2.getRectSubPix(frame, (side, side), (cx, cy))
+    return cv2.resize(patch, (size, size))

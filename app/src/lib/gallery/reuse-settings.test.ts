@@ -58,8 +58,11 @@ describe('resolveWorkflowFromMetadata', () => {
     // All three SDXL presets write to images/SDXL/, so the folder alone would
     // send every Pony render back as plain SDXL — different prompt tags,
     // different sampler, different upscaler.
+    // The Qwen Edit preset shares the Turbo's model: a recorded model resolves to
+    // the first preset carrying it, and Edit renders are told apart by the stamp.
     for (const w of workflows) {
-      expect(resolveWorkflowFromMetadata({ workflow: 'SDXL', model: w.baseModel })?.id).toBe(w.id)
+      const first = workflows.find((x) => x.baseModel === w.baseModel)!
+      expect(resolveWorkflowFromMetadata({ workflow: 'SDXL', model: w.baseModel })?.id).toBe(first.id)
     }
   })
 

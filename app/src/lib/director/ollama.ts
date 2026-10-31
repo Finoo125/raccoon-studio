@@ -4,6 +4,8 @@ import { getSettings } from '@/lib/settings/settings'
 export interface ChatMessage {
   role: 'system' | 'user'
   content: string
+  /** Raw base64 images (Ollama /api/chat) — for a vision model. */
+  images?: string[]
 }
 
 const OLLAMA_BASE_URL = () => getSettings().ollamaBaseUrl
@@ -148,6 +150,8 @@ export async function chatText(
   model: string,
   messages: ChatMessage[],
   timeoutMs: number = STORYBOARD_TIMEOUT_MS(),
+  /** `think: false` keeps a thinking model from thinking first; leave it out for models without the switch. */
+  opts: { think?: boolean } = {},
 ): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -161,6 +165,7 @@ export async function chatText(
         messages,
         stream: false,
         keep_alive: 0,
+        ...(opts.think === undefined ? {} : { think: opts.think }),
         options: { num_ctx: OLLAMA_NUM_CTX() },
       }),
       signal: controller.signal,
@@ -178,4 +183,18 @@ export async function chatText(
   if (!res.ok) throw new Error(`Ollama /api/chat failed (${res.status})`)
   const data = (await res.json()) as { message?: { content?: string } }
   return (data.message?.content ?? '').trim()
+}
+
+/** Installed models whose /api/show capabilities include vision — a blind model invents what it "sees". */
+export async function listOllamaVisionModels(): Promise<string[]> {
+  const names = await listOllamaModels()
+  const seeing = await Promise.all(names.map(async (model) => {
+    try {
+      const res = await fetch(`${OLLAMA_BASE_URL()}/api/show`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model }) })
+      if (!res.ok) return null
+      const caps = ((await res.json()) as { capabilities?: string[] }).capabilities ?? []
+      return caps.includes('vision') ? model : null
+    } catch { return null }
+  }))
+  return seeing.filter((m): m is string => !!m)
 }

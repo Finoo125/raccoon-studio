@@ -8,6 +8,8 @@ import { renderToCanvas } from '@/lib/photo-edit/pipeline'
 import { computeAutoAdjustments } from '@/lib/photo-edit/auto-enhance'
 import { useSendToVideo, type SendToVideoTarget } from '@/lib/generation/useSendToVideo'
 import SendToVideoDialog from '@/components/generation/SendToVideoDialog'
+import SimpleAdvancedSwitch from '@/components/SimpleAdvancedSwitch'
+import { GuideChip } from '@/components/GuideLink'
 import { Button } from '@/components/ui/button'
 import {
   Popover,
@@ -171,10 +173,8 @@ export default function TopBar() {
 
       <div className="flex-1" />
 
-      {/* Before/after hint */}
-      <span className="hidden text-[10px] text-muted-foreground sm:block">
-        Hold Compare for before/after
-      </span>
+      <GuideChip slug="photo-editing" />
+      <SimpleAdvancedSwitch />
 
       {/* Undo / Redo */}
       <div className="flex items-center gap-0.5">

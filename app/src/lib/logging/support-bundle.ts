@@ -5,6 +5,7 @@ import ernie from '../../../workflows/image_ernie_image_turbo.json'
 import sdxl from '../../../workflows/image_sdxl.json'
 import zImage from '../../../workflows/image_z_image_turbo.json'
 import krea2 from '../../../workflows/image_krea2.json'
+import qwen21 from '../../../workflows/image_qwen21.json'
 import minimaxH3 from '../../../workflows/MinimaxH3.json'
 
 /**
@@ -92,6 +93,7 @@ export const SCANNED_TEMPLATES: Record<string, unknown> = {
   'image_sdxl.json': sdxl,
   'image_z_image_turbo.json': zImage,
   'image_krea2.json': krea2,
+  'image_qwen21.json': qwen21,
   'MinimaxH3.json': minimaxH3,
 }
 

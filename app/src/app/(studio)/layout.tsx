@@ -4,7 +4,8 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Wand2, Clapperboard, Images, Film, Package, ScrollText, ExternalLink, SlidersHorizontal, Puzzle, PencilRuler, Settings, Wrench, Archive, LayoutGrid, ChevronDown } from 'lucide-react'
+import { Wand2, Clapperboard, Images, Film, Package, ScrollText, ExternalLink, SlidersHorizontal, Puzzle, PencilRuler, Settings, Wrench, Archive, LayoutGrid, ChevronDown, Rocket, CircleHelp } from 'lucide-react'
+import { guideUrl } from '@/lib/portal'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Toaster } from '@/components/ui/sonner'
@@ -17,9 +18,11 @@ import { navGroups, type FeatureDef } from '@/lib/features/registry'
 import { useAddonStore } from '@/lib/addons/store'
 import { Fragment, useEffect, useState } from 'react'
 import QueuePanel from '@/components/queue/QueuePanel'
-import FirstRunModels from '@/components/FirstRunModels'
+import SetupOffer from '@/components/setup/SetupOffer'
+import { SETUP_EVENT, setupDone } from '@/lib/setup/state'
 import GuidedTour from '@/components/GuidedTour'
 import ContinueVideoDialog from '@/components/generation/ContinueVideoDialog'
+import HelperHandoff from '@/components/generation/HelperHandoff'
 
 const ICONS: Record<string, LucideIcon> = {
   Wand2, Clapperboard, Images, SlidersHorizontal, Film, Package, ScrollText, Puzzle, PencilRuler, Wrench, Archive, Settings,
@@ -48,6 +51,15 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
   useEffect(() => { void loadAddons() }, [loadAddons])
 
   const groups = navGroups(unlocked)
+  const guide = guideUrl(pathname)
+  // "Start here" stays in the bar until the setup has been finished once; then it lives in Settings.
+  const [showStart, setShowStart] = useState(false)
+  useEffect(() => {
+    const sync = () => setShowStart(!setupDone())
+    sync()
+    window.addEventListener(SETUP_EVENT, sync)
+    return () => window.removeEventListener(SETUP_EVENT, sync)
+  }, [])
 
   return (
     <div className="relative z-10 flex flex-col h-screen text-foreground overflow-hidden">
@@ -79,6 +91,12 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
             divider between groups. Centered in the middle grid track; shrinks +
             scrolls horizontally only when truly cramped. */}
         <nav className="flex items-center justify-center gap-2 min-w-0 overflow-x-auto no-scrollbar">
+          {showStart && (
+            <>
+              <NavLink href="/setup" label="Start here" Icon={Rocket} active={pathname === '/setup'} />
+              <span aria-hidden className="mx-0.5 h-6 w-px shrink-0 rounded-full bg-border" />
+            </>
+          )}
           {groups.map((g, gi) => (
             <Fragment key={g.group}>
               {gi > 0 && (
@@ -100,10 +118,12 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
                   ))
                 )}
                 {/* The add-on store link lives at the tail of the paid cluster.
-                    Labelled "Patreon" — that is where the key comes from, and
-                    "Add-ons" said nothing to anyone who hadn't found the page. */}
+                    Labelled for what the page holds rather than a platform:
+                    "Add-ons" said nothing to anyone who hadn't found the page,
+                    and "Patreon" stopped being the only place a key comes from
+                    once DeviantArt joined. */}
                 {g.group === 'studio' && (
-                  <NavLink href="/add-ons" label="Patreon" Icon={Puzzle} active={pathname === '/add-ons'} />
+                  <NavLink href="/add-ons" label="Supporters" Icon={Puzzle} active={pathname === '/add-ons'} />
                 )}
               </div>
             </Fragment>
@@ -115,6 +135,20 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
           {/* Live CPU / RAM / VRAM (ComfyUI-Crystools) */}
           <SystemMonitor className="hidden md:flex" />
           <div className="w-px h-7 bg-border shrink-0 hidden md:block" />
+
+          {/* The guide for this page, on the Raccoon Portal (lib/portal.ts) */}
+          {guide && (
+            <a
+              href={guide}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Guide for this page"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/35 bg-primary/10 text-[#ffa64d] transition-all hover:border-primary/60 hover:bg-primary/20 hover:shadow-[0_0_12px_-2px_rgba(245,129,30,0.5)]"
+              title="The guide for this page, on the Raccoon Portal (log in with Patreon or DeviantArt)"
+            >
+              <CircleHelp className="h-4 w-4" />
+            </a>
+          )}
 
           <button
             onClick={() => setQueueOpen(true)}
@@ -150,12 +184,13 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
 
       <QueueProvider />
       <QueuePanel open={queueOpen} onOpenChange={setQueueOpen} />
-      <FirstRunModels />
+      <SetupOffer />
       <GuidedTour />
       {/* Continue-a-clip dialog: one instance for all three Continue buttons,
           which sit in the video canvas, the video inspector and the gallery
           inspector. Driven by `continueTarget` in the studio store. */}
       <ContinueVideoDialog />
+      <HelperHandoff />
       <Toaster richColors position="bottom-right" />
     </div>
   )

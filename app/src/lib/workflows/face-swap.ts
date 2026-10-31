@@ -9,15 +9,34 @@ export interface FaceSwapRefs {
   /** Saved ReActor face-model filename (in `models/reactor/faces/`) to swap from,
    *  loaded via `ReActorLoadFaceModel`. Mutually exclusive with `faceFilename`. */
   faceModelName?: string
-  /** ReActor swap model; defaults to inswapper. */
-  swapModel?: 'inswapper_128.onnx' | 'hyperswap_1a_256.onnx' | 'hyperswap_1b_256.onnx' | 'hyperswap_1c_256.onnx'
+  /** Swap model; defaults to inswapper. `alphaface_256.onnx` implies pixelBoost. */
+  swapModel?: 'inswapper_128.onnx' | 'hyperswap_1a_256.onnx' | 'hyperswap_1b_256.onnx' | 'hyperswap_1c_256.onnx' | 'alphaface_256.onnx'
   /** Swap via the vendored RaccoonPixelBoostSwap node (FaceFusion pixel-boost:
    *  512-1024px effective swap resolution) instead of ReActorFaceSwap, followed
    *  by a light GPEN restore. Off by default. */
   pixelBoost?: boolean
   /** Effective swap resolution for the pixel-boost node; defaults to 512x512. */
   pixelBoostSize?: '512x512' | '768x768' | '1024x1024'
+  /** Identity strength 0..1, neutral (and omitted from the graph) at 0.5.
+   *  Pixel-boost path only. */
+  identity?: number
 }
+
+/**
+ * Swap models ReActor cannot load, so choosing one forces the vendored
+ * pixel-boost node.
+ *
+ * ReActor resolves a swap model by name: `"hyperswap" in name` sends it to
+ * `models/hyperswap/`, anything else to `models/insightface/`
+ * (`reactor_swapper.py`). AlphaFace lives in neither and has no branch of its
+ * own, so a ReActorFaceSwap node pointed at it fails at load time — the user
+ * would see a bare "Generation failed" after picking a model the UI offered.
+ * Forcing the vendored node is the only wiring that can actually run it.
+ */
+export const PIXEL_BOOST_ONLY = new Set(['alphaface_256.onnx'])
+
+/** Identity dial value that means "leave the latent alone" (pack default). */
+export const IDENTITY_NEUTRAL = 0.5
 
 /**
  * The two node classes the form probes via `/object_info` to decide whether the
@@ -83,9 +102,10 @@ export function appendFaceSwap(wf: ComfyUIPrompt, refs: FaceSwapRefs): void {
     }
   }
 
-  const swapOut: [string, number] = refs.pixelBoost ? ['swap:restore', 0] : ['swap:reactor', 0]
+  const pixelBoost = refs.pixelBoost || PIXEL_BOOST_ONLY.has(model)
+  const swapOut: [string, number] = pixelBoost ? ['swap:restore', 0] : ['swap:reactor', 0]
 
-  if (refs.pixelBoost) {
+  if (pixelBoost) {
     // Pixel-boost path: swap at 512px effective resolution via the vendored
     // RaccoonPixelBoostSwap node, then a light GPEN pass instead of the heavy
     // in-swap restore — the swap itself now carries the detail.
@@ -96,6 +116,7 @@ export function appendFaceSwap(wf: ComfyUIPrompt, refs: FaceSwapRefs): void {
         swap_model: model,
         pixel_boost: refs.pixelBoostSize ?? '512x512',
         face_index: 0,
+        identity: refs.identity ?? IDENTITY_NEUTRAL,
         ...(useModel
           ? { face_model: ['swap:source', 0] as [string, number] }
           : { source_image: ['swap:source', 0] as [string, number] }),
@@ -163,6 +184,16 @@ export function appendFaceSwap(wf: ComfyUIPrompt, refs: FaceSwapRefs): void {
 
   // Occlusion-aware mask + feathered composite (FaceFusion region mask). Loads
   // its own YOLO-face + SAM models from widget strings (no loader nodes).
+  //
+  // Rebuilt on Impact Pack nodes 2026-09-05 and reverted the same day. The theory
+  // was that this node's unmanaged YOLO/SAM load caused the black-frame bug (see
+  // `swap-detailer-order.test.ts`) — but an Impact `BboxDetectorSEGS` +
+  // `SAMDetectorCombined` mask reproduced it identically (ok/BLACK/BLACK, 2
+  // trials each), so the trigger is a full-image SAM mask stage of either
+  // flavour, not this node. With the fix gone there was nothing left to justify
+  // swapping a mask that has a live A/B behind it (2026-07-17) for one that does
+  // not, so this stayed. Do not re-attempt without a visual mask A/B on an
+  // occluded subject — feathering and occlusion behaviour were never compared.
   wf['swap:mask'] = {
     class_type: 'ReActorMaskHelper',
     inputs: {

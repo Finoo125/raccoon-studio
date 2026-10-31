@@ -2,6 +2,20 @@
 
 import { create } from 'zustand'
 import type { GalleryImage, GalleryFilters } from '@/types/gallery'
+import { dateKeyOf } from './folders'
+
+/** What the grid shows: the browsed date folder, or everything. Bulk actions act on exactly this. */
+export function visibleImages(images: GalleryImage[], folder: string | null): GalleryImage[] {
+  return folder ? images.filter((img) => dateKeyOf(img) === folder) : images
+}
+
+// A selection never outlives what is on screen: a search or a folder change used to
+// leave hidden items selected, and Delete removed them along with the visible ones.
+const keepVisible = (ids: string[], images: GalleryImage[], folder: string | null) => {
+  if (ids.length === 0) return ids
+  const shown = new Set(visibleImages(images, folder).map((i) => i.id))
+  return ids.filter((id) => shown.has(id))
+}
 
 interface GalleryState {
   images: GalleryImage[]
@@ -80,11 +94,12 @@ export const useGalleryStore = create<GalleryState>((set) => ({
       }
     }),
 
-  setImages: (images) => set({ images }),
+  setImages: (images) => set((s) => ({ images, selectedIds: keepVisible(s.selectedIds, images, s.selectedFolder) })),
   setLoading: (loading) => set({ loading }),
   setSelected: (selected) => set({ selected }),
   setScanMeta: (imagesDir, scannedAt) => set({ imagesDir, scannedAt }),
-  setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
+  setSelectedFolder: (selectedFolder) =>
+    set((s) => ({ selectedFolder, selectedIds: keepVisible(s.selectedIds, s.images, selectedFolder) })),
   // Switching media resets the browsed folder + open inspector, since the folder
   // tree and item list differ between images and videos.
   // The workflow filter is reset with the mode because its options differ per

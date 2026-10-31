@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
-  coreFeatures, addonIds, sellableAddonIds, listedAddons,
+  FEATURES, addonRelease, coreFeatures, addonIds, sellableAddonIds, listedAddons,
   visibleNav, isAddonRoute, featureForApiPath, navGroups,
 } from './registry'
 
 describe('feature registry', () => {
-  it('marks exactly the five paid features as add-ons', () => {
+  it('marks the five paid features and the private Video Helper link as add-ons', () => {
     expect(addonIds().sort()).toEqual([
-      'civitai-browser', 'ltx-director', 'movie-maker', 'photo-editor', 'prompt-builder',
+      'civitai-browser', 'ltx-director', 'movie-maker', 'photo-editor', 'prompt-builder', 'video-helper-link',
     ])
   })
 
@@ -28,9 +28,10 @@ describe('feature registry', () => {
     expect(isAddonRoute('/movie')).toBe('movie-maker')
   })
 
-  it('prompt-builder is an add-on: hidden when locked, visible when unlocked', () => {
-    expect(visibleNav([]).map((f) => f.id)).not.toContain('prompt-builder')
-    expect(visibleNav(['prompt-builder']).map((f) => f.id)).toContain('prompt-builder')
+  it('prompt-builder lives inside Generate Image: never a tab, never gates the page', () => {
+    expect(visibleNav(['prompt-builder']).map((f) => f.id)).not.toContain('prompt-builder')
+    expect(isAddonRoute('/generate')).toBeNull()
+    expect(addonIds()).toContain('prompt-builder')
   })
 
   it('featureForApiPath maps the prompt-builder API prefix', () => {
@@ -91,13 +92,21 @@ describe('feature registry', () => {
 })
 
 describe('release gating', () => {
-  it('Photo Editing, LTX 2.3 Director and Civitai Browser are on sale', () => {
-    expect(sellableAddonIds()).toEqual(['photo-editor', 'ltx-director', 'civitai-browser'])
+  it('Photo Editing, the Prompt Helper, LTX 2.3 Director and Civitai Browser are on sale', () => {
+    expect(sellableAddonIds()).toEqual(['photo-editor', 'prompt-builder', 'ltx-director', 'civitai-browser'])
   })
 
-  it('the Add-ons page lists exactly the three released add-ons, in registry order', () => {
+  it('the Add-ons page lists the four released add-ons, in registry order', () => {
     expect(listedAddons().map((f) => f.id))
-      .toEqual(['photo-editor', 'ltx-director', 'civitai-browser'])
+      .toEqual(['photo-editor', 'prompt-builder', 'ltx-director', 'civitai-browser'])
+  })
+
+  // Listed 2026-10-26 for 2.0: one unlock for "Help me write" in Generate Image
+  // and Generate Video. Lives inside those pages, so never a tab of its own.
+  it('the Prompt Helper is sold but never a nav tab', () => {
+    expect(addonRelease('prompt-builder')).toBeUndefined()
+    expect(visibleNav(['prompt-builder']).map((f) => f.id)).not.toContain('prompt-builder')
+    expect(isAddonRoute('/generate')).toBeNull()
   })
 
   // navHidden keeps it out of the top bar — it is a tab inside the Models page,
@@ -119,13 +128,24 @@ describe('release gating', () => {
 
   it('held-back add-ons keep gating their own routes and APIs', () => {
     // Held back, not deleted: dropping off the store page must not make
-    // /movie or /prompt-builder free to anyone who types the URL.
-    for (const id of ['movie-maker', 'prompt-builder']) {
-      expect(sellableAddonIds()).not.toContain(id)
-    }
+    // /movie free to anyone who calls it.
+    expect(sellableAddonIds()).not.toContain('movie-maker')
     expect(isAddonRoute('/movie')).toBe('movie-maker')
-    expect(isAddonRoute('/prompt-builder')).toBe('prompt-builder')
+    expect(featureForApiPath('/api/prompt-builder/generate')).toBe('prompt-builder')
     expect(featureForApiPath('/api/movies/1')).toBe('movie-maker')
     expect(featureForApiPath('/api/photo-edit/save')).toBe('photo-editor')
+  })
+
+  // Free for everyone since 2026-10-26 (2.0): no add-on to unlock, and
+  // Generate Video stays a core page.
+  it('Video Edit is not an add-on', () => {
+    expect(FEATURES.find((x) => x.id === 'video-edit')).toBeUndefined()
+    expect(isAddonRoute('/generate-videos')).toBeNull()
+  })
+
+  it('tells the UI which add-ons cannot be unlocked yet', () => {
+    expect(addonRelease('movie-maker')).toBe('unlisted')
+    expect(addonRelease('ltx-director')).toBeUndefined()
+    expect(addonRelease('no-such-thing')).toBeUndefined()
   })
 })

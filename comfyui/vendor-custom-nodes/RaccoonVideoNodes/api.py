@@ -244,7 +244,14 @@ def register_routes():
             return web.json_response({"ok": True, "path": _default_input_dir(), "default": True})
         if not os.path.isdir(path):
             return web.json_response({"ok": False, "error": f"Not a directory: {path}"})
-        _INPUT_FOLDER_OVERRIDE = path
+        # ComfyUI runs with CORS "*", so any web page can call this route: only
+        # folders inside ComfyUI's input dir, or list_images/thumb would serve
+        # pictures from anywhere on the disk to whoever asked.
+        base = os.path.realpath(_default_input_dir())
+        real = os.path.realpath(path)
+        if os.path.commonpath([base, real]) != base:
+            return web.json_response({"ok": False, "error": "Only folders inside ComfyUI's input folder"}, status=403)
+        _INPUT_FOLDER_OVERRIDE = real
         return web.json_response({"ok": True, "path": path})
 
     @inst.routes.post("/rvn/upload_image")

@@ -127,4 +127,32 @@ describe('detectFolderFromKeys', () => {
       'lora_te_text_model_encoder_layers_0_self_attn_q_proj.alpha',
     ])).toBe('loras')
   })
+
+  it('calls an HF-layout Qwen3.5 / Qwen3-VL text encoder a text encoder', () => {
+    // verified: qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot — the Qwen 2.1
+    // prompt enhancer, and the layout the "Heretic" TE variants ship in.
+    expect(detectFolderFromKeys([
+      'lm_head.weight',
+      'model.language_model.embed_tokens.weight',
+      'model.visual.blocks.0.attn.qkv.weight',
+    ])).toBe('text_encoders')
+  })
+
+  it('calls the Qwen-Image 2.1 Fun ControlNet a model patch', () => {
+    // verified: qwen_image_2.1_fun_controlnet_union_int8_convrot
+    expect(detectFolderFromKeys([
+      'control_blocks.0.attn.to_q.weight',
+      'control_blocks.0.before_proj.weight',
+      'control_img_in.weight',
+    ])).toBe('model_patches')
+  })
+
+  it('calls the Z-Image Fun ControlNet a model patch', () => {
+    // verified: Z-Image-Turbo-Fun-Controlnet-Union-2.1-2601-8steps
+    expect(detectFolderFromKeys([
+      'control_layers.0.attention.to_q.weight',
+      'control_noise_refiner.0.after_proj.weight',
+      'control_all_x_embedder.2-1.weight',
+    ])).toBe('model_patches')
+  })
 })

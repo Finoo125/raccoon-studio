@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { zImageTurboWorkflow } from './z-image-turbo'
+import { zImageTurboWorkflow, promptLengthWarning, ZIMAGE_PROMPT_LIMIT } from './z-image-turbo'
 import type { GenerationParams } from '@/types/workflow'
 
 const base: GenerationParams = {
@@ -77,7 +77,10 @@ describe('zImageTurboWorkflow.buildPrompt', () => {
       ...base, faceSwap: true, inputImage: 'face.png', upscale: false,
     })
     expect(wf['hires:upscale']).toBeUndefined()
-    expect(wf['swap:reactor'].inputs.input_image).toEqual(['57:8', 0])
+    // The swap reads the DETAILER's output, not the raw decode: the builders
+    // force the detailer on for any swapping render, overriding the
+    // `detailer: false` this case passes. See swap-detailer-order.test.ts.
+    expect(wf['swap:reactor'].inputs.input_image).toEqual(['det:face', 0])
     // Swap output is flattened to RGB before grain (RGBA from a no-face mask
     // would otherwise crash the grain blend).
     expect(wf['swap:rgb'].inputs.image).toEqual(['swap:color', 0])
@@ -90,7 +93,10 @@ describe('zImageTurboWorkflow.buildPrompt', () => {
     // Hires-fix operates on the raw decode; the swap chain is layered on its output.
     expect(wf['hires:upscale'].inputs.image).toEqual(['57:8', 0])
     expect(wf['swap:source'].inputs.image).toBe('face.png')
-    expect(wf['swap:reactor'].inputs.input_image).toEqual(['hires:decode', 0])
+    // The swap reads the DETAILER's output, not the raw decode: the builders
+    // force the detailer on for any swapping render, overriding the
+    // `detailer: false` this case passes. See swap-detailer-order.test.ts.
+    expect(wf['swap:reactor'].inputs.input_image).toEqual(['det:face', 0])
     expect(wf['swap:reactor'].inputs.source_image).toEqual(['swap:source', 0])
     expect(wf['swap:mask'].inputs.swapped_image).toEqual(['swap:reactor', 0])
     expect(wf['swap:color'].inputs.image_target).toEqual(['swap:mask', 0])
@@ -159,10 +165,12 @@ describe('zImageTurboWorkflow.buildPrompt', () => {
       ...base, faceSwap: true, inputImage: 'face.png', upscale: false, detailer: true,
     })
     // Detailer runs on the decode; the swap composes over it; grain runs last.
+    // The detailer is NOT skipped for a swap: removing it breaks every render
+    // after the first (3/12 vs 12/12) — see swap-detailer-order.test.ts.
     expect(wf['det:face'].inputs.image).toEqual(['57:8', 0])
     expect(wf['swap:reactor'].inputs.input_image).toEqual(['det:face', 0])
-    // Swap output is flattened to RGB before grain (RGBA from a no-face mask
-    // would otherwise crash the grain blend).
+    // Swap output is flattened to RGB before anything blends against it (RGBA
+    // from a no-face mask would otherwise crash the grain blend).
     expect(wf['swap:rgb'].inputs.image).toEqual(['swap:color', 0])
     expect(wf['grain:film'].inputs.image).toEqual(['swap:rgb', 0])
     expect(wf['9'].inputs.images).toEqual(['grain:film', 0])
@@ -186,5 +194,21 @@ describe('zImageTurboWorkflow.buildPrompt', () => {
     expect(wf['grain:film'].inputs.intensity).toBe(0.04)
     const swapped = zImageTurboWorkflow.buildPrompt({ ...base, faceSwap: true, inputImage: 'face.png' })
     expect(swapped['grain:film'].class_type).toBe('Film Grain')
+  })
+})
+
+describe('promptLengthWarning', () => {
+  const long = 'x'.repeat(ZIMAGE_PROMPT_LIMIT + 50)
+
+  it('warns for Z-Image only', () => {
+    expect(promptLengthWarning('zimage', long)).toContain('black')
+    expect(promptLengthWarning('krea2', long)).toBeNull()
+    expect(promptLengthWarning('anima', long)).toBeNull()
+    expect(promptLengthWarning(undefined, long)).toBeNull()
+  })
+
+  it('stays quiet up to the limit and warns one past it', () => {
+    expect(promptLengthWarning('zimage', 'x'.repeat(ZIMAGE_PROMPT_LIMIT))).toBeNull()
+    expect(promptLengthWarning('zimage', 'x'.repeat(ZIMAGE_PROMPT_LIMIT + 1))).not.toBeNull()
   })
 })

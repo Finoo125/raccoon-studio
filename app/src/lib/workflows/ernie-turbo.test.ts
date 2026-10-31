@@ -48,7 +48,10 @@ describe('ernieTurboWorkflow.buildPrompt', () => {
     // Hires-fix now reads the raw decode (swap no longer runs before it).
     expect(wf['hires:upscale'].inputs.image).toEqual(['88:65', 0])
     expect(wf['swap:source'].inputs.image).toBe('face.png')
-    expect(wf['swap:reactor'].inputs.input_image).toEqual(['hires:decode', 0])
+    // The swap reads the DETAILER's output, not the raw decode: the builders
+    // force the detailer on for any swapping render, overriding the
+    // `detailer: false` this case passes. See swap-detailer-order.test.ts.
+    expect(wf['swap:reactor'].inputs.input_image).toEqual(['det:face', 0])
     expect(wf['swap:reactor'].inputs.source_image).toEqual(['swap:source', 0])
     expect(wf['swap:reactor'].inputs.face_boost).toEqual(['swap:boost', 0])
     expect(wf['swap:reactor'].inputs.face_restore_model).toBe('GPEN-BFR-1024.onnx')
@@ -77,7 +80,10 @@ describe('ernieTurboWorkflow.buildPrompt', () => {
       inputImage: 'face.png',
       upscale: false,
     })
-    expect(wf['swap:reactor'].inputs.input_image).toEqual(['88:65', 0])
+    // The swap reads the DETAILER's output, not the raw decode: the builders
+    // force the detailer on for any swapping render, overriding the
+    // `detailer: false` this case passes. See swap-detailer-order.test.ts.
+    expect(wf['swap:reactor'].inputs.input_image).toEqual(['det:face', 0])
     // Swap output is flattened to RGB before grain (RGBA from a no-face mask
     // would otherwise crash the grain blend).
     expect(wf['swap:rgb'].inputs.image).toEqual(['swap:color', 0])
@@ -112,8 +118,8 @@ describe('ernieTurboWorkflow.buildPrompt', () => {
   })
 
   it('passes the prompt enhancer as a real boolean (bool("false") is True in ComfyUI)', () => {
-    const off = ernieTurboWorkflow.buildPrompt(base)
-    expect(off['88:96'].inputs.value).toBe(false)
+    // Off removes the whole chain, switch included (see "ernie prompt enhancer" below).
+    expect(ernieTurboWorkflow.buildPrompt(base)['88:96']).toBeUndefined()
     const on = ernieTurboWorkflow.buildPrompt({ ...base, promptEnhancer: true })
     expect(on['88:96'].inputs.value).toBe(true)
   })
@@ -156,5 +162,24 @@ describe('ernieTurboWorkflow.buildPrompt', () => {
     const wf = ernieTurboWorkflow.buildPrompt({ ...base, upscale: true, detailer: true })
     expect(wf['det:face'].inputs.image).toEqual(['hires:decode', 0])
     expect(wf['73'].inputs.images).toEqual(['grain:film', 0])
+  })
+})
+
+describe('ernie prompt enhancer', () => {
+  const ENHANCER = 'ernie-image-prompt-enhancer.safetensors'
+  const links = (wf: Record<string, { inputs: Record<string, unknown> }>) =>
+    Object.values(wf).flatMap((n) => Object.values(n.inputs).filter((v): v is [string, number] => Array.isArray(v) && typeof v[0] === 'string'))
+
+  it('off: the graph never loads the enhancer — the Models page counts that file optional', () => {
+    const wf = ernieTurboWorkflow.buildPrompt(base)
+    expect(JSON.stringify(wf)).not.toContain(ENHANCER)
+    expect(wf['88:67'].inputs.text).toEqual(['88:94', 0])
+    for (const [id] of links(wf)) expect(wf[id], `dangling link to ${id}`).toBeDefined()
+  })
+  it('on: the enhancer is told the real canvas size', () => {
+    const wf = ernieTurboWorkflow.buildPrompt({ ...base, promptEnhancer: true, width: 1344, height: 768 })
+    expect(JSON.stringify(wf)).toContain(ENHANCER)
+    expect(wf['88:99'].inputs.source).toBe(1344)
+    expect(wf['88:100'].inputs.source).toBe(768)
   })
 })

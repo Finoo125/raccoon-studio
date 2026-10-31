@@ -1,0 +1,703 @@
+{
+ "_generated_by": "scripts/export-video-presets.py",
+ "environments": [
+  {
+   "key": "🏖 Beach — golden hour",
+   "location": "an open stretch of beach late in the day, low amber sun skimming across packed wet sand, thin surf sliding up the flat shore in uneven sheets of foam, the far horizon softened by sea haze, a tide line of shell fragments and dried weed, salt dried onto every exposed surface, the sand firm near the water and loose higher up",
+   "lighting": "warm sun coming in from the side, shadows drawn out long toward the dunes, an orange-gold cast overall with deep blue collecting in the wet troughs"
+  },
+  {
+   "key": "🏔 Mountain peak — dawn",
+   "location": "a bare summit at first light, the sky opening out below in all directions, thin cold air, grey-brown rock split into angular plates underfoot, rose and pale blue spreading from the east across a cloud layer far beneath, range after range receding to a faintly curved horizon, every breath visible",
+   "lighting": "hard dawn light from the east with nothing filling the shadows, purple shadow trailing from each ridge and outcrop, sky graded rose into blue"
+  },
+  {
+   "key": "🌲 Dense forest — diffused green",
+   "location": "deep inside a forest, the canopy closed solid twenty metres up, light coming down in soft broken columns through stacked leaves, moss over everything at ground level, ferns knee-high filling the gaps between roots, standing water caught in root hollows throwing green light back upward, bark crusted with lichen and bracket fungus, the trunks stepping back into depth",
+   "lighting": "green-filtered light with no hard edge anywhere, an even fill dropping from the canopy, every surface carrying a reflected chlorophyll tint"
+  },
+  {
+   "key": "🌊 Underwater — shallow reef",
+   "location": "a shallow tropical reef, turquoise water clear for twenty metres, sunlight breaking through the moving surface into shifting caustic patterns, staghorn and brain coral massed below and slightly soft, small fish holding position against the current, everything moving on a slow surge",
+   "lighting": "caustics sliding over every surface from above, an overall high-key teal, the blue darkening as it drops away below"
+  },
+  {
+   "key": "🌧 Rain-soaked city street — night",
+   "location": "a city street soaked with rain at night, neon dragged across the wet asphalt in long distorted colour streaks, steam lifting out of the iron grates, islands of amber streetlight with darkness between them, traffic blurred behind, awnings shedding water, gutters running full",
+   "lighting": "neon bouncing back out of the puddles — red, blue, white, amber — a cool blue ambient underneath, warm sodium falling from overhead"
+  },
+  {
+   "key": "🏜 Desert — midday heat",
+   "location": "open desert at noon, bleached sand running out to a horizon with no relief in it, the air rippling with heat just above the ground, the sky a hard white-blue, no cloud, no shade, nothing to fix a distance against, the crust broken into geometric plates closer in",
+   "lighting": "sun straight overhead, harsh top-light with no shadow to soften it, a bleached palette — sand near white, sky white-blue, black under anything that blocks the sun"
+  },
+  {
+   "key": "🌌 Night sky — open field",
+   "location": "an open field under a completely clear night sky, grass running out to a dark horizon, the Milky Way laid overhead as a dense band of blue-white stars, no artificial light anywhere, the ground barely readable in deep blue-black",
+   "lighting": "starlight only, close to black at ground level, a faint blue-grey wash from the sky itself, the galactic core throwing a soft gradient you can actually measure"
+  },
+  {
+   "key": "🌁 Rooftop — city at night",
+   "location": "a high rooftop at night, the skyline running away in every direction below, warm light rising off the streets like a second horizon, wind that only exists at this height, vent stacks and water tanks breaking up the flat roof, a parapet at the edge with the drop waiting past it",
+   "lighting": "city glow arriving from below as warm amber fill, cool blue overhead, anyone at the edge silhouetted against the lit towers"
+  },
+  {
+   "key": "✈ Plane cockpit — cruising altitude",
+   "location": "a cockpit at cruising altitude, the instrument panel laid out in amber and green, black sky past the windshield, stars sitting above the cloud deck, engine vibration and a low hum running under everything, oxygen mask clips and breaker rows picked out on the overhead panel",
+   "lighting": "panel glow coming up from below — amber dials, green readouts — the windshield contributing nothing but cold black, no natural light at all"
+  },
+  {
+   "key": "🏠 Bedroom — warm evening",
+   "location": "a warm bedroom in the evening, one bedside lamp throwing a pool of amber, the far corners left soft, bed linen creased where weight has been on it, curtains pulled against the dark outside, a glass of water on the nightstand",
+   "lighting": "warm tungsten from a single point at the bedside, falling off gently, an intimate amber close in and deep shadow past its reach"
+  },
+  {
+   "key": "🛁 Bathroom — steam and tile",
+   "location": "a bathroom full of steam, a hot shower running behind frosted glass, white tile beaded with condensation, the mirror gone completely opaque, warm damp air thick enough to read in the light, a towel folded over the rail, soap residue tracked across the tile floor",
+   "lighting": "warm light diffused through frosted glass — soft, hazy, no hard edge anywhere, the steam itself carrying light from the inside"
+  },
+  {
+   "key": "🪟 Penthouse — floor-to-ceiling glass",
+   "location": "a high-floor penthouse with glass from floor to ceiling on two walls, the city laid out far below, the interior spare — low furniture in dark leather and pale stone, daylight pouring in off the glass wall, the room doubling back in the panes at certain angles",
+   "lighting": "daylight through glass — flat, cool, thinned by height and haze — and after dark the city supplying a continuous glow from underneath"
+  },
+  {
+   "key": "🎹 Jazz club — late night",
+   "location": "a small jazz club late at night, low ceiling, exposed brick, a compact stage lit warm at the far end, tables packed tight against each other, a candle stub burning down on each one, smoke standing visible in the stage light, a bar down one wall with the bottles backlit",
+   "lighting": "warm tungsten washing the stage, candlelight filling in table by table, the corners and the upper walls left in deep shadow"
+  },
+  {
+   "key": "🚂 Train — moving through night",
+   "location": "a train carriage running at night, the window showing dark country with scattered lights passing in rhythm, warm interior against the cold black outside, the carriage reflected and sliding across the glass, worn fabric on the seats, the whole thing swaying on a cycle",
+   "lighting": "warm interior tungsten set against a window that is pure black, the reflections layering over the dark country going past"
+  },
+  {
+   "key": "💊 Underground club — strobes and bass",
+   "location": "an underground club at capacity, strobes cutting the dark in hard white intervals, bass arriving in the chest before the ear registers it, the crowd packed together in darkness, a DJ booth visible through smoke at the far end, colour wash sweeping low over everyone",
+   "lighting": "white strobe cuts, colour dragged through smoke — purple, red, blue — near black in between, faces caught and held for single frames"
+  },
+  {
+   "key": "🏢 Office — after hours",
+   "location": "a corporate floor after hours, desks abandoned with personal effects still out, flat cold fluorescent laid evenly across the open plan, the city showing through floor-to-ceiling glass along one wall, and the specific quality of quiet a building takes on once everyone has gone",
+   "lighting": "flat cold fluorescent overhead, warm city glow through the glass, a clinical blue-white cast, long shadows thrown off the desk furniture"
+  },
+  {
+   "key": "🚗 Car — moving at night",
+   "location": "a car interior at night moving through a lit city, streetlights sweeping through the windows in a rhythm of amber and shadow, the dash instruments glowing warm from below, the city wet and smeared outside, the close interior smell of upholstery and warm electronics",
+   "lighting": "streetlights sweeping through the glass on a beat, warm dash glow from underneath, light and shadow travelling across every interior surface"
+  },
+  {
+   "key": "🏰 Big Ben — Westminster at night",
+   "location": "standing right under the Elizabeth Tower on the Westminster Bridge approach, the lit clock face filling the top of the frame, floodlit limestone glowing gold against deep navy, the Thames past the stone parapet, black iron lampposts running away down the bridge, cabs and buses passing in soft blur",
+   "lighting": "warm sodium flood on the tower face, cold blue ambient above, wet stone throwing gold back up, the clock face acting as its own source"
+  },
+  {
+   "key": "🗼 Eiffel Tower — dusk",
+   "location": "the Eiffel Tower seen from the Champ de Mars at dusk, warm iron lattice against a sky grading from rose-orange at the horizon to deep blue overhead, tourists soft in the middle distance, the tower's own lights not yet running, the Seine picking up sky colour far off",
+   "lighting": "a dusk gradient — warm amber-rose low down, cool indigo above — the tower lit from beneath by upward floods, long shadows off the iron feet"
+  },
+  {
+   "key": "🌃 Times Square — peak night",
+   "location": "Times Square at full commercial night, LED and billboard covering every building face in overlapping colour — red, blue, the white of theatre marquees — yellow cabs stalled in gridlock below, phones up all through the crowd, steam off a subway grate, the compressed energy of a crossroads that never once goes dark",
+   "lighting": "artificial light only — not a single natural source in the frame, colour fields laid over each other: billboard red bleeding into neon blue bleeding into marquee white, every surface returning at least three colours at once"
+  },
+  {
+   "key": "POV — 💃 Strip club — main floor",
+   "location": "a strip club main floor at peak hour, a raised chrome-poled stage close enough to touch, deep button-tufted velvet seating ringed around it, a long backlit bar glowing across the room, notes scattered along the stage edge, haze standing in the air",
+   "lighting": "magenta and deep blue stage wash pushing through the haze, a moving head sweeping slowly, UV strips under the stage lip catching legs and heels, everything outside the beams dropping away to nothing"
+  },
+  {
+   "key": "POV — 🔒 Private booth — POV",
+   "location": "a small private VIP booth behind a heavy velvet curtain, a low leather bench at knee height in the lower view, dark suede padding close on three sides, a mirrored ceiling tile with its glow strip turned right down, a thin blade of club light leaking in at the curtain's edge",
+   "lighting": "one dim warm downlight straight overhead pooling on skin and leather, red LED trim at floor level washing everything crimson from below, the curtain gap flickering faint magenta with the lights outside"
+  },
+  {
+   "key": "🌴 LA beach — Venice / Santa Monica",
+   "location": "the Venice boardwalk spilling out onto wide flat sand late in the afternoon, the Pacific throwing hard silver-gold all the way to the horizon, palms lined up along the walk, skaters and cyclists soft on the bike path behind, the muscle beach frames further down, graffiti walls and vendor stalls the length of the boardwalk, a lifeguard tower in white and red, people scattered across the sand",
+   "lighting": "California sun late and low, coming in warm from the west over the water, shadows pulled long toward the buildings, everything backlit and rimmed, skin glowing, sunglasses catching flare, that specific amber-pink LA cast"
+  },
+  {
+   "key": "🍹 Ibiza pool party — golden hour",
+   "location": "an infinity pool at a cliff-edge villa in Ibiza late in the day, the Mediterranean deep blue below, whitewashed walls and terracotta underfoot, the pool running over its own edge into the view, a DJ set up under a white canopy, people in the water and stretched out on daybeds, champagne buried in ice, string lights strung up and still waiting on dusk, grill smoke drifting through",
+   "lighting": "low golden sun straight in from the west — hard, warm, every droplet catching it, skin lit and wet, the pool surface a moving sheet of gold, the white surfaces kicking light back as fill from every direction"
+  },
+  {
+   "key": "🏄 Bondi Beach — bright midday",
+   "location": "Bondi at midday from the promenade, looking down the whole crescent of sand, the water a hard turquoise with white breakers arriving in regular sets, hundreds of people on the sand, surfers out past them, the red and yellow flags planted, sandstone headlands closing each end, Norfolk pines down the promenade",
+   "lighting": "Australian midday sun straight overhead with nothing softening it, high UV, sand bleached close to white, the water almost too bright to hold in the eye, everything saturated and hard-edged"
+  },
+  {
+   "key": "🕯 Candlelit loft — exposed brick",
+   "location": "an open loft with brick walls and timber beams overhead, the only light coming from pillar candles massed on the floor, on shelves, on a low table, thirty or forty flames overlapping into pools of warm amber, a large bed with dark linen at the back of the space, a cast-iron tub standing free near the windows, tall industrial windows showing the city but hung with sheer fabric",
+   "lighting": "candlelight and nothing else — warm amber from many low sources, the flames working shadows slowly across the brick, the candles doubled in the dark window glass, deep shadow above the beam line"
+  },
+  {
+   "key": "🚿 Rain shower — glass-walled bathroom",
+   "location": "a large walk-in shower with glass on two full sides, one oversized head directly overhead dropping water straight down, steam filling the upper half of the enclosure, water running down the glass in unbroken sheets, dark slate on floor and walls, a warm LED strip recessed at floor level, a bench built into the back wall",
+   "lighting": "the floor-level LED strip throwing light upward through steam and falling water, the overhead diffused by the rain and mist, every edge softened, skin wet and picking up every source in the room"
+  },
+  {
+   "key": "🪩 Hotel rooftop bar — city night",
+   "location": "a rooftop bar on a good hotel, skyline standing behind it on three sides, the bar itself a long backlit slab of marble or onyx, cocktails part-built along it, low seating in velvet and brass grouped around fire pit tables, a small pool or water feature returning the city lights, well-dressed people around the edges, a DJ working from a minimal booth",
+   "lighting": "warm practicals from the bar, the fire pits and the string lights, the skyline supplying ambient behind all of it, the sky deep blue and never quite reaching black"
+  },
+  {
+   "key": "🛥 Yacht deck — open ocean sunset",
+   "location": "the aft deck of a motor yacht at sunset, teak underfoot, the wake running back white and straight to the horizon, open water in every direction — deep blue turning copper near the sun, the stern rail and a pair of loungers, champagne in a bucket lashed to the rail, spray reaching the lower deck now and then",
+   "lighting": "sun straight in over the stern — copper-gold, hard rim on everything facing aft, deep blue shadow on the forward side, the wake itself lighting up, skin lit warm from behind, faces filled in by reflected ocean"
+  },
+  {
+   "key": "🏎 Supercar interior — night drive",
+   "location": "the inside of a low supercar at night — Lamborghini, McLaren, that class — the cockpit tight and low, carbon on the dash and centre console, the cluster glowing amber behind a flat-bottomed wheel, city lights drawing out into streaks through the shallow windshield, ambient LED running cool blue along the door sills",
+   "lighting": "cluster glow up from below in warm amber, cool blue LED along the sills, city light pulsing through the glass on a rhythm set by speed"
+  },
+  {
+   "key": "🏨 Cheap motel room — neon through blinds",
+   "location": "a single motel room at night, a queen bed under a thin patterned spread, wood-veneer furniture, a CRT on the dresser, venetian blinds at the window laying horizontal neon stripes — red and blue — across the bed and the far wall, the bathroom door ajar on hard fluorescent, a bag dropped on the floor",
+   "lighting": "neon coming through the blinds in alternating red and blue bands, bathroom fluorescent escaping through the gap as one cold stripe, headlights crossing the ceiling at irregular intervals"
+  },
+  {
+   "key": "🏚 Abandoned building — daylight",
+   "location": "a derelict industrial building in daylight, the roof partly down and dropping shafts of dusty light onto rubble, broken window frames with weeds growing through them, paint peeling back through old industrial layers — blue-grey, oxide red, institutional cream — graffiti stacked over graffiti on the far wall, a collapsed ceiling section heaped in plaster and rebar across the middle of the floor",
+   "lighting": "direct light falling through the holes in the roof and the broken windows, dust suspended in every shaft, the corners and everything under the debris left dark, hard contrast between the lit shafts and the space around them"
+  },
+  {
+   "key": "🌸 Tokyo Shibuya — night rain",
+   "location": "the Shibuya crossing at night in light rain, the intersection standing empty between changes then filling from every direction at once, the 109 building and the Q-Front façade solid with LED advertising, the wet crossing stripes returning every colour, umbrellas scattered through the crowd, the pedestrian countdown running on a corner post",
+   "lighting": "artificial light only — warm streetlamps set against cold LED billboard blue, every wet surface doubling every source, the crowd reading as a moving mosaic of backlit umbrellas"
+  },
+  {
+   "key": "🏯 Kyoto — bamboo grove",
+   "location": "the Arashiyama bamboo grove, a path cut through stands so dense the canes read as one continuous vertical texture fifteen metres up, green-filtered light dropping in soft broken shafts, the path stone-paved and slightly wet, tourists far off but this stretch quiet",
+   "lighting": "green-filtered light with the canopy behaving like an enormous silk softbox, a soft fill with no direction and no hard shadow, everything carrying reflected green"
+  },
+  {
+   "key": "🌆 Seoul rooftop — dusk",
+   "location": "the roof of a mid-rise in a residential Seoul neighbourhood at dusk, water tanks and vent boxes, a few potted plants gathered in one corner, the city running out to every horizon below, apartment towers lighting up window by window, the Han a faint dark band in the middle distance, two folding chairs and a small table that were being used a moment ago",
+   "lighting": "dusk with the last directional light gone, the sky graded deep rose into cool indigo overhead, warm amber lifting off the city below like a second horizon, a stair-access lamp supplying the only warm key"
+  },
+  {
+   "key": "🌸 Cherry blossom park — midday",
+   "location": "a park with the cherry trees fully out, petals coming down continuously in the light wind, a stone path running through, wooden benches set along it, other people soft at the edges — couples, families — the blossom dense enough overhead to read as a ceiling, petals piling into drifts against the kerb",
+   "lighting": "light filtered down through the blossom — soft pink-white with no direction to it, everything in frame lit from above through petals, no hard shadow anywhere, skin luminous in it"
+  },
+  {
+   "key": "POV — 🛋 Living room — late night tv",
+   "location": "a living room late at night, sofa and coffee table in the foreground, a large TV working as the only light source and throwing a shifting blue-grey across the room, the remote and a half-empty glass on the table, curtains drawn, the rest of the room dark except where the screen happens to catch a surface, the particular stillness of a house where one person is still awake",
+   "lighting": "the screen as sole key — cool blue-grey, flickering with whatever is playing, falling off hard into darkness at the edges of the room, and doubled as a bright point in the glass on the table"
+  },
+  {
+   "key": "POV — 🛏 Bedroom — intimate low light",
+   "location": "a bedroom at night with the bed taking up most of the room, one bedside lamp on one side filling the space with warm amber, the other side of the bed left in soft shadow, curtains shut, the room reduced to its essential geometry — the bed, and two people on it, clothes on the floor, the specific disorder of a room in use",
+   "lighting": "one warm bedside lamp — amber, soft, coming from one side, filling the pillow side and letting the shadow deepen toward the far edge, the ceiling almost entirely dark"
+  },
+  {
+   "key": "POV — 🚗 Parked car — night",
+   "location": "the inside of a parked car at night — any model, the geometry is the same — front headrests in frame, the windscreen showing a car park or a quiet street beyond, sodium light coming through the glass in amber bands across the seats, the rear-view catching a strip of whatever is behind, condensation starting on the inside of the windows, the confinement of an engine-off cabin while the world keeps going outside it",
+   "lighting": "sodium through glass in warm amber stripes over every interior surface, cut across by passing headlights sweeping the cabin, the dash unlit, everything amber or shadow"
+  },
+  {
+   "key": "POV — 🚕 Taxi back seat — city at night",
+   "location": "the back seat of a moving cab at night, the driver visible past the divider, city lights running past the side windows, the meter or a phone mount up on the dash, the body leaning slightly with acceleration and through the corners, the anonymous half-privacy of the back of a cab",
+   "lighting": "city light through the side windows in fast sequence — amber, white, neon, shadow, amber again — the driver's silhouette cut out against the windscreen glow"
+  },
+  {
+   "key": "POV — 🏨 Hotel room — quality",
+   "location": "a decent hotel room, king bed under pressed white linen, a large window with the curtains part open on a city view at night, the furniture precise and impersonal — every object exactly where it was assigned — a minibar, a desk, the bathroom door standing open on tile and chrome, the room lit to a warm neutral and ready for whatever the night turns out to be",
+   "lighting": "overhead dimmed to warm amber, city glow coming through the curtain gap as a cooler second source, bathroom fluorescent laying a white stripe through the open door, the window supplying a deep blue backdrop"
+  },
+  {
+   "key": "POV — 🪩 Club private booth — VIP",
+   "location": "a private VIP booth in a nightclub, curved seating in dark leather, a table with bottle service on it — ice bucket, glasses, the markers of the night — the main floor visible over a low partition, the booth raised slightly above it, bass physical off the system, neon and strobe arriving from the floor in pulses, the half-privacy of a space that is inside the room and watching it at the same time",
+   "lighting": "a table candle or an LED in the ice bucket as the close warm source, club light reaching the booth as coloured pulses — purple, cyan, amber cycling round — strobe catching faces on the floor below in freeze-frames"
+  },
+  {
+   "key": "POV — 💆 Massage table — face down",
+   "location": "a professional treatment room, white linen over a padded table, the face cradle right there — the circular view of the floor through it, candle or oil-lamp light warm and low, essential oil implied by the visual calm of the place, and the specific vulnerability of lying face down in this particular context",
+   "lighting": "candle or low lamp filling the room warm amber, soft and without direction — nothing casting a hard shadow — the face cradle vignetting the floor below into a circle"
+  },
+  {
+   "key": "WTF — ✈️ Skydive — open door at altitude",
+   "location": "inside a small jump aircraft at altitude with the door standing wide open, the interior stripped back to bare metal and webbing, the roar at the door consuming everything else, other jumpers in silhouette ahead of it against blue-white sky, the ground visible through the opening as a patchwork impossibly far down, the airframe shaking with engine and airflow",
+   "lighting": "daylight flooding in through the open door — hard and brilliant, the interior reading dark against it, the jumpers silhouetted on a blown-out exterior"
+  },
+  {
+   "key": "WTF — 🪂 Paragliding — soaring",
+   "location": "hanging in harness under a paraglider wing at altitude, the fabric overhead at the edge of the frame — cells and lines visible above and behind, the valley completely open below, mountains sitting at eye level to either side, the horizon running far enough to show the curve of the earth, and no sound but wind",
+   "lighting": "open sky light, brilliant from above, the sunlit valley below acting as a second diffused source coming up from underneath, the wing's shadow crossing own hands on the brake toggles now and then"
+  },
+  {
+   "key": "WTF — 🌊 Big wave surfing — tow-in",
+   "location": "the face of a very large wave, water moving fast around the board, the face standing up as a vertical wall of green-black above and to the right, the bottom of the wave rushing up as the board drops into it, spray tearing off the lip high overhead, the horizon tilted hard over, the weight of the water obvious in every surface",
+   "lighting": "the wave itself supplying the light — translucent green-black, backlit where it thins, opaque and dark where it stacks, spray catching the sun in prismatic bursts along the lip"
+  },
+  {
+   "key": "WTF — 🏔 Base jump — cliff edge",
+   "location": "standing on the edge of a cliff or a building with a base rig on, the drop opening out below and ahead as pure air, the landing zone a small rectangle a long way down, wind moving around the body at this height, the lip of the surface underfoot at the bottom of frame, the last moment before it becomes irreversible",
+   "lighting": "open sky straight ahead — brilliant and enormous, the ground below reduced to texture by distance, the edge itself picking up the light"
+  },
+  {
+   "key": "WTF — 🌋 Volcanic landscape — active",
+   "location": "a lava field on an active volcano, black basalt running out to a glowing horizon, live flow visible as orange-red rivers of light close and mid-distance, sulphur steam lifting out of vents in pale plumes, the ground hot through the soles, the sky held at a permanent dusk-orange even at night by the glow",
+   "lighting": "the lava as the key light — warm orange-red arriving from below and ahead, everything lit from an angle daylight never produces, steam plumes lit from underneath, the sky stained copper"
+  },
+  {
+   "key": "WTF — 🏎 Racing circuit — in car",
+   "location": "inside a race car on track, the cockpit tight and stripped, roll cage overhead, the circuit arriving through a helmet visor, apex markers appearing and gone, the wheel loading up hard as the braking points come at you, the car moving fast enough that the track geometry reads as a problem to be solved",
+   "lighting": "whatever light the track has, filtered through a visor, the wheel's LEDs supplying close ambient, tyre smoke and tarmac dust catching light through the corners"
+  },
+  {
+   "key": "WTF — 🚁 Helicopter — open door",
+   "location": "hovering in a helicopter with the door slid open, the skid at the bottom edge of frame, the city or the landscape directly below through the gap, the rotor beating overhead as a physical rhythm, the horizon held at a fixed altitude, everything below available in one unobstructed downward look",
+   "lighting": "open sky pouring in through the door, rotor shadow sweeping the interior on a beat, the landscape below in full natural light through the opening"
+  },
+  {
+   "key": "WTF — 🌊 Underwater — deep",
+   "location": "diving deep, past recreational limits, the light from above thinning to a dim blue-green column, the surface a bright disk shrinking with every metre, nothing below but darkness grading into black, own torch the only local light, and the extreme quiet that comes with pressure",
+   "lighting": "the surface column above as the only natural source, own torch cutting a cone of warm white through cold blue, the dark below behaving like a presence rather than an absence"
+  },
+  {
+   "key": "WTF — 🎢 Rollercoaster — first drop",
+   "location": "front row of a coaster at the top of the first drop, the track falling away steeply ahead and below, the park visible in every direction from up here, the click-and-hold at the apex, and then the release forward and down",
+   "lighting": "open sky behind and above, brilliant, the track ahead running down into the park as a ribbon, the frame about to pitch hard forward"
+  },
+  {
+   "key": "WTF — 🏙 Abandoned skyscraper — upper floor",
+   "location": "a high floor of an abandoned or unfinished tower, floor-to-ceiling openings with no glass in them yet, or none left, the city spread in every direction with nothing at all in between, wind entering at building speed, bare concrete underfoot, the skeleton's geometry fully exposed, cloud sitting at eye level or slightly under it",
+   "lighting": "open city light arriving from all sides — the 360-degree light of altitude, no shadows except off the structural columns, cloud supplying a shifting diffuse ceiling when there is any"
+  },
+  {
+   "key": "WTF — 🚤 Speedboat — open water at speed",
+   "location": "the bow of a speedboat running fast over open water, the nose lifting and slamming, spray thrown out both sides, the horizon ahead clean and empty, the wake visible back over one shoulder, the boat's motion turning standing up into an argument with inertia",
+   "lighting": "open water light, brilliant overhead, spray catching the sun as prismatic curtains on both sides, the wake behind lighting up as a white line laid across blue"
+  },
+  {
+   "key": "POV — 🪑 Strip club — private booth",
+   "location": "a private booth off the main floor, curved dark leather seating in a U, a small table, the main floor visible through a gap in the curtain or the partition, bass from outside carried through the seating and the floor, a single overhead in the booth dimmed almost to nothing, the space defined entirely by its enclosure — close walls, low ceiling, the world cut down to this, a bottle and glasses on the table marking how long it has been",
+   "lighting": "close to darkness in the booth, only ambient spill from the main floor coming through the partition gap as a warm stripe, the performer lit by whatever manages to reach her from outside, everything low-contrast, the room darker than is comfortable"
+  },
+  {
+   "key": "POV — 🌙 Strip club — VIP room",
+   "location": "a dedicated VIP room away from the main floor, an actual room with a door that shuts, a large sofa or a seating arrangement, the lighting controlled and deliberate — warm and low, a bar setup in the corner, art on the walls that nobody will look at, the room built to feel expensive and private at the same time, the sound from outside cut dead by the door",
+   "lighting": "controlled warm amber dimmed to intimacy, one brighter source over the performance area, the room's own light rather than borrowed stage wash, skin held in a warm low fill"
+  },
+  {
+   "key": "POV — 🎪 Burlesque venue — seated table",
+   "location": "an intimate burlesque room or cabaret, small tables each with a candle, a modest stage at one end raised slightly off the floor, the audience close enough that there is no back row, red velvet and dark wood, chandelier light warm and theatrical, champagne and cocktails on the tables, an audience actually watching rather than just consuming",
+   "lighting": "the table candle as the close warm source, theatrical stage lighting with a warm amber key, a slight haze in the air picking up the stage beams, the chandelier filling in warm at a low level"
+  },
+  {
+   "key": "🏢 Office romance — after hours",
+   "location": "an open-plan office at night, desks and monitors in rows, the city through floor-to-ceiling glass, the overhead fluorescents down to half, one desk lamp on as the only warm source, the particular quiet of an office that ought to be empty and is not, paperwork and coffee cups, a jacket left over a chair",
+   "lighting": "half-dimmed cool white overhead, one warm desk lamp, city glow through the glass as a second blue source, monitors throwing intermittent light"
+  },
+  {
+   "key": "🚀 Space launch — cockpit POV",
+   "location": "inside a launch vehicle cockpit or capsule, instrument panels covering every surface, small portholes showing the gantry outside, the tower still attached, pale blue sky past it, crew strapped into harnesses, mission patches on the suits, countdown displays running, vibration already building through the seat",
+   "lighting": "functional cockpit lighting — amber instruments, status LEDs in green and red, hard daylight through the portholes standing in sharp contrast against the dim interior, warning lights throwing intermittent colour"
+  },
+  {
+   "key": "🌌 Space station — zero gravity",
+   "location": "the inside of a station module, a cylindrical corridor lined with equipment panels, handrails running its full length, a porthole showing the curve of Earth below and stars past it, loose objects adrift — a tablet, a pen, a food packet moving slowly through the air, the particular cramped intimacy of a pressurised vessel in orbit",
+   "lighting": "no light direction at all — fluorescent panels overhead, Earth arriving through the porthole as a shifting blue-white source, equipment LEDs as small coloured accents"
+  },
+  {
+   "key": "🏥 Hospital room — night shift",
+   "location": "a private hospital room at night, one bed, monitoring equipment, an IV stand, the door open just enough to show a lit corridor, a visitor's chair pulled up close to the bed, the particular vulnerability of a room designed around recovery",
+   "lighting": "the overhead fluorescent off and only the warm bedside lamp on, monitors casting a faint blue-green, corridor light coming through the door gap as a stripe"
+  },
+  {
+   "key": "🎓 University library — closing time",
+   "location": "a large university library late at night, nearly empty, high ceilings on wooden beams, reading lamps on individual tables, rows of shelving running back into darkness, open books and laptops left scattered, and the last two people who did not notice it was closing",
+   "lighting": "reading lamps as isolated warm pools on dark tables, exit signs supplying red accents in the dark, the shelving past each lamp pool dropping to almost nothing"
+  },
+  {
+   "key": "💋 Backstage — dressing room",
+   "location": "a performer's dressing room backstage, mirrors ringed with bulbs, makeup across every surface, a costume rail hung several deep, the show audible through the walls as a muffled roar, a door with a star on it, a chair pulled up to the lit mirror, the particular charge of the minutes either side of a performance",
+   "lighting": "mirror bulbs — warm and numerous, filling in every shadow there is, the most flattering light that exists, skin luminous under it, no shadows at all, everything warm and gold"
+  },
+  {
+   "key": "🏊 Pool — late night private swim",
+   "location": "an indoor pool after hours, the building dark apart from the underwater lights, blue-green rippling across the ceiling and the walls, the chemical smell of chlorine implied by everything you can see, an Olympic-length pool lit from inside itself, the ladder at the near end, towels dropped on a bench, complete privacy — nobody else is here",
+   "lighting": "underwater LEDs as the only source — cool blue-green, ripple patterns moving across every surface, skin included, nothing overhead at all, everything lit from below and within"
+  },
+  {
+   "key": "🎪 Circus tent — after the show",
+   "location": "a big top after the last performance, rigging and aerial equipment still hanging overhead, sawdust underfoot, the tiered seating empty and dark, one spotlight still burning in the ring, canvas and sawdust in the air, props and apparatus standing about in the shadows",
+   "lighting": "the ring spot as the only source — a hard white cone on the sawdust, everything outside it dropping to almost nothing, performers caught on the line between the light and the dark"
+  },
+  {
+   "key": "🌃 Rooftop pool — hotel, midnight",
+   "location": "a rooftop infinity pool on a high hotel floor, the skyline standing in every direction, the pool's edge appearing to run straight into the city below, loungers along its rim, a bar off to one side, steam lifting off the heated water into cold night air",
+   "lighting": "city glow lifting the sky to a deep blue-purple, underwater lights pushing blue-white up through the water, the pool edge lit from beneath as a glowing line against the city"
+  },
+  {
+   "key": "🏋 Gym — private session after hours",
+   "location": "a commercial gym after closing, equipment standing in rows, mirrors on every wall, rubber underfoot, the fluorescents running at half power, and the particular intimacy a space built for physical effort takes on when there are only two people in it",
+   "lighting": "half-power fluorescent — functional and a little harsh, the mirrors multiplying every source in the room, equipment LEDs as small accents"
+  },
+  {
+   "key": "🎸 Recording studio — late session",
+   "location": "a professional studio late at night, the control room with its desk and monitors, acoustic treatment covering every wall, the live room visible through the glass, no city and no windows — no outside at all, the particular sealed world of a studio at two in the morning",
+   "lighting": "soft studio lighting on dimmers, desk metering glowing constantly, monitor screens, and the red ON AIR light"
+  },
+  {
+   "key": "⛪ Church — empty, afternoon light",
+   "location": "a large empty church in the afternoon, a long nave lined with wooden pews, stained glass dropping coloured light in columns, the altar at the far end, candles burning at a side chapel, and the particular stillness of a sacred space between services",
+   "lighting": "afternoon light through stained glass — deep columns of red, blue and gold falling across stone floor and pews, candles flickering at the side chapel, no electric light required at all"
+  },
+  {
+   "key": "POV — 🔥 Backroom — she is topless",
+   "location": "a private backroom off a strip club or adult venue, darker and closer than the main floor, a low couch or padded bench, dim red or pink light, bass from the main room arriving through the walls and the floor, no stage — just a small private space and two people in it",
+   "lighting": "very low red or pink ambient, intimate and close to dark, one dim overhead or a strip light, skin picking up whatever light there is"
+  },
+  {
+   "key": "POV — 💃 Lap dance — she strips as she dances",
+   "location": "a private booth or lap dance area, one chair or bench, the space confined, club lighting reaching it as a dim warm pulse, bass off the floor physical and constant",
+   "lighting": "dim warm amber with occasional colour pulsing in from the main floor, her skin catching it as she moves"
+  },
+  {
+   "key": "🌌 POV · Infinity pool penthouse — night skyline",
+   "location": "a rooftop infinity pool at night, warm water at chest height filling the lower view, the tiled edge inside arm's reach, water running over the vanishing edge into a sheer drop, the city grid glittering far below, steam curling off the surface into cold air, droplets standing on skin and stone",
+   "lighting": "cool underwater lights glowing up through the water, warm sodium washing in from below the horizon line, wet skin taking both — cyan from beneath, amber rim off the skyline"
+  },
+  {
+   "key": "🛩 POV · Private jet cabin — cruising altitude",
+   "location": "a private jet cabin at altitude, cream leather seat backs and gloss walnut within arm's reach, a champagne flute fizzing on the fold-out table, portholes running down the fuselage onto a blinding white cloud deck, seatbelt straps hanging loose, the aisle narrow enough to touch both sides at once",
+   "lighting": "hard high-altitude sun knifing through the portholes in tight beams and bouncing off the cream leather as fill, everything above the cloud line over-bright and clean"
+  },
+  {
+   "key": "⛈ POV · Storm balcony — lightning over black sea",
+   "location": "a wide hotel balcony rail at hip height in the lower view, rain-slick stone underfoot, a black ocean working below, storm cloud stacked to the horizon, sheets of warm rain crossing the balcony edge, wet glass doors standing open behind, curtains snapping in the wind",
+   "lighting": "near darkness torn open by lightning — each strike a full-frame white flash freezing the rain mid-air and silhouetting everything for one frame, then deep blue afterglow, every wet surface flaring on the next bolt"
+  },
+  {
+   "key": "🕯 POV · Candlelit hammam — steam and stone",
+   "location": "an old stone bath house, a hundred candles crowded onto every ledge and alcove, steam hanging in slow layers, a raised marble slab warm and wet at the centre and within reach, water channels cut into the floor, carved arches receding into dark, condensation running down the dome overhead",
+   "lighting": "massed candle flame as the only source — deep amber moving across wet marble and skin, steam going gold where it crosses a flame, shadows breathing with the flicker"
+  },
+  {
+   "key": "🧖 POV · Mountain onsen — snowfall at night",
+   "location": "an outdoor hot spring ringed with dark volcanic rock, steaming water at chest height in the lower view, heavy snow falling slow and vertical out of a black sky, snow banked on every rock edge within reach, one paper lantern on a cedar post, pine forest standing as a dark wall past the steam",
+   "lighting": "the lantern's warm orange pool against blue-black night, steam lighting up where it crosses the beam, flakes flaring orange as they pass it and then gone into the water"
+  },
+  {
+   "key": "🏰 POV · Four-poster suite — silk canopy",
+   "location": "an enormous four-poster filling the view, carved dark-wood posts at the corners within reach, deep crimson silk overhead the moment the view tips back, heavy sheets pooled in folds, a stone fireplace throwing light across the room, tall leaded windows holding black night beyond",
+   "lighting": "firelight from the side — warm orange rippling over the silk and the sheets, deep soft shadow inside the bed frame, skin lit in moving amber"
+  },
+  {
+   "key": "🚗 POV · Chauffeured back seat — neon through rain",
+   "location": "the deep back seat of a long black car at night, quilted leather close on every side, the privacy divider raised ahead, rain crawling sideways across the windows, the city outside reduced to smeared neon ribbons going past, a low amber footwell glow, the seat wide enough to count as a room",
+   "lighting": "neon strobing through rain-streaked glass — pink, cyan, gold moving through the cabin in bands, each colour crossing leather and skin as the car runs, darkness in the gaps between"
+  },
+  {
+   "key": "🛥 POV · Yacht aft deck — bioluminescent cove",
+   "location": "the wide teak aft deck of an anchored yacht at night, deck rail and cushioned sunbed within reach, a sheltered cove of black glass water below, every ripple firing electric blue, stars spilled overhead, the dark shape of cliffs closing the bay",
+   "lighting": "cold blue-green blooming up out of the water with every movement, faint warm deck lights at ankle height, starlight silver along the rail — skin lit from below in moving aqua"
+  },
+  {
+   "key": "🔥 POV · Fire-lit cabin rug — blizzard outside",
+   "location": "a thick sheepskin rug filling the lower view, an open stone fireplace going hard at arm's reach, rough timber walls, one window packed solid white with a howling blizzard, a bottle and two glasses on the hearth stone, the air shimmering above the flames",
+   "lighting": "the fire as sole source — hard flickering orange from one side, black shadow on the other, sparks climbing, the window a cold blue-white rectangle in a dark wall"
+  },
+  {
+   "key": "🌃 POV · Floor-to-ceiling glass — sixty floors up",
+   "location": "a dark penthouse room with one entire wall of glass, the pane cold and flawless within touching distance, a city of light spread sixty floors down and running to the horizon, aircraft warning lights pulsing on distant towers, the room behind returning nothing but darkness — furniture reduced to bare silhouette",
+   "lighting": "no interior light at all — the city lights the room, a cool blue-white upglow through the glass with warm sodium patches, anyone against the window rimmed by a million distant windows"
+  },
+  {
+   "key": "⛩ POV · Tokyo love-hotel — neon through blinds",
+   "location": "a compact love-hotel room at night, a low wide bed taking most of the floor, venetian blinds slicing a huge pink-and-cyan sign outside into glowing stripes, a padded vinyl headboard within reach, a small console of lit buttons on the wall, rain tapping the single window",
+   "lighting": "the neon outside as the only light — hard pink and cyan laddering across the bed and every surface through the blinds, the colours flipping as the sign cycles, black between the stripes"
+  },
+  {
+   "key": "🏜 POV · Desert blanket — Milky Way overhead",
+   "location": "a thick woven blanket spread over sand still holding the day's heat, the lower view filled with its pattern and a lantern turned down to a glow, dunes running off in pale silver ridges, and when the view tips up — the Milky Way in full detail across a jet-black sky with no light pollution anywhere in it",
+   "lighting": "starlight and a sliver of moon — cold silver-blue over the dunes, the lantern's small warm pool on the blanket, skin half silver and half amber where the two meet"
+  }
+ ],
+ "scenarios": [
+  {
+   "key": "🚶 Walk in and stop",
+   "tag": "SFW",
+   "setup": "Someone walks into the space and halts."
+  },
+  {
+   "key": "🪑 Sit down on a chair",
+   "tag": "SFW",
+   "setup": "Someone crosses to a chair and takes a seat."
+  },
+  {
+   "key": "🪑 Straddle a chair backwards",
+   "tag": "SFW",
+   "setup": "Someone sits astride a chair facing the backrest."
+  },
+  {
+   "key": "🪟 Draw the curtains open",
+   "tag": "SFW",
+   "setup": "Someone opens a set of curtains and lets the light in."
+  },
+  {
+   "key": "🖐 Press a palm to the glass",
+   "tag": "SFW",
+   "setup": "Someone puts a hand flat against a window."
+  },
+  {
+   "key": "🌆 Lean on a railing, looking out",
+   "tag": "SFW",
+   "setup": "Someone leans onto a railing and looks out."
+  },
+  {
+   "key": "🪜 Climb onto a ledge and sit",
+   "tag": "SFW",
+   "setup": "Someone climbs up onto a ledge and sits on it."
+  },
+  {
+   "key": "👠 Step into a pair of heels",
+   "tag": "SFW",
+   "setup": "Someone puts on a pair of heels."
+  },
+  {
+   "key": "🚿 Step under the water",
+   "tag": "SFW",
+   "setup": "Someone steps under a running shower."
+  },
+  {
+   "key": "💦 Lean back under water",
+   "tag": "SFW",
+   "setup": "Someone tips back into water and surfaces."
+  },
+  {
+   "key": "🌊 Wade out into the water",
+   "tag": "SFW",
+   "setup": "Someone walks out from the shore into the water."
+  },
+  {
+   "key": "💨 Turn into the wind",
+   "tag": "SFW",
+   "setup": "Someone turns to face into a strong wind."
+  },
+  {
+   "key": "🕯 Lean in and blow out a candle",
+   "tag": "SFW",
+   "setup": "Someone leans down to put out a candle."
+  },
+  {
+   "key": "🍷 Pour a drink and raise the glass",
+   "tag": "SFW",
+   "setup": "Someone pours a drink and lifts it."
+  },
+  {
+   "key": "🎧 Roll her shoulders into the beat",
+   "tag": "SFW",
+   "setup": "Someone picks up a rhythm and starts moving with it."
+  },
+  {
+   "key": "💃 Dance slowly on the spot",
+   "tag": "SFW",
+   "setup": "Someone sways through a slow solo dance."
+  },
+  {
+   "key": "👗 Slow twirl in a dress",
+   "tag": "SFW",
+   "setup": "Someone turns slowly on the spot to show off a dress."
+  },
+  {
+   "key": "🛋 Flop onto a couch",
+   "tag": "SFW",
+   "setup": "Someone drops backward onto a couch."
+  },
+  {
+   "key": "🧎 Slide down the wall to the floor",
+   "tag": "SFW",
+   "setup": "Someone lowers themselves down a wall until they are sitting on the floor."
+  },
+  {
+   "key": "🛏 Stretch on a bed",
+   "tag": "SFW",
+   "setup": "Someone stretches out lazily on a bed."
+  },
+  {
+   "key": "🧎 Kneel up and arch",
+   "tag": "SFW",
+   "setup": "Someone comes up onto their knees and arches."
+  },
+  {
+   "key": "😏 Bite lip and look over shoulder",
+   "tag": "SFW",
+   "setup": "Someone glances back with a loaded look."
+  },
+  {
+   "key": "🍑 Walk away, glance back",
+   "tag": "SFW",
+   "setup": "Someone walks off and looks back over a shoulder."
+  },
+  {
+   "key": "💋 Blow a kiss to camera",
+   "tag": "SFW",
+   "setup": "Someone blows a kiss."
+  },
+  {
+   "key": "🤲 Reach out and pull him in",
+   "tag": "SFW",
+   "setup": "Someone reaches for another person and draws them in close."
+  },
+  {
+   "key": "🔥 Missionary",
+   "tag": "NSFW",
+   "setup": "Explicit sex — missionary, penetration visible. She is on her back facing up at him (facing the camera)."
+  },
+  {
+   "key": "🔥 Legs over his shoulders",
+   "tag": "NSFW",
+   "setup": "Explicit sex — missionary variant with her legs up over his shoulders. She is on her back facing up at him."
+  },
+  {
+   "key": "🔥 Butterfly — hips lifted",
+   "tag": "NSFW",
+   "setup": "Explicit sex — she is on her back with her hips lifted up onto him, facing up toward him."
+  },
+  {
+   "key": "🔥 Mating press",
+   "tag": "NSFW",
+   "setup": "Explicit sex — mating press, deep penetration from above. She is on her back facing up at him (facing the camera)."
+  },
+  {
+   "key": "🔥 Edge of the bed, he stands",
+   "tag": "NSFW",
+   "setup": "Explicit sex — she lies at the edge of the bed and he stands on the floor. She is on her back facing up at him."
+  },
+  {
+   "key": "🔥 Doggy",
+   "tag": "NSFW",
+   "setup": "Explicit sex — doggy from behind, penetration visible. She is on all fours turned away from him (facing the camera)."
+  },
+  {
+   "key": "🔥 Prone bone",
+   "tag": "NSFW",
+   "setup": "Explicit sex — she lies flat on her stomach and he lies on top of her from behind, penetration visible."
+  },
+  {
+   "key": "🔥 Bent over a surface",
+   "tag": "NSFW",
+   "setup": "Explicit sex — bent over a surface, taken from behind. Torso down, ass up, turned away from him (toward the camera where it applies)."
+  },
+  {
+   "key": "🔥 Standing from behind",
+   "tag": "NSFW",
+   "setup": "Explicit sex — both standing, penetration from behind. She is turned away from him and facing the camera."
+  },
+  {
+   "key": "🔥 Against the wall, standing",
+   "tag": "NSFW",
+   "setup": "Explicit sex — standing against a wall, penetration. She faces him with her back on the wall."
+  },
+  {
+   "key": "🔥 Carried, legs locked around him",
+   "tag": "NSFW",
+   "setup": "Explicit sex — he holds her clear of the floor and she faces him with her legs around his waist."
+  },
+  {
+   "key": "🔥 Cowgirl",
+   "tag": "NSFW",
+   "setup": "Explicit sex — cowgirl, riding on top turned toward him (chest to chest)."
+  },
+  {
+   "key": "🔥 Reverse cowgirl",
+   "tag": "NSFW",
+   "setup": "Explicit sex — reverse cowgirl, riding turned away from him (back to his chest, facing the camera)."
+  },
+  {
+   "key": "🔥 Amazon — she squats over him",
+   "tag": "NSFW",
+   "setup": "Explicit sex — she squats over him on her feet, turned toward him."
+  },
+  {
+   "key": "🔥 Spooning",
+   "tag": "NSFW",
+   "setup": "Explicit sex — side by side, penetration from behind. She faces the same way he does (both toward the camera or both away)."
+  },
+  {
+   "key": "🔥 Oral (giving)",
+   "tag": "NSFW",
+   "setup": "Explicit — blowjob, sucking cock. She kneels in front of him, turned toward him."
+  },
+  {
+   "key": "🔥 Oral (receiving)",
+   "tag": "NSFW",
+   "setup": "Explicit — eating pussy, oral on her. She is on her back facing up (toward the camera) with her legs open."
+  },
+  {
+   "key": "🔥 Face sitting",
+   "tag": "NSFW",
+   "setup": "Explicit — sitting on his face, oral. She is turned toward his feet or the camera (state which)."
+  },
+  {
+   "key": "🔥 69",
+   "tag": "NSFW",
+   "setup": "Explicit — 69, mutual oral."
+  },
+  {
+   "key": "🔥 Titfuck",
+   "tag": "NSFW",
+   "setup": "Explicit — his cock between her breasts. She is in front of him and turned toward him."
+  },
+  {
+   "key": "🔥 Handjob, kneeling at his side",
+   "tag": "NSFW",
+   "setup": "Explicit — she strokes his cock with her hand, kneeling beside him."
+  },
+  {
+   "key": "🌸 Scissoring (F/F)",
+   "tag": "NSFW",
+   "setup": "Explicit F/F — scissoring, pussies grinding."
+  },
+  {
+   "key": "🌸 Thigh grinding (F/F)",
+   "tag": "NSFW",
+   "setup": "Explicit F/F — one woman grinds her pussy down onto the other's thigh."
+  },
+  {
+   "key": "🌸 Strap-on from behind (F/F)",
+   "tag": "NSFW",
+   "setup": "Explicit F/F — one woman takes the other from behind with a strap-on. The receiving woman is turned away and facing the camera."
+  },
+  {
+   "key": "🍑 Doggy (anal)",
+   "tag": "NSFW",
+   "setup": "Explicit anal — doggy, penetration from behind. She is on all fours turned away from him (facing the camera)."
+  },
+  {
+   "key": "🍑 Anal, mating press",
+   "tag": "NSFW",
+   "setup": "Explicit anal — mating press, deep penetration from above. She is on her back facing up at him."
+  }
+ ],
+ "cameras": [
+  "None",
+  "Push in",
+  "Pull back",
+  "Pan left",
+  "Pan right",
+  "Tilt up",
+  "Tilt down",
+  "Truck left",
+  "Truck right",
+  "Static hold",
+  "Handheld sway"
+ ],
+ "music": [
+  "None — LLM decides",
+  "Classic Rock — driving guitars & pounding drums",
+  "Hip-Hop / Rap — heavy 808s & crisp hi-hats",
+  "Classical / Orchestral — sweeping strings & dramatic builds",
+  "Electronic / EDM — pulsing synths & four-on-the-floor",
+  "Mainstream Pop — catchy hooks & bright production",
+  "R&B / Soul — smooth grooves & sensual bass",
+  "Heavy Metal — aggressive riffs & double-kick drums",
+  "Country — twangy guitars & storytelling swing",
+  "Funk / Disco — groovy basslines & funky drums",
+  "Reggae / Dancehall — offbeat skank & deep bass"
+ ]
+}

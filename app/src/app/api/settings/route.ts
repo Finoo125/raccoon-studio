@@ -3,6 +3,7 @@ import { getSettings, setSettings, type AppSettings } from '@/lib/settings/setti
 import { getLogsDir } from '@/lib/system/paths'
 import { getComfyUIDir } from '@/lib/comfyui/server-state'
 import { syncExtraModelPaths } from '@/lib/comfyui/extra-model-paths'
+import { ffmpegPathProblem } from '@/lib/movies/ffmpeg-bin'
 
 export async function GET() {
   return NextResponse.json({
@@ -49,6 +50,8 @@ export async function PUT(req: NextRequest) {
   }
   if ('ffmpegPath' in body) {
     if (typeof body.ffmpegPath !== 'string') return NextResponse.json({ error: 'ffmpegPath must be a string' }, { status: 400 })
+    const problem = ffmpegPathProblem(body.ffmpegPath.trim())
+    if (problem) return NextResponse.json({ error: problem }, { status: 400 })
     patch.ffmpegPath = body.ffmpegPath.trim()
   }
   if ('sharedModelsDir' in body) {

@@ -4,3 +4,6 @@
 
 # Movie builder projects (user data)
 projects/
+
+# Gallery thumbnails (made on demand by /api/gallery/thumb)
+.gallery-thumbs/

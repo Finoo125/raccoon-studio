@@ -2,6 +2,8 @@
 
     python h3_ab.py --models qwen3.5:27b,hf.co/HauhauCS/Gemma4-...:Q4_K_M
     python h3_ab.py --arm ref2v-vision --image C:\\path\\to\\portrait.jpg
+    python h3_ab.py --arm doctrine --baseline old_h3_brain.py --models qwen3.5:27b
+    python h3_ab.py --arm sampling --models qwen3.5:9b --briefs live_t2v,live_i2v,live_ref2v --image start.jpg
     python h3_ab.py --dry                      # build every brief, call no LLM
     python h3_ab.py --models a,b --briefs market,rooftop --seeds 101
 
@@ -111,12 +113,18 @@ TEMPERATURE = 0.6
 # doctrine edit; it is not enough to separate two arms a few points apart.
 SEEDS = (101, 202, 303)
 
+# `--arm sampling`'s thinking arm: tokens added to `num_predict`, which counts
+# the thinking too. Generous on purpose -- an answer cut short by its own
+# thinking would measure the budget, not thinking.
+THINK_BUDGET = 8192
+
 
 class Brief:
     """One scene, and everything `run_generate` would have read off the body."""
 
     def __init__(self, name, mode, duration_s, intent, dialogue_tier="standard",
-                 needs_image=False, ref_counts=None):
+                 needs_image=False, ref_counts=None, single_shot=False,
+                 needs_keyframes=False, order=()):
         self.name = name
         self.mode = mode
         self.duration_s = duration_s
@@ -124,6 +132,12 @@ class Brief:
         self.dialogue_tier = dialogue_tier
         self.needs_image = needs_image
         self.ref_counts = ref_counts
+        # What the form forces for a keyframed render (one shot), and the
+        # keyframe pictures it is shown instead of --image.
+        self.single_shot = single_shot
+        self.needs_keyframes = needs_keyframes
+        # Words that must appear in this order in the description (g_order).
+        self.order = tuple(order)
 
     @property
     def talkative(self):
@@ -179,6 +193,66 @@ BRIEFS = (
           "she undresses for her partner and they move to the bed, nude, "
           "the scene stays on them throughout",
           dialogue_tier="talkative"),
+
+    # The roled reference path, which is how the studio is actually used: with a
+    # role the writer cites the picture instead of inventing a look. Appended
+    # last so the earlier briefs keep their cache order.
+    Brief("portrait_roled", "ref2v", 10.0,
+          "the same woman walks through a night market, neon washing over her "
+          "face, stopping to look at a stall",
+          needs_image=True, ref_counts={"images": 1, "videos": 0, "audios": 0,
+                                        "image_roles": ["character"]}),
+
+    # Keyframes (2026-10-02): a reference render that must hit three pictures.
+    # Shown the keyframes (never the reference), told their times, one shot.
+    Brief("keyframes", "ref2v", 15.0,
+          "she stands with a heavy dumbbell in each hand, puts the left one down "
+          "and curls the right one to her shoulder, then sets it down and hits a "
+          "front double biceps pose",
+          single_shot=True, needs_keyframes=True, order=("dumbbell", "curl", "double biceps"),
+          ref_counts={"images": 1, "videos": 0, "audios": 0, "image_roles": ["character"],
+                      "keyframes": [{"slot": "start", "at_s": 0.0}, {"slot": "middle", "at_s": 7.54},
+                                    {"slot": "end", "at_s": 15.04}]}),
+    # A reference CONTINUATION that must end on a keyframe: shown the previous
+    # clip's last frame first (--continue-frame), then the end keyframe.
+    Brief("kf_continue", "ref2v", 10.0,
+          "she sets the left dumbbell down on the rack, then curls the right one "
+          "slowly up to her shoulder and holds it there",
+          single_shot=True, needs_keyframes=True, order=("dumbbell", "curl"),
+          ref_counts={"images": 1, "videos": 0, "audios": 0, "image_roles": ["character"],
+                      "continuing": True, "keyframes": [{"slot": "end", "at_s": 10.08}]}),
+    # A face close-up beside the character sheet (2026-10-11): two pictures of
+    # ONE person. The failure to catch is the writer casting two people.
+    # `sheet_outfit` is its control: the same brief without the face picture.
+    Brief("sheet_outfit", "ref2v", 10.0,
+          "she stands waist-deep in a lagoon holding up a small red vial, smiles "
+          "into the camera and says she found it, then uncaps it",
+          ref_counts={"images": 2, "videos": 0, "audios": 0,
+                      "image_roles": ["character", "outfit"]}),
+    Brief("sheet_face", "ref2v", 10.0,
+          "she stands waist-deep in a lagoon holding up a small red vial, smiles "
+          "into the camera and says she found it, then uncaps it",
+          ref_counts={"images": 3, "videos": 0, "audios": 0,
+                      "image_roles": ["character", "face", "outfit"]}),
+    # ...and a three-picture control, so "a third picture" and "a face picture"
+    # can be told apart.
+    Brief("sheet_outfit_place", "ref2v", 10.0,
+          "she stands waist-deep in a lagoon holding up a small red vial, smiles "
+          "into the camera and says she found it, then uncaps it",
+          ref_counts={"images": 3, "videos": 0, "audios": 0,
+                      "image_roles": ["character", "outfit", "location"]}),
+    # The three writes of the video dialog's live re-check (2026-10-22), as
+    # the app sends them: 8 s, standard dialogue, no environment/scenario/
+    # camera/music block. live_i2v wants the app's vision picture (--image: the
+    # start frame as a 768-px JPEG). live_ref2v is sent no picture, as in the
+    # node: ref2v reads its pictures only with `ref2v_vision`.
+    Brief("live_t2v", "t2v", 8.0, "she walks toward the camera along a quiet street and smiles"),
+    Brief("live_i2v", "i2v", 8.0, "she steps away from the door, walks toward the camera and smiles",
+          needs_image=True),
+    Brief("live_ref2v", "ref2v", 8.0,
+          "she walks along a sunny beach promenade, stops and smiles at the camera",
+          ref_counts={"images": 2, "videos": 0, "audios": 0,
+                      "image_roles": ["character", "outfit"]}),
 )
 BY_NAME = {b.name: b for b in BRIEFS}
 
@@ -192,21 +266,23 @@ NSFW = tuple(b.name for b in BRIEFS if b.explicit)
 # the production request, rebuilt
 # --------------------------------------------------------------------------
 
-def build_messages(brief, image_b64="", has_vision=False):
+def build_messages(brief, image_b64="", has_vision=False, doc=h3_brain):
     """The exact system+user pair `run_generate` would send for this brief.
 
     Note which module each half comes from: `build_system` and `finalize` are the
     doctrine's (h3_brain), while `build_messages`, `build_user`, `timeline` and
     `max_tokens` are always the LTX brain's -- h3_brain does not define them.
     Production does the same thing; taking both halves from one module here
-    would test a pipeline that does not exist.
+    would test a pipeline that does not exist. `doc` is the doctrine module, so
+    `--arm doctrine` can hand an older snapshot in its place.
     """
-    system = h3_brain.build_system(
+    system = doc.build_system(
         mode=brief.mode,
         duration_s=brief.duration_s,
         dialogue_tier=brief.dialogue_tier,
         intent=brief.intent,
         ref_counts=brief.ref_counts,
+        single_shot=brief.single_shot,
         # Production derives this from the intent rather than taking it as a
         # setting, and it decides whether the doctrine carries "Explicit content
         # is in scope: name anatomy and acts plainly". Omitting it here (as the
@@ -221,7 +297,7 @@ def build_messages(brief, image_b64="", has_vision=False):
     )
 
 
-def call_ollama(model, messages, max_tokens, seed, timeout=600):
+def call_ollama(model, messages, max_tokens, seed, timeout=600, options=None, think=False):
     """One non-streaming /api/chat, shaped exactly as `run_generate` shapes it.
 
     The native endpoint wants content as a plain string with images in a
@@ -231,6 +307,11 @@ def call_ollama(model, messages, max_tokens, seed, timeout=600):
     is dropped on a 400, because a model without thinking support rejects the
     field outright while a thinking model left switched on can spend the entire
     token budget reasoning and return empty content.
+
+    `options` and `think` are the `--arm sampling` variable: extra Ollama
+    options laid over production's, and thinking on (the answer must still
+    arrive in `content`; `meta` reports how much went to `thinking`).
+    Returns (content, error, meta).
     """
     flat = []
     for m in messages:
@@ -246,25 +327,28 @@ def call_ollama(model, messages, max_tokens, seed, timeout=600):
 
     payload = {
         "model": model, "messages": flat, "stream": False,
-        "options": {"temperature": TEMPERATURE, "seed": seed, "num_predict": max_tokens},
+        "options": {"temperature": TEMPERATURE, "seed": seed, "num_predict": max_tokens, **(options or {})},
     }
     last = ""
-    for extra in ({"think": False}, {}):
+    for extra in ({"think": think}, {}):
         body = json.dumps({**payload, **extra}).encode("utf-8")
         req = urllib.request.Request(OLLAMA + "/api/chat", data=body,
                                      headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8", errors="ignore"))
-            return (data.get("message") or {}).get("content", ""), ""
+            msg = data.get("message") or {}
+            return msg.get("content", ""), "", {"thinking_chars": len(msg.get("thinking") or ""),
+                                                "done_reason": data.get("done_reason"),
+                                                "eval_count": data.get("eval_count")}
         except urllib.error.HTTPError as e:
             last = "HTTP %s: %s" % (e.code, e.read().decode("utf-8", errors="ignore")[:300])
             if e.code == 400:
                 continue                  # no thinking support -- retry plain
-            return "", last
+            return "", last, {}
         except Exception as e:            # noqa: BLE001 -- a harness reports, never raises
-            return "", "%s: %s" % (type(e).__name__, e)
-    return "", last
+            return "", "%s: %s" % (type(e).__name__, e), {}
+    return "", last, {}
 
 
 def unload(model):
@@ -361,7 +445,8 @@ def g_shots(text, ctx):
         return False, "no [Shot N] markers"
     if nums != list(range(1, len(nums) + 1)):
         return False, "numbering %s" % nums
-    lo, hi = h3_brain.shot_budget(ctx["brief"].duration_s, h3_brain._mode_tag(ctx["brief"].mode))
+    lo, hi = h3_brain.shot_budget(ctx["brief"].duration_s, h3_brain._mode_tag(ctx["brief"].mode),
+                                  single_shot=ctx["brief"].single_shot)
     if not lo <= len(nums) <= hi:
         return False, "%d shots, brief asked for %d-%d" % (len(nums), lo, hi)
     return True, ""
@@ -531,6 +616,66 @@ def g_plain(text, ctx):
     return True, ""
 
 
+# --- added 2026-10-02 with the rules taken from MiniMax's h3-prompt-writing
+# skill and LORAGEEK's Scene Builder. Each grades the output both arms produce,
+# so a baseline that was never told the rule shows how often it breaks it.
+
+# The skill: "prefer concrete visual and audio details over abstract words".
+# "cinematic" is exempt -- it is one of the guide's own style labels.
+_PRAISE = re.compile(r"\b(beautiful(?:ly)?|stunning(?:ly)?|gorgeous|breathtaking|epic"
+                     r"|amazing|mesmeri[sz]ing|captivating|majestic)\b", re.I)
+
+
+def g_concrete(text, ctx):
+    """No praise words in the description, dialogue excepted."""
+    desc = _outside_dialogue(_field_body(text, h3_brain._FIELD_ORDER[0], h3_brain._FIELD_ORDER[1]) or text)
+    hits = sorted({h.lower() for h in _PRAISE.findall(desc)})
+    return (False, "praise: %s" % ", ".join(hits)) if hits else (True, "")
+
+
+def g_cite(text, ctx):
+    """i2v: the description binds its subject to <Picture 1> (the guide's Case 2)."""
+    desc = _field_body(text, h3_brain._FIELD_ORDER[0], h3_brain._FIELD_ORDER[1])
+    return ("<Picture 1>" in desc, "description never cites <Picture 1>")
+
+
+# Both the guide's own worked example ("She closes her lips") and the Scene
+# Builder close the speaker's mouth after a line, against H3 mouthing words
+# between them. Looked for within the next ~200 chars of every closed line.
+_LIPS = re.compile(r"\b(lips|mouth)\b[^.]{0,40}\b(clos\w*|shut\w*|press\w*|seal\w*)"
+                   r"|\b(clos\w*|shut\w*|press\w*|seal\w*)\b[^.]{0,25}\b(lips|mouth)\b", re.I)
+
+
+def g_lips(text, ctx):
+    """Every finished spoken line is followed by the speaker's lips closing."""
+    ends = [m.end() for m in re.finditer(r"</d>", text)
+            if not text[m.end():m.end() + 14].lstrip().startswith(("<cutoff>", "<scenetrans>"))]
+    if not ends:
+        return True, ""
+    bare = [e for e in ends if not _LIPS.search(text[e:e + 200])]
+    return (False, "%d/%d lines without a lip close" % (len(bare), len(ends))) if bare else (True, "")
+
+
+def g_order(text, ctx):
+    """The beats appear in the brief's order (first mention of each)."""
+    desc = (_field_body(text, h3_brain._FIELD_ORDER[0], h3_brain._FIELD_ORDER[1]) or "").lower()
+    at = [desc.find(w) for w in ctx["brief"].order]
+    if -1 in at:
+        return False, "missing: %s" % ", ".join(w for w, i in zip(ctx["brief"].order, at) if i == -1)
+    return (at == sorted(at), "order %s" % at)
+
+
+def g_tags(text, ctx):
+    """No <Picture N> beyond the references actually attached (a keyframe is not one)."""
+    n = int((ctx["brief"].ref_counts or {}).get("images") or 0)
+    bad = sorted({int(m) for m in re.findall(r"<Picture (\d+)>", text) if int(m) > n})
+    return (not bad, "invented %s" % bad)
+
+
+def _is_i2v(ctx):
+    return ctx["brief"].mode == "i2v"
+
+
 def _always(ctx):
     return True
 
@@ -552,8 +697,14 @@ GRADERS = (
     ("ids", g_speaker_ids, _always),
     ("head", g_head, _always),
     ("clean", g_clean, _always),
+    ("concrete", g_concrete, _always),
+    ("lips", g_lips, _always),
+    ("cite", g_cite, _is_i2v),
     ("no-refuse", g_no_refusal, _is_nsfw),
     ("plain", g_plain, _is_nsfw),
+    ("order", g_order, lambda ctx: bool(ctx["brief"].order)),
+    ("tags", g_tags, lambda ctx: ctx["brief"].mode == "ref2v"),
+    ("kf-cite", g_cite, lambda ctx: ctx["brief"].needs_keyframes),
 )
 
 
@@ -581,6 +732,30 @@ def arms_for(args, models):
             sys.exit("--arm ref2v-vision needs the ref2v brief: drop --briefs, or include 'portrait'")
         return [("vision-off", models[0], {"has_vision": False}),
                 ("vision-on", models[0], {"has_vision": True})], briefs
+    if args.arm == "doctrine":
+        # The variable is the doctrine module itself: an older snapshot (a file
+        # copied out of git) against the working tree. Graders stay on the
+        # working tree's constants, so both arms are scored by one contract.
+        if len(models) != 1 or not args.baseline:
+            sys.exit("--arm doctrine tests one model against --baseline PATH (an h3_brain.py snapshot)")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("h3_brain_baseline", args.baseline)
+        base = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(base)
+        return [("baseline", models[0], {"doc": base}),
+                ("revised", models[0], {"doc": h3_brain})], pick_briefs(args)
+    if args.arm == "sampling":
+        # The variable is the Ollama sampling alone (Task 11d). A is today's
+        # request; B lays Qwen's non-thinking card values over it; C thinks,
+        # with THINK_BUDGET tokens on top so thinking cannot starve the answer.
+        # The model's own Modelfile params apply under all three (qwen3.5:9b
+        # ships presence_penalty 1.5, top_k 20, top_p 0.95; a request option wins).
+        if len(models) != 1:
+            sys.exit("--arm sampling tests one model: pass exactly one --models")
+        card = {"presence_penalty": 1.5, "top_p": 0.8, "top_k": 20, "temperature": 0.7}
+        return [("A-today", models[0], {}),
+                ("B-card", models[0], {"options": card}),
+                ("C-think", models[0], {"think": True, "extra_tokens": THINK_BUDGET})], pick_briefs(args)
     return [(m, m, {}) for m in models], pick_briefs(args)
 
 
@@ -666,11 +841,15 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--models", default="",
                    help="comma-separated Ollama tags; one arm each")
-    p.add_argument("--arm", default="models", choices=("models", "ref2v-vision"),
+    p.add_argument("--arm", default="models", choices=("models", "ref2v-vision", "doctrine", "sampling"),
                    help="what to vary (default: the models themselves)")
+    p.add_argument("--baseline", default="", help="--arm doctrine: path to the older h3_brain.py")
+    p.add_argument("--save", default="", help="write every shipped prompt to this JSON file")
     p.add_argument("--briefs", default="", help="subset by name: %s" % ", ".join(BY_NAME))
     p.add_argument("--seeds", default="", help="override the fixed seeds")
     p.add_argument("--image", default="", help="reference picture for i2v/ref2v briefs")
+    p.add_argument("--keyframes", default="", help="comma-separated keyframe pictures: start,middle,end")
+    p.add_argument("--continue-frame", default="", help="the previous clip's last frame, for continuing briefs")
     p.add_argument("--dry", action="store_true", help="build every request, call no LLM")
     p.add_argument("--timeout", type=int, default=600)
     args = p.parse_args(argv)
@@ -698,7 +877,11 @@ def main(argv=None):
     # Count what will ACTUALLY run, not the full grid: an image-fed brief with
     # no image is skipped, and a header promising 24 calls before quietly making
     # 12 is how a harness ends up trusted for work it never did.
-    live = [b for b in briefs if img_b64 or not b.needs_image]
+    kf_b64 = [load_image(x.strip()) for x in args.keyframes.split(",") if x.strip()]
+    kf_by_slot = dict(zip(("start", "middle", "end"), kf_b64))
+    cont_b64 = load_image(args.continue_frame) if args.continue_frame else ""
+    live = [b for b in briefs if (img_b64 or not b.needs_image) and (kf_b64 or not b.needs_keyframes)
+            and (cont_b64 or not (b.ref_counts or {}).get("continuing"))]
     calls = len(live) * len(seeds) * len(arms)
     print("H3 writer A/B -- arm=%s, %d brief(s) x %d seed(s) x %d arm(s) = %d calls"
           % (args.arm, len(live), len(seeds), len(arms), calls))
@@ -720,6 +903,10 @@ def main(argv=None):
     shipped = {x: {n: [0, 0] for n, _, _a in GRADERS} for x in labels}
     raw = {x: {n: [0, 0] for n, _, _a in GRADERS} for x in labels}
     failures, repairs, elapsed = [], {x: 0 for x in labels}, {x: 0.0 for x in labels}
+    # Description length per arm, independent of any band: a doctrine change
+    # that moves the band would otherwise grade its own target.
+    words = {x: [] for x in labels}
+    saved = []
 
     # Arm OUTERMOST, deliberately. Ollama holds one model per slot, so putting
     # arms innermost evicts and reloads a 20 GB checkpoint on every single call
@@ -732,18 +919,35 @@ def main(argv=None):
                 has_vision = over.get(
                     "has_vision",
                     bool(img_b64) and brief.mode in ("i2v", "fl2v", "l2v", "director"))
-                system, messages = build_messages(
-                    brief, image_b64=img_b64 if has_vision else "", has_vision=has_vision)
+                doc = over.get("doc", h3_brain)
+                if brief.needs_keyframes:
+                    # Exactly what the app sends: the tail first when continuing,
+                    # then each keyframe by its slot, in time order.
+                    rc = brief.ref_counts or {}
+                    imgs = ([cont_b64] if rc.get("continuing") else []) + [
+                        kf_by_slot[k["slot"]] for k in rc.get("keyframes") or []]
+                    has_vision = True
+                else:
+                    imgs = img_b64 if has_vision else ""
+                system, messages = build_messages(brief, image_b64=imgs, has_vision=has_vision, doc=doc)
                 mt = brain.max_tokens(brief.duration_s, brief.mode, False, brief.talkative)
+                mt += over.get("extra_tokens", 0)
                 if args.dry:
                     print("  [dry] %-9s %-11s seed=%-4d system=%5d ch  vision=%-5s max_tokens=%d"
                           % (brief.name, label, seed, len(system), has_vision, mt))
                     continue
 
                 t0 = time.time()
-                out, err = call_ollama(model, messages, mt, seed, timeout=args.timeout)
-                elapsed[label] += time.time() - t0
+                out, err, meta = call_ollama(model, messages, mt, seed, timeout=args.timeout,
+                                             options=over.get("options"), think=over.get("think", False))
+                secs = time.time() - t0
+                elapsed[label] += secs
+                rec = {"arm": label, "brief": brief.name, "mode": brief.mode,
+                       "duration_s": brief.duration_s, "ref_counts": brief.ref_counts,
+                       "single_shot": brief.single_shot, "seed": seed, "secs": round(secs, 2),
+                       "num_predict": mt, **meta}
                 if err or not out.strip():
+                    saved.append({**rec, "raw": out, "shipped": "", "error": err or "empty response"})
                     failures.append((label, seed, brief.name, "call", err or "empty response"))
                     # A dead call fails every check that APPLIED to this brief.
                     for n, _f, applies in GRADERS:
@@ -755,9 +959,12 @@ def main(argv=None):
                           % (brief.name, label, seed, err or "empty"), flush=True)
                     continue
 
-                final = h3_brain.finalize(out, mode=brief.mode, intent=brief.intent,
-                                          ref_counts=brief.ref_counts,
-                                          duration_s=brief.duration_s)
+                final = doc.finalize(out, mode=brief.mode, intent=brief.intent,
+                                     ref_counts=brief.ref_counts,
+                                     duration_s=brief.duration_s)
+                words[label].append(len(_field_body(final, h3_brain._FIELD_ORDER[0],
+                                                    h3_brain._FIELD_ORDER[1]).split()))
+                saved.append({**rec, "raw": out, "shipped": final})
                 ctx = {"brief": brief}
                 gr_raw, gr_fin = grade(out, ctx), grade(final, ctx)
                 for n in gr_fin:
@@ -790,6 +997,16 @@ def main(argv=None):
     print("\n=== repairs finalize() had to make (lower is more robust) ===")
     for x in labels:
         print("  %-24s %3d   %6.1fs total" % (x, repairs[x], elapsed[x]))
+
+    print("\n=== description words, shipped (mean / min / max) ===")
+    for x in labels:
+        w = words[x]
+        if w:
+            print("  %-24s %5.0f / %d / %d" % (x, sum(w) / len(w), min(w), max(w)))
+    if args.save:
+        with open(args.save, "w", encoding="utf-8") as f:
+            json.dump(saved, f, indent=1, ensure_ascii=False)
+        print("\nsaved %d prompts to %s" % (len(saved), args.save))
 
     if failures:
         print("\n=== failures (%d) ===" % len(failures))

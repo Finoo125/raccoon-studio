@@ -19,6 +19,15 @@ import type { LoraFamily } from '@/lib/models/lora-family'
 export const FREE_LORA_SLOTS = 2
 
 /**
+ * Where “yes, I know” is remembered for the past-`FREE_LORA_SLOTS` warning.
+ *
+ * Shared by the image and video panels deliberately: it is one lesson about one
+ * piece of physics (every LoRA patches the same weights), so being asked twice
+ * for it reads as a bug rather than as care.
+ */
+export const LORA_STACK_ACK_KEY = 'raccoon-studio:lora-stack-ack'
+
+/**
  * Ceiling on rows the form offers. The builders take any number — see the
  * arbitrary-N test in lora-chain.test.ts — so this is a quality/VRAM guard, not
  * a structural one: past a handful the patches fight and each one still costs a

@@ -6,10 +6,41 @@ const execFileAsync = promisify(execFile)
 
 export interface ProbeResult {
   durationSec: number
+  /** The video stream's own duration — the container's can include audio overhang. */
+  videoDurationSec: number
+  /** CODED size: a portrait phone clip reports 1920×1080 here, see `rotation`. */
   width?: number
   height?: number
+  /** Display rotation in degrees (Display Matrix or the legacy `rotate` tag), 0 when none. */
+  rotation: number
   hasAudio: boolean
   hasVideo: boolean
+}
+
+type ProbeJson = {
+  format?: { duration?: string }
+  streams?: Array<{
+    codec_type?: string; width?: number; height?: number; duration?: string
+    side_data_list?: Array<{ rotation?: number }>; tags?: { rotate?: string }
+  }>
+}
+
+/** The fields we read off `ffprobe -show_format -show_streams` JSON. */
+export function parseProbe(data: ProbeJson): ProbeResult {
+  const streams = data.streams ?? []
+  const video = streams.find((s) => s.codec_type === 'video')
+  const audio = streams.find((s) => s.codec_type === 'audio')
+  const durationSec = parseFloat(data.format?.duration ?? video?.duration ?? audio?.duration ?? '0') || 0
+  const matrix = video?.side_data_list?.find((d) => typeof d.rotation === 'number')?.rotation
+  return {
+    durationSec,
+    videoDurationSec: parseFloat(video?.duration ?? '') || durationSec,
+    width: video?.width,
+    height: video?.height,
+    rotation: matrix ?? (parseFloat(video?.tags?.rotate ?? '') || 0),
+    hasAudio: Boolean(audio),
+    hasVideo: Boolean(video),
+  }
 }
 
 export async function probeMedia(filePath: string): Promise<ProbeResult> {
@@ -22,18 +53,5 @@ export async function probeMedia(filePath: string): Promise<ProbeResult> {
   } catch (e) {
     throw new Error(friendlyFfmpegError(e, bin))
   }
-  const data = JSON.parse(stdout) as {
-    format?: { duration?: string }
-    streams?: Array<{ codec_type?: string; width?: number; height?: number; duration?: string }>
-  }
-  const streams = data.streams ?? []
-  const video = streams.find((s) => s.codec_type === 'video')
-  const audio = streams.find((s) => s.codec_type === 'audio')
-  return {
-    durationSec: parseFloat(data.format?.duration ?? video?.duration ?? audio?.duration ?? '0') || 0,
-    width: video?.width,
-    height: video?.height,
-    hasAudio: Boolean(audio),
-    hasVideo: Boolean(video),
-  }
+  return parseProbe(JSON.parse(stdout) as ProbeJson)
 }

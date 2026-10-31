@@ -106,7 +106,7 @@ export default function PickImageDialog({
               {folders.map((f) => (
                 <button key={f.key} type="button" onClick={() => setFolder(f.key)} className={rowClass(folder === f.key)}>
                   {/* eslint-disable-next-line @next/next/no-img-element -- gallery thumbnail route */}
-                  <img src={f.coverUrl} alt="" className="h-8 w-8 shrink-0 rounded-md bg-muted object-cover ring-1 ring-border" />
+                  <img src={f.cover.thumbnailUrl} alt="" className="h-8 w-8 shrink-0 rounded-md bg-muted object-cover ring-1 ring-border" />
                   <span className="min-w-0 flex-1 truncate text-xs font-medium">{f.label}</span>
                   <span className="shrink-0 text-[11px] tabular-nums">{f.count}</span>
                 </button>

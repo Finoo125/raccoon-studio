@@ -14,6 +14,8 @@ export interface AppSettings {
    * should also see, so they don't have to be downloaded twice. Empty = off.
    */
   sharedModelsDir: string
+  /** AI servers the user added in the Prompt Helper's writer setup (llama.cpp and similar). */
+  aiServers: { id: string; address: string }[]
 }
 
 const num = (v: string | undefined, d: number): number => {
@@ -31,6 +33,7 @@ export function getSettings(): AppSettings {
     comfyuiBaseUrl: file.comfyuiBaseUrl ?? process.env.COMFYUI_BASE_URL ?? 'http://127.0.0.1:8188',
     ffmpegPath: file.ffmpegPath ?? process.env.FFMPEG_PATH ?? '',
     sharedModelsDir: file.sharedModelsDir ?? '',
+    aiServers: Array.isArray(file.aiServers) ? file.aiServers : [],
   }
 }
 

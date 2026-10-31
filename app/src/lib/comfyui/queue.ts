@@ -129,6 +129,7 @@ export const useQueueStore = create<QueueState>((set) => ({
           outputVideos: r.outputVideos,
           error: r.error,
           createdAt: r.createdAt,
+          startedAt: r.startedAt,
           endedAt: r.endedAt,
         }))
       // History is newest-first; keep live (session) jobs on top, history below.

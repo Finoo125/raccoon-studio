@@ -2,7 +2,7 @@
 
 import { ChevronRight, RotateCcw } from 'lucide-react'
 import { usePhotoEditStore } from '@/lib/photo-edit/store'
-import { sectionStatus, SECTION_HINT, SECTION_LABEL, SECTION_MODE, type SectionId } from '@/lib/photo-edit/sections'
+import { sectionStatus, SECTION_HINT, SECTION_KEY, SECTION_LABEL, SECTION_MODE, type SectionId } from '@/lib/photo-edit/sections'
 import { cn } from '@/lib/utils'
 
 /**
@@ -39,6 +39,7 @@ export default function Section({ id, children }: { id: SectionId; children: Rea
           type="button"
           onClick={handleToggle}
           aria-expanded={open}
+          title={SECTION_KEY[id] && `${SECTION_LABEL[id]} (${SECTION_KEY[id]})`}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
           <ChevronRight

@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Compass, Copy, FolderOpen, Loader2 } from 'lucide-react'
+import { Compass, Copy, FolderOpen, Loader2, Rocket } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { TOUR_EVENT } from '@/lib/tour'
@@ -13,6 +14,7 @@ interface PathsBlock { modelsDir: string | null; outputDir: string | null; logsD
 
 export default function SettingsForm() {
   const kiosk = useKiosk()
+  const router = useRouter()
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [paths, setPaths] = useState<PathsBlock | null>(null)
   const [saving, setSaving] = useState(false)
@@ -82,7 +84,7 @@ export default function SettingsForm() {
             className="font-mono text-sm"
           />
           <span className="block text-xs text-muted-foreground">
-            Used by Movie Maker export and media probing. ffprobe is expected next to it.
+            Used to join clips and to read video files. ffprobe is expected next to it.
           </span>
         </Field>
         <Field label="Shared models folder (optional)">
@@ -129,11 +131,16 @@ export default function SettingsForm() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Guided tour</h2>
-        <p className="text-xs text-muted-foreground">The first-run walkthrough of the menus. Skipping it is not final.</p>
-        <Button variant="outline" className="h-10" onClick={() => window.dispatchEvent(new Event(TOUR_EVENT))}>
-          <Compass className="mr-2 h-4 w-4" /> Replay tour
-        </Button>
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Getting started</h2>
+        <p className="text-xs text-muted-foreground">The first-start setup picks models for your computer; the tour walks through the menus. Both can be run again.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" className="h-10" onClick={() => router.push('/setup')}>
+            <Rocket className="mr-2 h-4 w-4" /> Run first-start setup again
+          </Button>
+          <Button variant="outline" className="h-10" onClick={() => window.dispatchEvent(new Event(TOUR_EVENT))}>
+            <Compass className="mr-2 h-4 w-4" /> Replay tour
+          </Button>
+        </div>
       </section>
     </div>
   )

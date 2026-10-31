@@ -58,7 +58,7 @@ describe('buildFolders', () => {
       img({ id: 'old', subfolder: 'images/ZIT/2026-06-12', createdAt: '2026-06-12T08:00:00.000Z', thumbnailUrl: '/old' }),
       img({ id: 'new', subfolder: 'images/ZIT/2026-06-12', createdAt: '2026-06-12T20:00:00.000Z', thumbnailUrl: '/new' }),
     ])
-    expect(folders[0].coverUrl).toBe('/new')
+    expect(folders[0].cover.thumbnailUrl).toBe('/new')
   })
 
   it('formats a parseable key as a friendly label, else keeps it raw', () => {
@@ -75,18 +75,13 @@ describe('buildFolders', () => {
     expect(buildFolders([])).toEqual([])
   })
 
-  it('groups video items by their date segment and flags the cover as video', () => {
+  it('groups video items by their date segment, the clip as cover', () => {
     const folders = buildFolders([
       img({ id: 'v', media: 'video', subfolder: 'video/LTX23/2026-06-13', thumbnailUrl: '/api/gallery/video?x' }),
     ])
     expect(folders).toHaveLength(1)
     expect(folders[0].key).toBe('2026-06-13')
-    expect(folders[0].coverIsVideo).toBe(true)
-    expect(folders[0].coverUrl).toBe('/api/gallery/video?x')
-  })
-
-  it('flags image covers as not video', () => {
-    const folders = buildFolders([img({ id: 'a', subfolder: 'images/ZIT/2026-06-12' })])
-    expect(folders[0].coverIsVideo).toBe(false)
+    expect(folders[0].cover.media).toBe('video')
+    expect(folders[0].cover.thumbnailUrl).toBe('/api/gallery/video?x')
   })
 })

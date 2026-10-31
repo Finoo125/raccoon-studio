@@ -7,6 +7,8 @@ export async function GET(req: NextRequest) {
 
   const media = sp.get('media') === 'video' ? 'video' : 'image'
   const raw = getGalleryRaw(refresh)
+  // The page's poll: nothing rescanned since its last answer, so skip the multi-MB list.
+  if (sp.get('since') === raw.scannedAt) return NextResponse.json({ unchanged: true })
   const images = applyFilters(raw.images, {
     media,
     workflow: sp.get('workflow') ?? undefined,

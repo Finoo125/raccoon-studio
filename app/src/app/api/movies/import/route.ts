@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { guard } from '@/lib/system/request-guard'
 import { importBundle } from '@/lib/movies/bundle'
 import { assertEntitled } from '@/lib/addons/guard'
 
 export async function POST(req: NextRequest) {
+  const refused = guard(req)
+  if (refused) return refused
   const denied = await assertEntitled('movie-maker')
   if (denied) return denied
   const fd = await req.formData().catch(() => null)

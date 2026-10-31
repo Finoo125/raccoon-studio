@@ -16,6 +16,17 @@ export function assetsDir(id: string): string {
   return path.join(projectDir(id), 'assets')
 }
 
+/**
+ * Movie media lives in the projects folder or ComfyUI's output — the only places
+ * the editor serves from (api/movies/media). A path from a project document is
+ * data from a file someone may have shared, so nothing reads a file outside them.
+ */
+export function isMovieMediaPath(p: string): boolean {
+  if (!p) return false
+  const file = path.resolve(p)
+  return [PROJECTS_DIR, process.env.COMFYUI_OUTPUT_DIR].some((root) => !!root && file.startsWith(path.resolve(root) + path.sep))
+}
+
 const projectFile = (id: string) => path.join(projectDir(id), 'project.json')
 
 export function listProjects(): MovieProjectSummary[] {

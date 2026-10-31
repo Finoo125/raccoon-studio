@@ -13,6 +13,14 @@ export interface JobRecord {
   generationParams: unknown
   status: 'done' | 'error' | 'cancelled'
   createdAt: number
+  /**
+   * When the render actually began, as distinct from when it was queued.
+   * Persisted because the video panel's cost estimate learns its seconds-per-
+   * unit rate from finished renders, and without this it could only ever learn
+   * from renders made since the page was last loaded - i.e. never, on the fresh
+   * load that is every load.
+   */
+  startedAt?: number
   endedAt?: number
   outputImages: string[]
   outputVideos?: string[]

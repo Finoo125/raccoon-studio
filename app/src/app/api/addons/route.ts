@@ -9,6 +9,8 @@ export async function GET() {
     id: f.id,
     label: f.label,
     href: f.href,
+    icon: f.icon,
+    blurb: f.blurb ?? null,
     requires: f.requires ?? null,
     release: f.release ?? null,
     unlocked: set.has(f.id),

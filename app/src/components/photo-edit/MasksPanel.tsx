@@ -218,13 +218,6 @@ export default function MasksPanel() {
           </section>
         </>
       )}
-
-      {masks.length === 0 && (
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          A mask limits an adjustment to part of the image — darken a sky, brighten a
-          face, warm just the shadows.
-        </p>
-      )}
     </div>
   )
 }

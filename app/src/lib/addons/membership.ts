@@ -3,9 +3,9 @@
  *
  * `UNLOCK_URL` is the Cloudflare worker (`worker/`, deployed separately and not
  * shipped publicly). Its landing page explains the exchange and hands off to
- * `/auth`, which redirects into Patreon OAuth and mints a personal key on the
- * way back — that is the "log in and get your key" path, and it is what any
- * primary unlock action must point at.
+ * `/auth` (Patreon) or `/deviantart/auth`, which redirect into that platform's
+ * OAuth and mint a personal key on the way back — that is the "log in and get
+ * your key" path, and it is what any primary unlock action must point at.
  *
  * `PATREON_PAGE` is the campaign itself: where someone who is *not* a supporter
  * yet goes to become one. Sending them to the unlock flow first would just show
@@ -22,3 +22,17 @@
 export const UNLOCK_URL = 'https://raccoon-unlock.finoo125.workers.dev'
 
 export const PATREON_PAGE = 'https://www.patreon.com/c/aiworkshop'
+
+/**
+ * The second place to subscribe: the creator's DeviantArt Subscriptions tab,
+ * `https://www.deviantart.com/<username>/subscriptions` — the same page the
+ * worker builds from its `DEVIANTART_CREATOR` (`worker/wrangler.toml`), live
+ * since 2026-10-03. Empty makes the app name Patreon alone.
+ */
+export const DEVIANTART_PAGE: string = 'https://www.deviantart.com/FinosMuscleGirls/subscriptions'
+
+/** Where a key can be bought, in the order the app names them. */
+export const SUBSCRIBE_PAGES = [
+  { label: 'Patreon', href: PATREON_PAGE },
+  ...(DEVIANTART_PAGE ? [{ label: 'DeviantArt', href: DEVIANTART_PAGE }] : []),
+]

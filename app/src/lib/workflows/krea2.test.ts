@@ -90,6 +90,17 @@ describe('krea2 prompt handling', () => {
     expect(wf['k:enhance'].inputs['sampling_mode.temperature']).toBe(0.7)
   })
 
+  it('runs the enhancer with thinking ON, or its reasoning becomes the prompt', () => {
+    // thinking:false makes ComfyUI append an empty <think></think> block, a
+    // convention Qwen3-VL-4B-Instruct was never trained on: with a system prompt
+    // that says "think step by step", 17/50 samples wrote reasoning — or echoed
+    // the whole system prompt — into output 0, which Krea2 then painted as text.
+    // thinking:true measured 0/50. The template's seed is fixed at 0, and 0 was
+    // one of the bad draws for 4 of 5 test prompts.
+    const wf = krea2TurboWorkflow.buildPrompt({ ...base, promptEnhancer: true })
+    expect(wf['k:enhance'].inputs.thinking).toBe(true)
+  })
+
   it('does not moralise at the user in the enhancer system prompt', () => {
     // The stock system prompt tells the LLM to "assume clothing covers genitals
     // and intimate anatomy", which silently rewrites the user's own prompt
@@ -363,7 +374,10 @@ describe('krea2 post-processing', () => {
     })
     expect(wf['hires:upscale'].inputs.image).toEqual(['k:decode', 0])
     expect(wf['swap:source'].inputs.image).toBe('face.png')
-    expect(wf['swap:reactor'].inputs.input_image).toEqual(['hires:decode', 0])
+    // The swap reads the DETAILER's output, not the raw decode: the builders
+    // force the detailer on for any swapping render, overriding the
+    // `detailer: false` this case passes. See swap-detailer-order.test.ts.
+    expect(wf['swap:reactor'].inputs.input_image).toEqual(['det:face', 0])
     expect(wf['grain:film'].inputs.image).toEqual(['swap:rgb', 0])
     expect(wf['k:save'].inputs.images).toEqual(['grain:film', 0])
   })

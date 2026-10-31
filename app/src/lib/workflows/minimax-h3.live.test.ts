@@ -20,8 +20,12 @@
  */
 
 import zlib from 'node:zlib'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { describe, it, expect, beforeAll } from 'vitest'
-import { minimaxH3Workflow, h3FrameCount, H3_REF2VA_CKPT, H3_TURBO } from './minimax-h3'
+import { minimaxH3Workflow, h3FrameCount, h3KeyframeFrames, H3_REF2VA_CKPT, H3_TURBO, H3_EROS } from './minimax-h3'
 import { MINIMAX_H3_ASSETS } from '@/lib/models/minimax-h3-assets'
 import type { VideoGenerationParams } from '@/types/video-workflow'
 
@@ -55,6 +59,11 @@ async function post(prompt: unknown) {
 
 /** Poll `/history` until the job finishes; returns the output filenames. */
 async function waitForOutputs(promptId: string): Promise<string[]> {
+  return (await waitForFiles(promptId)).map((f) => f.filename)
+}
+
+/** Poll `/history` until the job finishes; returns each output's name and subfolder. */
+async function waitForFiles(promptId: string): Promise<{ filename: string; subfolder: string }[]> {
   const deadline = Date.now() + RENDER_TIMEOUT_MS
   for (;;) {
     if (Date.now() > deadline) throw new Error(`render timed out after ${RENDER_TIMEOUT_MS}ms`)
@@ -66,18 +75,23 @@ async function waitForOutputs(promptId: string): Promise<string[]> {
     if (entry.status?.completed) {
       const files = Object.values(entry.outputs ?? {}).flatMap((o) =>
         Object.values(o as Record<string, unknown[]>).flat(),
-      ) as { filename?: string }[]
-      return files.map((f) => f?.filename).filter((n): n is string => !!n)
+      ) as { filename?: string; subfolder?: string }[]
+      return files.flatMap((f) => (f?.filename ? [{ filename: f.filename, subfolder: f.subfolder ?? '' }] : []))
     }
   }
 }
 
 /** A 64×64 mid-grey PNG, built here so the reference test ships no binary fixture. */
 function grayPng(): Buffer {
+  return solidPng(128, 128, 128)
+}
+
+/** A 64×64 PNG of one solid colour. */
+function solidPng(r: number, g: number, b: number): Buffer {
   const w = 64
-  const raw = Buffer.concat(
-    Array.from({ length: w }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 3, 128)])),
-  )
+  const row = Buffer.alloc(w * 3)
+  for (let i = 0; i < w; i++) row.set([r, g, b], i * 3)
+  const raw = Buffer.concat(Array.from({ length: w }, () => Buffer.concat([Buffer.from([0]), row])))
   const chunk = (type: string, data: Buffer) => {
     const body = Buffer.concat([Buffer.from(type, 'ascii'), data])
     const len = Buffer.alloc(4)
@@ -192,11 +206,14 @@ async function expectOnlyMissingModels(prompt: unknown) {
 
   const nodeErrors = (body.node_errors ?? {}) as Record<
     string,
-    { class_type: string; errors: { type: string; extra_info?: { input_name?: string } }[] }
+    { class_type: string; errors: { type: string; details?: string; extra_info?: { input_name?: string } }[] }
   >
   const structural = Object.entries(nodeErrors).flatMap(([id, n]) =>
     n.errors
       .filter((e) => e.type !== 'value_not_in_list')
+      // VHS checks its clip itself, so a missing file arrives as a custom
+      // validation failure rather than value_not_in_list — still only "no such file".
+      .filter((e) => !(n.class_type === 'VHS_LoadVideo' && e.type === 'custom_validation_failed' && e.details?.includes('Invalid video file')))
       .map((e) => `${n.class_type}#${id}.${e.extra_info?.input_name ?? '?'}: ${e.type}`),
   )
   expect(structural).toEqual([])
@@ -241,6 +258,32 @@ describe.skipIf(!LIVE)('MiniMax H3 live', () => {
     await expectOnlyMissingModels(
       minimaxH3Workflow.buildPrompt(params({ mode: 'ref2v', refImages: ['example.png'] })),
     )
+  })
+
+  it('a split edit graph validates too — only missing files, no wiring errors', async () => {
+    // 15 s at the medium size renders in three Seamless parts: three samplers,
+    // two RaccoonH3MaskedPrefix links, ImageBatch/AudioConcat stitching. Like the
+    // ref2v check, it cannot see a wrong autogrow key — the unit tests own that.
+    const wf = minimaxH3Workflow.buildPrompt(params({
+      mode: 'edit', editSource: 'does-not-exist.mp4', editKind: 'vfx', vramMode: 'medium',
+      editSourceWidth: 608, editSourceHeight: 1056, editSourceFrames: 362, editSourceHasAudio: true,
+    }))
+    expect(Object.values(wf).filter((n) => n.class_type === 'SamplerCustomAdvanced').length).toBe(3)
+    await expectOnlyMissingModels(wf)
+    await expectOnlyMissingModels(minimaxH3Workflow.buildPrompt(params({
+      mode: 'edit', editSource: 'does-not-exist.mp4', editKind: 'vfx', vramMode: 'medium', editJoin: 'fast',
+      editSourceWidth: 608, editSourceHeight: 1056, editSourceFrames: 362, editSourceHasAudio: false,
+    })))
+    await expectOnlyMissingModels(minimaxH3Workflow.buildPrompt(params({
+      mode: 'edit', editSource: 'does-not-exist.mp4', editKind: 'vfx', vramMode: 'medium',
+      editSourceWidth: 608, editSourceHeight: 1056, editSourceFrames: 362, editSourceHasAudio: true,
+      editPictures: ['example.png', 'example.png'], editPictureRoles: ['character', 'outfit'], editFaceChecked: 'example.png',
+    })))
+    await expectOnlyMissingModels(minimaxH3Workflow.buildPrompt(params({
+      mode: 'edit', editFollow: 'loose', editSource: 'does-not-exist.mp4', vramMode: 'medium',
+      editSourceWidth: 608, editSourceHeight: 1056, editSourceFrames: 362, editSourceHasAudio: true,
+      editPictures: ['example.png'], editPictureRoles: ['character'], editPictureNotes: ['a woman'],
+    })))
   })
 
   it('renders a reference clip that honours its reference', async () => {
@@ -300,6 +343,72 @@ describe.skipIf(!LIVE)('MiniMax H3 live', () => {
     const names = await waitForOutputs(promptId)
     console.log('[h3] ref2v outputs:', names.join(', '))
     expect(names.some((n) => n.endsWith('.mp4'))).toBe(true)
+  }, RENDER_TIMEOUT_MS)
+
+  it('lands a reference clip on its keyframes', async () => {
+    const have = await installedModels()
+    // This leg runs on Eros, which carries ref2va's weights itself, so the stock
+    // DiT (the one required diffusion_models entry) is not needed for it.
+    const need = [
+      ...MINIMAX_H3_ASSETS.filter((a) => !a.optional && a.folder !== 'diffusion_models').map((a) => a.name),
+      H3_EROS.ckpt,
+    ]
+    const absent = need.filter((n) => !have.has(n) && ![...have].some((x) => x.endsWith('/' + n)))
+    if (absent.length) {
+      console.warn(`[h3] skipping keyframe render — not installed: ${absent.join(', ')}`)
+      return
+    }
+
+    // Three solid colours, so "did it land on the picture?" is a nearest-colour
+    // question with no judgement in it: each keyframe's frame must sit closer to
+    // its own colour than to the other two.
+    const COLOURS = { start: [200, 40, 40], middle: [40, 180, 60], end: [40, 70, 200] } as const
+    const KF_CAP = 40
+    const ref = await uploadInput(grayPng(), 'h3_kf_probe_ref.png')
+    const keyframes = Object.fromEntries(
+      await Promise.all(Object.entries(COLOURS).map(async ([slot, [r, g, b]]) =>
+        [slot, { image: await uploadInput(solidPng(r, g, b), `h3_kf_probe_${slot}.png`), width: 64, height: 64 }])),
+    )
+    const { status, body } = await post(
+      minimaxH3Workflow.buildPrompt(
+        params({
+          mode: 'ref2v',
+          h3Checkpoint: 'eros',
+          refImages: [ref],
+          keyframes,
+          prompt:
+            'For the target video, the attached references are used as follows: ' +
+            '<Picture 1> is weak_reference.\n\n' +
+            'integrated_multimodal_description: [Shot 1] A plain painted wall fills the frame, ' +
+            'perfectly still; its colour shifts slowly and evenly from one solid colour to another.\n\n' +
+            'overall_soundscape: A low, steady room tone.\n\n' +
+            'non_diegetic_music: N/A',
+        }),
+      ),
+    )
+    expect(status, JSON.stringify(body).slice(0, 800)).toBe(200)
+    const files = await waitForFiles((body as unknown as { prompt_id: string }).prompt_id)
+    const mp4 = files.find((f) => f.filename.endsWith('.mp4'))
+    expect(mp4, 'no mp4 came back').toBeTruthy()
+    const local = path.join(os.tmpdir(), `h3_kf_probe_${SEED}.mp4`)
+    const q = new URLSearchParams({ filename: mp4!.filename, subfolder: mp4!.subfolder, type: 'output' })
+    fs.writeFileSync(local, Buffer.from(await (await fetch(`${COMFY}/view?${q}`)).arrayBuffer()))
+
+    const at = h3KeyframeFrames(h3FrameCount(DURATION_S), false)
+    const meanRgb = (frame: number) => {
+      const px = execFileSync('ffmpeg', ['-v', 'error', '-i', local, '-vf', `select=eq(n\\,${frame}),scale=8:8`,
+        '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 16 }) as unknown as Buffer
+      return [0, 1, 2].map((c) => px.filter((_, i) => i % 3 === c).reduce((s, v) => s + v, 0) / (px.length / 3))
+    }
+    const dist = (a: number[], b: readonly number[]) => Math.hypot(...a.map((v, i) => v - b[i]))
+    for (const slot of Object.keys(COLOURS) as (keyof typeof COLOURS)[]) {
+      const rgb = meanRgb(at[slot]!)
+      const d = Object.fromEntries(Object.entries(COLOURS).map(([s, c]) => [s, Math.round(dist(rgb, c))]))
+      console.log(`[h3] keyframe ${slot} @ frame ${at[slot]}: rgb ${rgb.map(Math.round).join('/')}, distance ${JSON.stringify(d)}`)
+      expect(Math.min(...Object.values(d)), `${slot} frame is nearer another keyframe`).toBe(d[slot])
+      // And close in absolute terms: a clean landing measured 7-14, the wrong colour 166+.
+      expect(d[slot], `${slot} frame drifted off its keyframe`).toBeLessThan(KF_CAP)
+    }
   }, RENDER_TIMEOUT_MS)
 
   it('renders a clip with a synced audio track', async () => {

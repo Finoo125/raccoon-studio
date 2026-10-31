@@ -82,6 +82,14 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 
 # 2) Locate the repo (already inside it?) or clone it
+# Native commands don't stop the script on failure, even under EAP=Stop (WinPS 5.1), so each
+# git step below checks $LASTEXITCODE itself: a failed pull must not quietly install old code.
+function Assert-GitPulled([string]$Dir) {
+    if ($LASTEXITCODE -ne 0) {
+        throw ("Couldn't update the copy in $Dir (git pull failed - see git's message above). " +
+               'Nothing was installed. Check your internet connection and paste the same command again.')
+    }
+}
 if (Test-Path (Join-Path (Get-Location) 'install-windows.ps1')) {
     $Root = (Get-Location).Path
     Write-Host "  Using the repo in the current folder: $Root" -ForegroundColor Gray
@@ -96,6 +104,7 @@ if (Test-Path (Join-Path (Get-Location) 'install-windows.ps1')) {
         # NativeCommandError in WinPS 5.1 (same note as the branch below).
         git -C $Root checkout -- app/package-lock.json
         git -C $Root pull --ff-only
+        Assert-GitPulled $Root
     }
 } else {
     $Root = Join-Path (Get-Location) 'raccoon-studio'
@@ -107,9 +116,14 @@ if (Test-Path (Join-Path (Get-Location) 'install-windows.ps1')) {
         # a redirected native stderr is a fatal NativeCommandError in WinPS 5.1.
         git -C $Root checkout -- app/package-lock.json
         git -C $Root pull --ff-only
+        Assert-GitPulled $Root
     } else {
         Write-Host '  Cloning Raccoon Studio...' -ForegroundColor Cyan
         git clone $RepoUrl $Root
+        if ($LASTEXITCODE -ne 0) {
+            throw ("Couldn't download Raccoon Studio (git clone failed - see git's message above). " +
+                   'Check your internet connection and paste the same command again.')
+        }
     }
 }
 
@@ -118,6 +132,11 @@ Set-Location $Root
 Write-Host ''
 Write-Host '  Running the installer...' -ForegroundColor Cyan
 & powershell -ExecutionPolicy Bypass -NoProfile -File (Join-Path $Root 'install-windows.ps1') @InstallerArgs
+# The installer has already said what went wrong (in red, with a support file); don't follow
+# that with "Setup complete". Throwing also gives the .bat a non-zero exit code.
+if ($LASTEXITCODE -ne 0) {
+    throw "The installer stopped with an error (exit code $LASTEXITCODE) - see the red message above."
+}
 
 # 4) Done — tell the user how to launch
 Write-Host ''

@@ -6,6 +6,7 @@ import {
 import { isIdentityCurve } from './curve'
 import { isIdentityMixer } from './adjustments'
 import { isNeutralWheels } from './color-wheels'
+import type { UiMode } from '@/lib/ui-mode'
 
 export type SectionId =
   | 'presets' | 'light' | 'color' | 'curve' | 'presence' | 'effects'
@@ -86,6 +87,21 @@ export const CONTROL_HINT: Record<string, string> = {
 /** Sections whose controls only make sense with their canvas overlay showing. */
 export const SECTION_MODE: Partial<Record<SectionId, 'crop' | 'masks' | 'slice'>> = {
   crop: 'crop', masks: 'masks', slice: 'slice',
+}
+
+/** The keyboard shortcut that opens a mode section (PhotoEditor's key handler). */
+export const SECTION_KEY: Partial<Record<SectionId, string>> = { crop: 'R', masks: 'M', slice: 'X' }
+
+/** What Simple shows; Color also drops its mixer and grading wheels there. */
+const SIMPLE_SECTIONS: SectionId[] = ['presets', 'light', 'color', 'effects', 'crop']
+
+/**
+ * The sections the edit column lists. Simple hides the rest only while they sit
+ * at defaults — anything already changing the picture stays in view.
+ */
+export function visibleSections(mode: UiMode, state: EditState): SectionId[] {
+  if (mode === 'advanced') return SECTION_ORDER
+  return SECTION_ORDER.filter((id) => SIMPLE_SECTIONS.includes(id) || sectionStatus(id, state).modified)
 }
 
 /** Which slider group each adjustment section owns, by index into ADJUSTMENT_GROUPS. */

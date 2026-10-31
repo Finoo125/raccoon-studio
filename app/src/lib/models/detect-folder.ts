@@ -10,7 +10,7 @@
  */
 import { readSafetensorsHeader } from './lora-arch'
 
-export type ModelFolder = 'loras' | 'checkpoints' | 'diffusion_models' | 'vae' | 'text_encoders'
+export type ModelFolder = 'loras' | 'checkpoints' | 'diffusion_models' | 'vae' | 'text_encoders' | 'model_patches'
 
 /**
  * Suffixes that only ever appear on an adapter's tensors.
@@ -43,9 +43,18 @@ const FULL_CHECKPOINT_COMPONENTS = [
   'vae.', 'audio_vae.', 'vocoder.', 'text_embedding_projection.',
 ]
 
-/** A standalone LLM text encoder — the embedding table is the giveaway.
- *  Verified: gemma-3-12b-it-…-fp8mixed, qwen3vl_32b_minimax_h3_nvfp4_awq. */
-const TEXT_ENCODER_PREFIXES = ['model.embed_tokens.', 'text_model.embeddings.']
+/** A standalone LLM text encoder — the embedding table is the giveaway. HF's
+ *  multimodal layout nests it under `model.language_model.`.
+ *  Verified: gemma-3-12b-it-…-fp8mixed, qwen3vl_32b_minimax_h3_nvfp4_awq,
+ *  qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot. */
+const TEXT_ENCODER_PREFIXES = ['model.embed_tokens.', 'text_model.embeddings.', 'model.language_model.embed_tokens.']
+
+/** Fun ControlNet model patches (ModelPatchLoader). Every tensor sits under a
+ *  `control_*` root, which no base model or VAE uses.
+ *  Verified: qwen_image_2.1_fun_controlnet_union_int8_convrot (control_blocks.,
+ *  control_img_in), Z-Image-Turbo-Fun-Controlnet-Union-2.1-2601-8steps
+ *  (control_layers., control_noise_refiner., control_all_x_embedder). */
+const MODEL_PATCH_PREFIXES = ['control_blocks.', 'control_img_in', 'control_layers.', 'control_noise_refiner.', 'control_all_x_embedder']
 
 /** A standalone VAE is an encoder/decoder pair at the TOP level. Inside a full
  *  checkpoint the same tensors are nested under `first_stage_model.`, which the
@@ -71,6 +80,9 @@ export function detectFolderFromKeys(names: string[]): ModelFolder {
   }
   if (lower.some((k) => TEXT_ENCODER_PREFIXES.some((p) => k.startsWith(p)))) {
     return 'text_encoders'
+  }
+  if (lower.some((k) => MODEL_PATCH_PREFIXES.some((p) => k.startsWith(p)))) {
+    return 'model_patches'
   }
   if (lower.some((k) => VAE_PREFIXES.some((p) => k.startsWith(p)))) {
     return 'vae'

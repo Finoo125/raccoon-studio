@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
 import type { MovieProject } from '@/types/movie'
-import { assetsDir, saveProject } from './projects'
+import { assetsDir, isMovieMediaPath, saveProject } from './projects'
 
 export const BUNDLE_FORMAT_VERSION = 1
 export const BUNDLE_EXTENSION = '.rsmovie'
@@ -32,7 +32,7 @@ export function buildBundle(project: MovieProject, includeMedia: boolean): Buffe
   zip.addFile('project.json', Buffer.from(JSON.stringify(project, null, 2)))
   if (includeMedia) {
     for (const asset of project.assets) {
-      if (asset.offline) continue
+      if (asset.offline || !isMovieMediaPath(asset.path)) continue
       let data: Buffer
       try {
         data = fs.readFileSync(asset.path)
@@ -97,9 +97,12 @@ export function importBundle(buffer: Buffer): MovieProject {
 
   const assets = project.assets.map((asset) => {
     const file = media.get(asset.id)
-    if (!file) return { ...asset, offline: undefined }
+    // A non-bundled asset keeps its path only inside the studio's media folders —
+    // the same project moved between your own machines — never a file elsewhere.
+    if (!file) return isMovieMediaPath(asset.path) ? { ...asset, offline: undefined } : { ...asset, path: '', offline: true }
     const safeName = file.filename.replace(/[^\w.\-()\s]/g, '_')
-    const dest = path.join(dir, `${asset.id}-${safeName}`)
+    // Not the bundle's asset id: it is untrusted text, and on Windows a backslash in it climbs out of `dir`.
+    const dest = path.join(dir, `${randomUUID()}-${safeName}`)
     fs.writeFileSync(dest, file.data)
     return { ...asset, path: dest, source: 'imported' as const, offline: undefined }
   })

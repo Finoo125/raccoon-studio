@@ -1,6 +1,11 @@
 import type { ComfyUIPrompt } from './comfyui'
 import type { DirectorTimeline } from '@/lib/workflows/director-timeline'
 
+/** Where a keyframe sits in an H3 reference render. See `h3KeyframeFrames`. */
+export type H3KeyframeSlot = 'start' | 'middle' | 'end'
+/** One keyframe picture: an input/ filename plus its pixel size for framing. */
+export interface H3Keyframe { image: string; width?: number; height?: number }
+
 export interface VideoGenerationParams {
   /** → RaccoonVideoPrompt.confirmed_prompt (required, non-empty; ComfyUI rejects empty). */
   prompt: string
@@ -9,7 +14,7 @@ export interface VideoGenerationParams {
    * builder never receives it (the two are separate `VideoWorkflowDefinition`s
    * selected by id).
    */
-  mode: 't2v' | 'i2v' | 'ref2v' | 'director'
+  mode: 't2v' | 'i2v' | 'ref2v' | 'director' | 'edit'
   /**
    * Which video model family renders this job — a `VideoWorkflowDefinition.id`
    * (`ltx23` or `minimax-h3`). Ignored when `mode` is `director`, which is bound
@@ -61,6 +66,17 @@ export interface VideoGenerationParams {
    * Read it only through `compactRefs`, never by raw index.
    */
   refImages?: (string | undefined)[]
+
+  /**
+   * What each picture in `refImages` is FOR — one of `H3_REF_ROLES`, or absent.
+   * Sparse and index-aligned with `refImages`, and compacted against it by
+   * `compactRefRoles` so role N always describes `<Picture N>`.
+   *
+   * The prompt writer never sees these images (ref2v is outside the node's
+   * vision gate), so without a role it invents one from the brief. Absent is
+   * the default and reproduces the pre-roles doctrine exactly.
+   */
+  refImageRoles?: (string | undefined)[]
   /**
    * ref2v: reference **video** filenames in ComfyUI's input dir, tagged
    * `<Video N>`. Sparse and compacted exactly like `refImages`.
@@ -80,6 +96,14 @@ export interface VideoGenerationParams {
    * soundtrack, which rides along with the clip.
    */
   refAudios?: (string | undefined)[]
+  /**
+   * MiniMax H3 `ref2v` only: pictures the clip must pass through — its first,
+   * middle and last frame. Not references: no `<Picture N>`, no share of the
+   * reference budget. Each filled slot is one core `MiniMaxH3AddGuide`, placed
+   * by `h3KeyframeFrames`. Measured 2026-10-02: 9.5 / 10.2 / 8.7 against ~50
+   * without (owner folder `261002 - H3 Anker-Videos Test`).
+   */
+  keyframes?: Partial<Record<H3KeyframeSlot, H3Keyframe>>
   /**
    * `ref_image_size: 'max'` — the reference pipeline's 2048px short edge instead
    * of scaling each reference to the render's pixel area. Off by default.
@@ -128,20 +152,64 @@ export interface VideoGenerationParams {
    * truthiness check that would silently flip one of them.
    */
   rife?: boolean
+
+  /**
+   * Write the clip as ONE continuous shot instead of the duration table's 2-5.
+   *
+   * A prompt-writing switch, not a render one: it reaches `shot_budget` in
+   * `h3_brain.py` through the enhance call, so it shapes what the writer
+   * produces and does nothing to a prompt typed by hand.
+   *
+   * Measured 2026-09-04 on a 12 s i2v clip: face identity against the start
+   * image holds at 0.85 through shot 1, 0.63 through shot 2 and 0.37 through
+   * shot 3 — and falls only 0.88 -> 0.83 *within* shot 1. Identity dies at the
+   * cuts, and it did so on the Eros checkpoint, on stock H3, and with and
+   * without a character LoRA. So this is the cheapest fix for a face that
+   * wanders; the price is a clip that cannot cut.
+   */
+  singleShot?: boolean
+
+  /**
+   * Run the finished frames through RTX Video Super Resolution at 1.5x.
+   *
+   * A delivery step, not a quality lever on the render itself: it cannot add
+   * anything the sampler did not produce, and it measurably does nothing for
+   * face identity. What it does buy is a big clip on a box that cannot render
+   * one — H3 caps at 768x1344 and `BUDGET_MP.high` is capped below that again
+   * for crash safety, so above ~0.8 MP upscaling is the only route there is.
+   *
+   * See `H3_UPSCALE_SCALE` for the measurements and for why it sits between
+   * RIFE and the sharpener.
+   */
+  upscale?: boolean
   /**
    * MiniMax H3 only: which checkpoint the fl2va graph loads.
    *
-   * `'eros'` is TenStrip's 10Eros Max beta4 — an H3 finetune with adult
+   * `'eros'` is TenStrip's 10Eros Max (beta6) — an H3 finetune with adult
    * character grafted in and, load-bearingly, **its own Turbo merged into the
    * weights**. That is why this is a checkpoint pick rather than another LoRA
    * slot: it replaces the base model and the whole `turbo` dial at once (see
    * `H3_EROS`).
    *
-   * Ignored in `ref2v`, which loads a structurally different checkpoint the
-   * finetune has no int8 build of — so read it through `h3UsesEros()`, never as
-   * a bare equality check on this field.
+   * Applies in every mode, `ref2v` included: the build's unquantized weights are
+   * bit-identical to the stock ref2va build, so it is one checkpoint for all
+   * five tasks. Read it through `h3UsesEros()` rather than comparing here, so
+   * the builder and the cost model can never disagree about what it means.
+   *
+   * `hybrid` (2026-10-02) is Plaguekind V11's recipe: smhfacct's fl2va+ref2va
+   * merge at res_multistep / 13 steps, no Turbo (`H3_HYBRID`). `h3Profile()`
+   * is the reader for "this checkpoint owns its schedule".
+   *
+   * `sparseref` (2026-10-16) is Aki7777777's SparseRef15 Hybrid (fl2va with a sparse ref2va effect on 15 blocks),
+   * Partial-INT8, run with lightx2v's fl2v turbo LoRA at 1.0, 8 steps, shift 12/3 (`H3_SPARSEREF`) — the steadiest
+   * face of the helper's checkpoint round.
    */
-  h3Checkpoint?: 'base' | 'eros'
+  h3Checkpoint?: 'base' | 'eros' | 'hybrid' | 'sparseref'
+  /**
+   * A sampler in place of the checkpoint profile's own (the video helper's reseed ladder, 2026-10-18: `lcm` gave 10Eros
+   * its cleanest speech). Only for checkpoints with a profile; unset = the profile's sampler.
+   */
+  h3Sampler?: 'euler' | 'lcm' | 'res_multistep'
   /**
    * MiniMax H3 only: which distillation LoRA to render with, instead of the
    * 20-step base. `'draft'` is 6 steps of throwaway preview for finding prompts
@@ -180,6 +248,21 @@ export interface VideoGenerationParams {
    * replacing it. See `H3_SHARPEN_STRENGTH`.
    */
   sharpen?: boolean
+
+  /**
+   * Hold the finishing passes (interpolation, upscale, sharpen, grain) back for
+   * the post-render face swap, which then runs them itself after swapping.
+   *
+   * Cheaper and better in the same move: the swapper pays for 1x frames at 1x
+   * size instead of 1.5x frames at 2.25x the area, and grain lands on the
+   * swapped face rather than around it. The cost is that the delivered clip is
+   * NOT finished until the swap runs — nothing else re-applies them, which is
+   * why the canvas button and the cost chips both say so.
+   *
+   * H3 only. LTX has no chain to defer: it bakes RIFE into its own graph and
+   * has none of the other three.
+   */
+  swapFaces?: boolean
   /**
    * Seed-hunt candidate: render the half-res first pass and stop. Truncating the
    * graph rather than shrinking it keeps everything upstream identical to a full
@@ -195,18 +278,81 @@ export interface VideoGenerationParams {
    * makes core `LoadVideo` read from `output/` instead of `input/`, so nothing
    * has to be copied or re-uploaded per link.
    *
-   * The graph pins the tail of that clip (`H3_CONTEXT_FRAMES` frames plus
-   * `H3_CONTEXT_AUDIO_S` of its sound) at frame 0 of the new one and trims the
-   * pinned head back off before saving, so the delivered clip is
-   * `H3_CONTEXT_FRAMES` shorter than it was sampled. Callers that show a
-   * duration must say which of the two they mean.
+   * The graph freezes the tail of that clip (`H3_CONTEXT_FRAMES` frames and the
+   * sound under them) at the head of the new one and trims it back off before
+   * saving, so the delivered clip is `H3_CONTEXT_FRAMES` shorter than it was
+   * sampled. Callers that show a duration must say which of the two they mean.
    */
   continueFrom?: string
+  /**
+   * MiniMax H3 `edit` only: the clip to edit, as a LoadVideo value — an
+   * input/ filename, or an output/ path with the ` [output]` annotation (how
+   * the gallery's "Edit video" hands a clip over without copying it).
+   */
+  editSource?: string
+  /**
+   * `vfx` = change something (vfx_edit LoRA), `style` = restyle (style_transfer
+   * LoRA), `head` = swap head (head_swap LoRA).
+   */
+  editKind?: 'vfx' | 'style' | 'head'
+  /** Probed off the source by `/api/video/probe`; no probe, no submit. */
+  editSourceWidth?: number
+  editSourceHeight?: number
+  /** The source's length in frames at 24 fps (`floor(duration × 24)`). */
+  editSourceFrames?: number
+  /** False for a clip with no audio stream — then H3's own soundtrack is kept. */
+  editSourceHasAudio?: boolean
+  /**
+   * How the parts of an edit too big for one render are joined (`h3EditPlan`):
+   * `seamless` (default) freezes the previous part's last 39 frames at the head
+   * of the next, `fast` renders the parts independently. Anything else reads as
+   * seamless.
+   */
+  editJoin?: 'seamless' | 'fast'
+  /**
+   * Edit mode's pictures (input/ filenames), sparse by slot like `refImages` —
+   * but their own field: a picture left in reference mode must never reach an
+   * edit. Ordered and capped by `h3EditPictures`.
+   */
+  editPictures?: (string | undefined)[]
+  /** What each `editPictures` slot is for — ids from `H3_REF_ROLES`. */
+  editPictureRoles?: (string | undefined)[]
+  /** Swap the face to the Person picture after the edit (default on). */
+  editSwapFace?: boolean
+  /**
+   * The Person picture the form has checked HAS a face. The in-graph swap runs
+   * only for exactly this file, so a faceless picture can never fail a render
+   * at its last step.
+   */
+  editFaceChecked?: string
+  /** An edited first frame (input/ filename) for the FFP LoRA to carry through the clip. */
+  editFirstFrame?: string
+  /**
+   * Who describes Edit's pictures: 'builtin' (Krea2's Qwen3-VL-4B, a small
+   * ComfyUI job) or 'ollama:<model>'. Unset = off. The description is what lets
+   * a Person picture change the whole look — the edit LoRA takes outfits and
+   * places from a picture, but a person only from words (measured 2026-10-03).
+   */
+  editDescribeWith?: string
+  /** Per `editPictures` slot: the description (editable). '' = emptied by the user. */
+  editPictureNotes?: (string | undefined)[]
+  /**
+   * `exact` (default): the clip is anchored and the edit LoRA keeps the take.
+   * `loose`: MiniMax's own reference route — the clip as a half-size reference
+   * video, no edit LoRA; faster, follows the motion more loosely, and can take a
+   * new person's build. "Change something" only.
+   */
+  editFollow?: 'exact' | 'loose'
   /**
    * Pixel-budget profile: 'high' (~2MP, 24 GB+), 'medium' (~1.4MP) or 'low'
    * (~1MP, fits 16 GB). Default: high.
    */
   vramMode?: 'high' | 'medium' | 'low'
+  /**
+   * Megapixels for this one render, overriding the `vramMode` tier's budget. The video helper renders at the model's
+   * full canvas (1.0 → 736x1344 portrait), the owner's setup since 2026-10-14; the form never sets it.
+   */
+  budgetMp?: number
   /**
    * Identity lock: swaps reference conditioning for the 10S face reinforcer and
    * adds the Best-FaceID LoRA. **i2v only** — t2v has no source face, and the
@@ -269,6 +415,9 @@ export interface VideoGenerationParams {
    */
   faceIdImage?: string
 }
+
+/** A MiniMax H3 checkpoint pick (`base` = the stock fl2va/ref2va files). */
+export type H3CheckpointId = NonNullable<VideoGenerationParams['h3Checkpoint']>
 
 export interface VideoOrientation {
   label: string

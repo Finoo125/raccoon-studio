@@ -67,22 +67,49 @@ class Analyzer:
             os.path.join(buffalo_dir, 'w600k_r50.onnx'), providers=_PROVIDERS)
         self._det_input = self._det.get_inputs()[0].name
         self._rec_input = self._rec.get_inputs()[0].name
+        self._lmk_path = os.path.join(buffalo_dir, '1k3d68.onnx')
+        self._lmk = None  # loaded on first use: only the video swap's gate needs it
 
-    def get(self, frame_bgr, with_embedding=True):
+    def landmarks3d(self, frame_bgr, bbox):
+        """1k3d68's 68 face points (x, y, depth) for one detected face, in its
+        192 px crop's pixels, or None when buffalo_l came without the model.
+
+        Preprocessing is insightface's own for this file: a square crop 1.5x the
+        box, raw 0-255 RGB (its first layer, `bn_data`, normalises)."""
+        if self._lmk is None:
+            if not os.path.exists(self._lmk_path):
+                return None
+            self._lmk = onnxruntime.InferenceSession(self._lmk_path, providers=_PROVIDERS)
+        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        s = 192.0 / (max(w, h) * 1.5)
+        cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+        m = np.array([[s, 0, 96 - cx * s], [0, s, 96 - cy * s]], dtype=np.float32)
+        crop = cv2.warpAffine(frame_bgr, m, (192, 192), borderValue=0)
+        blob = crop[:, :, ::-1].astype(np.float32).transpose(2, 0, 1)[np.newaxis]
+        out = self._lmk.run(None, {self._lmk.get_inputs()[0].name: blob})[0][0]
+        return out.reshape(-1, 3)[-68:]
+
+    def get(self, frame_bgr, with_embedding=True, min_score=None):
         """Faces in a BGR uint8 frame, sorted by descending detection score.
         Each is a SimpleNamespace(bbox(4,), kps(5,2), det_score, embedding(512,),
         normed_embedding(512,)) — duck-compatible with insightface Face.
 
         SCRFD misses very large faces: a tight face crop upscaled into the 640
         letterbox outgrows the anchor scales and scores below threshold. Retry
-        at 320 when 640 finds nothing — same fallback ReActor uses."""
+        at 320 when 640 finds nothing — same fallback ReActor uses.
+
+        `min_score` overrides the module default. Video wants it lower than
+        stills do: a head turning three-quarters away scores under 0.5 and drops
+        out, and a frame that silently goes unswapped mid-clip reads as the swap
+        being broken rather than as the face having turned."""
+        score = _SCORE_THRESH if min_score is None else float(min_score)
         for det_size in (_DET_SIZE, 320):
-            faces = self._detect(frame_bgr, det_size, with_embedding)
+            faces = self._detect(frame_bgr, det_size, with_embedding, score)
             if faces:
                 return faces
         return []
 
-    def _detect(self, frame_bgr, det_size, with_embedding):
+    def _detect(self, frame_bgr, det_size, with_embedding, min_score=_SCORE_THRESH):
         h, w = frame_bgr.shape[:2]
         scale = det_size / max(h, w)
         rw, rh = int(round(w * scale)), int(round(h * scale))
@@ -104,7 +131,7 @@ class Analyzer:
             cx, cy = np.meshgrid(np.arange(side), np.arange(side))
             centers = np.stack([cx, cy], axis=-1).reshape(-1, 2)
             centers = np.repeat(centers, 2, axis=0).astype(np.float32) * stride
-            mask = scores >= _SCORE_THRESH
+            mask = scores >= min_score
             if not mask.any():
                 continue
             c, b, k = centers[mask], bbox[mask], kps[mask]

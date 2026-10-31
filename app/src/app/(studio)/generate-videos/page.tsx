@@ -26,8 +26,9 @@ export default function GenerateVideosPage() {
  * a form. Text→Video and Image→Video keep the two-column page below.
  */
 function Stage() {
-  const { params } = useVideoForm()
-  return params.mode === 'director' ? <DirectorLayout /> : <ClassicLayout />
+  const { params, simple } = useVideoForm()
+  // Director is Advanced-only: a session left in it shows Simple's classic page (spec §3).
+  return params.mode === 'director' && !simple ? <DirectorLayout /> : <ClassicLayout />
 }
 
 function ClassicLayout() {
@@ -46,7 +47,7 @@ function ClassicLayout() {
             transition={{ duration: 0.15, ease: 'easeInOut' }}
             className="border-r border-border bg-card overflow-hidden shrink-0"
           >
-            <div className="w-[37.5rem] h-full overflow-y-auto p-5">
+            <div className="w-[37.5rem] h-full overflow-y-auto px-5 pt-5">
               <VideoGenerationForm />
             </div>
           </motion.aside>
@@ -78,7 +79,7 @@ function ClassicLayout() {
 
       {/* Canvas */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <VideoCanvas />
+        <VideoCanvas guide="generate-video" />
       </div>
 
       {/* Recent videos rail */}

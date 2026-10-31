@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { guard } from '@/lib/system/request-guard'
 import fs from 'fs'
 import path from 'path'
 import { Readable } from 'stream'
@@ -28,6 +29,8 @@ export const runtime = 'nodejs'
  * restore that has already started overwriting things.
  */
 export async function POST(req: NextRequest) {
+  const refused = guard(req)
+  if (refused) return refused
   // Desktop installs pick a path with a real dialog and never copy gigabytes
   // through the browser; leaving this open there would be a needless way to
   // write a large file into the install.

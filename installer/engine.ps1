@@ -9,7 +9,10 @@ $ComfyPy = Join-Path $env:RACCOON_ROOT 'comfyui/ComfyUI/.venv/Scripts/python.exe
 $AppMods = Join-Path $env:RACCOON_ROOT 'app/node_modules'
 $PublicRepo = 'https://github.com/Finoo125/raccoon-studio.git'
 function Test-Installed { (Test-Path $ComfyPy) -and (Test-Path $AppMods) }
-function Test-Running { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 $env:HEALTH_URL | Out-Null; $true } catch { $false } }
+# Probe IPv4 directly: the app binds 127.0.0.1, and Windows tries ::1 first for
+# "localhost" - that refusal alone outlasts the 2 s timeout. HEALTH_URL itself stays
+# localhost because the GUI opens it in the browser, and localStorage is per origin.
+function Test-Running { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 ($env:HEALTH_URL -replace '//localhost\b', '//127.0.0.1') | Out-Null; $true } catch { $false } }
 function Get-RsStatus { if (Test-Running) {'running'} elseif (Test-Installed) {'stopped'} else {'not-installed'} }
 
 function Get-UpdateState {

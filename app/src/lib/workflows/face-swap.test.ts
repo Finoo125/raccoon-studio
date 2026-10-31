@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { appendFaceSwap, FACE_SWAP_NODE, PIXEL_BOOST_NODE } from './face-swap'
+import { appendFaceSwap, FACE_SWAP_NODE, PIXEL_BOOST_NODE, PIXEL_BOOST_ONLY, IDENTITY_NEUTRAL } from './face-swap'
 import type { ComfyUIPrompt } from '@/types/comfyui'
 
 function baseGraph(): ComfyUIPrompt {
@@ -110,6 +110,39 @@ describe('appendFaceSwap', () => {
     // Downstream chain unchanged, fed by the restore.
     expect(wf['swap:mask'].inputs.swapped_image).toEqual(['swap:restore', 0])
     expect(wf['save'].inputs.images).toEqual(['swap:rgb', 0])
+  })
+
+  it('routes a pixel-boost-only model through the vendored node even with the toggle off', () => {
+    // ReActor resolves any swap model without "hyperswap" in the name against
+    // models/insightface/, so a ReActorFaceSwap node pointed at alphaface fails
+    // at load with a bare "Generation failed". Selecting the model has to be
+    // enough to pick the only wiring that can run it.
+    const wf = baseGraph()
+    appendFaceSwap(wf, { saveNodeId: 'save', faceFilename: 'f.png', swapModel: 'alphaface_256.onnx' })
+    expect(wf['swap:swap'].class_type).toBe(PIXEL_BOOST_NODE)
+    expect(wf['swap:swap'].inputs.swap_model).toBe('alphaface_256.onnx')
+    expect(wf['swap:reactor']).toBeUndefined()
+  })
+
+  it('lists every pixel-boost-only model the type union allows', () => {
+    // The UI disables these chips when RaccoonSwapNodes is missing by reading
+    // this same set. A model added to the union but not here would be offered
+    // without the pack and 400 the job.
+    expect([...PIXEL_BOOST_ONLY]).toEqual(['alphaface_256.onnx'])
+  })
+
+  it('defaults the identity dial to neutral', () => {
+    // Neutral is a no-op inside the pack, so the default must stay neutral or
+    // every previously saved swap silently changes.
+    const wf = baseGraph()
+    appendFaceSwap(wf, { saveNodeId: 'save', faceFilename: 'f.png', pixelBoost: true })
+    expect(wf['swap:swap'].inputs.identity).toBe(IDENTITY_NEUTRAL)
+  })
+
+  it('passes an explicit identity strength through', () => {
+    const wf = baseGraph()
+    appendFaceSwap(wf, { saveNodeId: 'save', faceFilename: 'f.png', pixelBoost: true, identity: 0.8 })
+    expect(wf['swap:swap'].inputs.identity).toBe(0.8)
   })
 
   it('honors an explicit pixel-boost size', () => {

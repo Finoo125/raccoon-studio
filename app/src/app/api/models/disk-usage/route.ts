@@ -1,33 +1,6 @@
 import { NextResponse } from 'next/server'
-import fs from 'fs'
 import path from 'path'
-
-// `.onnx` belongs here: the whole face-swap stack (inswapper, hyperswap
-// 1a/1b/1c, GPEN-BFR-1024) is ONNX, and leaving it out made ~1.9 GB of models
-// invisible to the Manage-models panel — unlistable, undeletable, and missing
-// from the reported disk total. Found on a pod where those files ship inside
-// the image, so the download route correctly reported "already exists" for
-// files this scanner then claimed were not there.
-const MODEL_EXT = /\.(safetensors|ckpt|pt|pth|bin|gguf|onnx)$/i
-
-interface FileEntry { name: string; path: string; sizeBytes: number; mtime: string }
-
-function walk(dir: string, depth: number, out: { rel: string; entry: FileEntry }[], root: string): void {
-  if (depth < 0) return
-  let entries: fs.Dirent[]
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
-  for (const e of entries) {
-    const p = path.join(dir, e.name)
-    if (e.isDirectory()) walk(p, depth - 1, out, root)
-    else if (MODEL_EXT.test(e.name)) {
-      try {
-        const stat = fs.statSync(p)
-        const rel = path.relative(root, path.dirname(p)) || '.'
-        out.push({ rel, entry: { name: e.name, path: p, sizeBytes: stat.size, mtime: stat.mtime.toISOString() } })
-      } catch { /* skip unreadable */ }
-    }
-  }
-}
+import { walk, type FileEntry } from '@/lib/models/on-disk'
 
 export async function GET() {
   const modelsDir = process.env.COMFYUI_MODELS_DIR ?? null

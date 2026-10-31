@@ -6,13 +6,14 @@ import {
 } from '@/components/ui/dialog'
 
 export default function ConfirmDialog({
-  open, onOpenChange, title, description, confirmLabel = 'Confirm', destructive = false, onConfirm,
+  open, onOpenChange, title, description, confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive = false, onConfirm,
 }: {
   open: boolean
   onOpenChange: (v: boolean) => void
   title: string
   description?: string
   confirmLabel?: string
+  cancelLabel?: string
   destructive?: boolean
   onConfirm: () => void
 }) {
@@ -24,7 +25,7 @@ export default function ConfirmDialog({
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{cancelLabel}</Button>
           <Button
             variant={destructive ? 'destructive' : 'default'}
             onClick={() => { onConfirm(); onOpenChange(false) }}

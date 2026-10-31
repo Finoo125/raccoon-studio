@@ -1,7 +1,15 @@
 import type { ComfyUIPrompt, ComfyUIPromptNode } from '@/types/comfyui'
 import type { VideoWorkflowDefinition, VideoGenerationParams } from '@/types/video-workflow'
 import baseWorkflow from '../../../workflows/LTX23-Director.json'
-import { ORIENTATIONS, tierOf, loraStackData, ltxDimsForImage, BUDGET_MP } from './ltx23'
+import {
+  ORIENTATIONS,
+  tierOf,
+  loraStackData,
+  ltxDimsForImage,
+  BUDGET_MP,
+  LTX_FPS,
+  ltxRifeFps,
+} from './ltx23'
 import {
   emptyTimeline, guideShots, toDirectorInputs, totalFrames, type DirectorTimeline,
 } from './director-timeline'
@@ -29,6 +37,8 @@ for (const id of [DIR_ID, ...GUIDE_IDS]) {
 const LORA_ID = idOf('RaccoonLoraStack')
 const SEED_ID = idOf('Seed (rgthree)')
 const RIFE_ID = idOf('RIFEInterpolation')
+// Same fixed-60 slider as the plain LTX graph — id read off the link.
+const RIFE_FPS_ID = (BASE[RIFE_ID].inputs.target_fps as [string, number])[0]
 const CHUNK_ID = idOf('LTXVChunkFeedForward')
 const DURATION_ID = idOf('JWFloat')
 const FPS_ID = idOf('PrimitiveInt')
@@ -87,7 +97,7 @@ export const ltx23DirectorWorkflow: VideoWorkflowDefinition = {
     // No timeline (a rerun of a legacy job, or the form's first render) degrades
     // to one segment carrying `prompt`, which the node treats as plain t2v.
     const timeline: DirectorTimeline = params.timeline ?? {
-      ...emptyTimeline(params.durationSeconds, params.fps ?? 30),
+      ...emptyTimeline(params.durationSeconds, params.fps ?? LTX_FPS),
       globalPrompt: params.prompt ?? '',
     }
     // Duration and fps live on the form, not inside the timeline, so a change to
@@ -95,7 +105,7 @@ export const ltx23DirectorWorkflow: VideoWorkflowDefinition = {
     const t: DirectorTimeline = {
       ...timeline,
       durationSeconds: params.durationSeconds,
-      fps: params.fps ?? 30,
+      fps: params.fps ?? LTX_FPS,
     }
 
     const tier = tierOf(params.vramMode)
@@ -195,6 +205,11 @@ export const ltx23DirectorWorkflow: VideoWorkflowDefinition = {
     wf[CHUNK_ID].inputs.chunks = tier === 'low' ? 3 : 1
     wf[DURATION_ID].inputs.value = t.durationSeconds
     wf[FPS_ID].inputs.value = t.fps
+    // Lift RIFE's fixed-60 target to 1.5x the timeline's own fps; the saving
+    // combine reads the same node, so the container fps follows.
+    const rifeFps = ltxRifeFps(t.fps)
+    wf[RIFE_FPS_ID].inputs.Xf = rifeFps
+    wf[RIFE_FPS_ID].inputs.Xi = Math.round(rifeFps)
     wf[SEED_ID].inputs.seed =
       params.seed < 0 ? Math.floor(Math.random() * 9999999999999) : params.seed
     wf[LORA_ID].inputs.stack_data = loraStackData(params, faceId)

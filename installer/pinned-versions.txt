@@ -113,7 +113,43 @@
 # MiniMax H3 (int8), nothing on the fp8_scaled models. The CUDA backend is still
 # disabled and still needs a cu130 torch; if you bump torch, re-measure, because
 # the triton flag stops being the interesting one the moment CUDA comes back.
-ComfyUI                   169fcf35a2fc163fec31338b816503ddac0d3fcf
+#
+# Bumped v0.34.2 -> v0.38.0 on 2026-09-30, for Qwen-Image 2.1. Support landed
+# in v0.37.0, but every Qwen 2.1 fix since (fp16 activation clamp, the RGBA
+# crash in Qwen VL preprocessing, tiny VAE, KV cache, union ControlNet) is on
+# master only -- the v0.37.x patch releases carry partner nodes and templates.
+#
+# Verified with app/src/lib/workflows/comfyui-compat.live.test.ts, which exists
+# for exactly this: run it on the old pin, bump, run it again, open the
+# compare.html it writes. On v0.38.0: 0 import failures, 2294 node classes (was
+# 2231), every class the app names registered, 0 breaking schema changes (7
+# additive optional inputs, all defaulting to the old behaviour), all 141 graph
+# variants the builders emit pass ComfyUI's validator, and 11 fixed-seed renders
+# -- Krea2 (plain + prompt enhancer), Anima, Illustrious, Z-Image (+ face swap),
+# and H3 on 10Eros (t2v, i2v with RIFE/grain/sharpen/RTX VSR, fl2v, ref2v,
+# continuation) -- all clean:
+#   - Stills reproduce: mean |grey diff| 0.9-3.4 /255 against v0.34.2, same seed.
+#     The Krea2 enhancer is the exception (29.6): TextGenerate's text changed.
+#   - H3 clips start where v0.34.2's did and drift apart (i2v 1.8 -> 15.8), so
+#     saved H3 seeds do NOT reproduce; fl2v, pinned at both ends, does (0.7).
+#   - Audio: stereo width +0.9 dB mean (no repeat of the 0.34 narrowing), SNR
+#     -1.2 dB mean, both inside one-seed-per-brief noise. Listened to by the
+#     owner on 2026-09-30 (compare.html, all five H3 legs): fine.
+#   - Speed: Z-Image 30.7 -> 24.2 s, the Krea2 enhancer 50.4 -> 32.2 s, H3 t2v
+#     and i2v 3-7% faster; ref2v SLOWER, 40.7 -> 47-55 s over three runs (the
+#     sampler is not it: 8 steps in 17 s; the time is in load/encode).
+#
+# New at startup, all harmless here: the Comfy model compiler (on by default,
+# `--disable-comfy-compiler`), fast-disk auto-detection (`--disable-fast-disk`),
+# a one-off rebuild of ComfyUI's OWN asset catalogue (the app's gallery keeps
+# tags and favourites in sidecar files, untouched), and a Windows single-GPU
+# warning. torchaudio left ComfyUI's requirements in 0.38; both installers still
+# install it explicitly, and comfyui-various imports it.
+#
+# Deps moved with it: comfy-kitchen 0.2.31 -> 0.2.36, comfy-aimdo 0.4.15 ->
+# 0.5.5, frontend 1.49.6 -> 1.53.6, templates 0.11.50 -> 0.11.70, embedded docs
+# 0.5.10 -> 0.5.12. torch UNCHANGED (2.11.0+cu128). No node pack needed a bump.
+ComfyUI                   6b747c0428c343e1417219641db93a4fb7cb69ae
 
 # Core workflow nodes
 rgthree-comfy             27b4f4cdcf3b127c29d5d8135ac1536ecbd4c383

@@ -2,9 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  CheckCircle, Download, AlertCircle, Package,
-  ChevronDown, ChevronUp,
-  Trash2, HardDrive, RefreshCw, X,
+  CheckCircle, Download, AlertCircle, Package, ChevronRight, FolderInput, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -12,33 +10,29 @@ import { Badge } from '@/components/ui/badge'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { LTX23_ASSETS, assetInstalled, type ModelAsset } from '@/lib/models/ltx23-assets'
 import { MINIMAX_H3_ASSETS } from '@/lib/models/minimax-h3-assets'
-import { CHARACTER_SHEET_ASSETS } from '@/lib/workflows/character-sheet'
 import { comboOptions } from '@/lib/models/installed'
 import { restartComfyUI } from '@/lib/comfyui/restart'
 import { createTransferTracker } from '@/lib/models/transfer-tracker'
 import ImportPanel from '@/components/models/ImportPanel'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 const MyModelsTab = dynamic(() => import('@/components/models/MyModelsTab'))
 // Type-only: lib/models/transfers.ts is server code (fs, https) and this import
 // is erased at build, so none of it reaches the browser bundle.
 import type { Transfer } from '@/lib/models/transfers'
-import { KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA, KREA2_KROMA_LORA } from '@/lib/workflows/krea2'
+import { KREA2_KROMA_LORA } from '@/lib/workflows/krea2'
+import { QWEN21_FUN_MODEL } from '@/lib/workflows/zimage-controlnet'
+import { QWEN21_PE_T2I, QWEN21_BFS_LORAS, qwen21BfsUrl } from '@/lib/workflows/qwen21'
+import { presetNameById } from '@/lib/workflows/preset-families'
+import { IMAGE_PRESETS, type PresetDefinition } from '@/lib/models/image-presets'
+import { rowSummary } from '@/lib/models/catalog-summary'
+import { useUiMode } from '@/lib/ui-mode'
+import SimpleAdvancedSwitch from '@/components/SimpleAdvancedSwitch'
+import { GuideChip } from '@/components/GuideLink'
+import SimpleModels from '@/components/models/SimpleModels'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ModelFile {
-  name: string
-  path: string
-  url: string
-  sizeMb: number
-}
-
-interface PresetDefinition {
-  id: string
-  name: string
-  description: string
-  files: ModelFile[]
-}
 
 interface DownloadState {
   status: 'idle' | 'checking' | 'missing' | 'present' | 'downloading' | 'done' | 'error'
@@ -51,245 +45,12 @@ interface DownloadState {
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-// The SDXL fp16-fix VAE is a required part of working with the SDXL-family
-// checkpoints (SDXL/Pony/Illustrious all decode through it to avoid washed-out
-// colors), so it ships inside each of those presets. One shared file object —
-// the download de-dupes on disk, so grabbing any one model fetches it once.
-// Name/path must match SDXL_FIX_VAE in lib/workflows/sdxl.ts.
-const SDXL_VAE_FILE: ModelFile = {
-  name: 'sdxl_vae.safetensors',
-  path: 'vae',
-  url: 'https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl.vae.safetensors',
-  sizeMb: 335,
-}
-
-// Both Anima checkpoints run on the same Qwen text encoder + VAE, so those two
-// files appear in both presets — the download de-dupes on disk, so whichever
-// preset is grabbed second only fetches its checkpoint.
-const ANIMA_SHARED_FILES: ModelFile[] = [
-  {
-    name: 'qwen_3_06b_base.safetensors',
-    path: 'text_encoders',
-    url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors',
-    sizeMb: 1200,
-  },
-  {
-    name: 'qwen_image_vae.safetensors',
-    path: 'vae',
-    url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors',
-    sizeMb: 160,
-  },
-]
-
-// Krea2 Turbo and RAW run on the same Qwen3-VL text encoder, VAE and pair of
-// built-in LoRAs, so those four files appear in both presets — the download
-// de-dupes on disk, so whichever preset is grabbed second only fetches its
-// 13 GB checkpoint. The VAE de-dupes with Anima's copy of the same file too.
-// Both LoRA filenames come from lib/workflows/krea2.ts: the builder asks ComfyUI
-// for exactly these names, so renaming one here is a silent generation failure.
-const KREA2_SHARED_FILES: ModelFile[] = [
-  {
-    name: 'qwen3vl_4b_fp8_scaled.safetensors',
-    path: 'text_encoders',
-    url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors',
-    sizeMb: 5000,
-  },
-  {
-    name: 'qwen_image_vae.safetensors',
-    path: 'vae',
-    url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors',
-    sizeMb: 242,
-  },
-  {
-    // TextFusion refusal-reduction patch, applied at strength 1. Hosted on a
-    // third-party mirror because the canonical Civitai listing (model 2775340)
-    // requires an API token; verified public and unauthenticated 2026-07-27.
-    name: KREA2_REFUSAL_LORA,
-    path: 'loras',
-    url: 'https://huggingface.co/Kutches/Kr3a/resolve/main/Krea2_TextFusion_Refusal_Reduction.safetensors',
-    sizeMb: 27,
-  },
-  {
-    // Projector-scale patch (the "NSFW filter" slider in Generate). Upstream
-    // ships it under the generic name `pytorch_lora_weights.safetensors`, which
-    // is meaningless in a shared loras/ folder, so it is renamed on the way in.
-    // All of 268 bytes — two rank-1 tensors on the text-fusion projector.
-    name: KREA2_PROJECTOR_LORA,
-    path: 'loras',
-    url: 'https://huggingface.co/Beinsezii/Krea-2-Turbo-Projector-Scale-LoRA-Diffusers/resolve/main/pytorch_lora_weights.safetensors',
-    sizeMb: 1,
-  },
-]
-
-const PRESETS: PresetDefinition[] = [
-  {
-    id: 'anima',
-    name: 'Anima',
-    description: 'Anime-style text-to-image',
-    files: [
-      {
-        name: 'anima-aesthetic-v1.1.safetensors',
-        path: 'diffusion_models',
-        url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors',
-        sizeMb: 4000,
-      },
-      ...ANIMA_SHARED_FILES,
-    ],
-  },
-  {
-    id: 'anima-turbo',
-    name: 'Anima Turbo',
-    description: 'Distilled Anima — same look, ~3× fewer steps',
-    files: [
-      {
-        name: 'anima-turbo-v1.0.safetensors',
-        path: 'diffusion_models',
-        url: 'https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.0.safetensors',
-        sizeMb: 4000,
-      },
-      ...ANIMA_SHARED_FILES,
-    ],
-  },
-  {
-    id: 'ernie-turbo',
-    name: 'Ernie Image Turbo',
-    description: 'Fast photorealistic generation',
-    files: [
-      {
-        name: 'ernie-image-turbo.safetensors',
-        path: 'diffusion_models',
-        url: 'https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/diffusion_models/ernie-image-turbo.safetensors',
-        sizeMb: 13000,
-      },
-      {
-        name: 'ministral-3-3b.safetensors',
-        path: 'text_encoders',
-        url: 'https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/text_encoders/ministral-3-3b.safetensors',
-        sizeMb: 6000,
-      },
-      {
-        name: 'ernie-image-prompt-enhancer.safetensors',
-        path: 'text_encoders',
-        url: 'https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/text_encoders/ernie-image-prompt-enhancer.safetensors',
-        sizeMb: 1500,
-      },
-      {
-        name: 'flux2-vae.safetensors',
-        path: 'vae',
-        url: 'https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/vae/flux2-vae.safetensors',
-        sizeMb: 335,
-      },
-    ],
-  },
-  {
-    id: 'krea2-turbo',
-    name: 'Krea2 Turbo',
-    description: 'Fast 8-step Krea2 — the everyday model',
-    files: [
-      {
-        name: 'krea2_turbo_fp8_scaled.safetensors',
-        path: 'diffusion_models',
-        url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_fp8_scaled.safetensors',
-        sizeMb: 12533,
-      },
-      ...KREA2_SHARED_FILES,
-    ],
-  },
-  {
-    id: 'krea2-raw',
-    name: 'Krea2 RAW',
-    description: 'Full 52-step Krea2 base — slower, highest fidelity',
-    files: [
-      {
-        name: 'krea2_raw_fp8_scaled.safetensors',
-        path: 'diffusion_models',
-        url: 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_raw_fp8_scaled.safetensors',
-        sizeMb: 12533,
-      },
-      ...KREA2_SHARED_FILES,
-    ],
-  },
-  {
-    id: 'z-image-turbo',
-    name: 'Z Image Turbo',
-    description: 'Fast turbo with optional 1.5× upscale',
-    files: [
-      {
-        name: 'z_image_turbo_bf16.safetensors',
-        path: 'diffusion_models',
-        url: 'https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors',
-        sizeMb: 12000,
-      },
-      {
-        name: 'qwen_3_4b.safetensors',
-        path: 'text_encoders',
-        url: 'https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors',
-        sizeMb: 8070,
-      },
-      {
-        name: 'ae.safetensors',
-        path: 'vae',
-        url: 'https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors',
-        sizeMb: 335,
-      },
-    ],
-  },
-  {
-    id: 'sdxl',
-    name: 'SDXL',
-    description: 'Stable Diffusion XL base 1.0',
-    files: [
-      {
-        name: 'sd_xl_base_1.0.safetensors',
-        path: 'checkpoints',
-        url: 'https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors',
-        sizeMb: 6940,
-      },
-      SDXL_VAE_FILE,
-    ],
-  },
-  {
-    id: 'pony',
-    name: 'Pony',
-    description: 'Pony Diffusion V6 XL (score_* tags)',
-    files: [
-      {
-        name: 'ponyDiffusionV6XL_v6StartWithThisOne.safetensors',
-        path: 'checkpoints',
-        url: 'https://huggingface.co/LyliaEngine/Pony_Diffusion_V6_XL/resolve/main/ponyDiffusionV6XL_v6StartWithThisOne.safetensors',
-        sizeMb: 6940,
-      },
-      SDXL_VAE_FILE,
-    ],
-  },
-  {
-    id: 'illustrious',
-    name: 'Illustrious',
-    description: 'Illustrious XL v0.1 (Danbooru anime base)',
-    files: [
-      {
-        name: 'Illustrious-XL-v0.1.safetensors',
-        path: 'checkpoints',
-        url: 'https://huggingface.co/OnomaAIResearch/Illustrious-xl-early-release-v0/resolve/main/Illustrious-XL-v0.1.safetensors',
-        sizeMb: 6940,
-      },
-      SDXL_VAE_FILE,
-    ],
-  },
-]
 
 // Synthetic preset so the LTX section can reuse the page's download flow + state
 // map (keyed `ltx23::<filename>`) without a real PRESETS entry.
 // Same rule as the H3 preset below: `id` must match the state-key prefix the
 // status probe writes, or every row sits at "idle" while the download reports
 // progress under a key nothing is reading.
-const CHARACTER_SHEET_PRESET: PresetDefinition = {
-  id: 'character-sheets',
-  name: 'Character sheets',
-  description: 'Multi-view reference sheet LoRAs for the Generate Image toggle',
-  files: [],
-}
-
 const LTX_PRESET: PresetDefinition = {
   id: 'ltx23',
   name: 'LTX 2.3 (Video)',
@@ -344,9 +105,15 @@ const DETAILER_PRESET: PresetDefinition = {
 // Face-swap models beyond what the ReActor installer fetches itself: the
 // FaceFusion hyperswap swappers (256px, stronger identity than inswapper —
 // 1c generally the best) and the GPEN-BFR-1024 restorer the swap chain uses
-// by default (face-swap.ts). All hosted on the same Gourieff/ReActor dataset
-// ReActor's own installer downloads from; sizes verified against the live
-// files 2026-07-17. Presence is detected via ReActorFaceSwap's own dropdowns.
+// by default (face-swap.ts). Those are hosted on the same Gourieff/ReActor
+// dataset ReActor's own installer downloads from; sizes verified against the
+// live files 2026-07-17. Presence is detected via ReActorFaceSwap's own dropdowns.
+//
+// AlphaFace is the exception on both counts: it comes straight from FaceFusion's
+// own asset releases (ReActor has never shipped it), and its presence is probed
+// through RaccoonPixelBoostSwap instead — ReActor cannot load it at all, so a
+// ReActorFaceSwap probe would report it missing forever. It also gets its own
+// models dir for the reason spelled out in the vendored pack's `_MODEL_DIRS`.
 const FACESWAP_ASSETS: DetailerAsset[] = [
   {
     name: 'GPEN-BFR-1024.onnx',
@@ -380,12 +147,38 @@ const FACESWAP_ASSETS: DetailerAsset[] = [
     nodeClass: 'ReActorFaceSwap',
     fieldName: 'swap_model',
   },
+  {
+    name: 'alphaface_256.onnx',
+    path: 'alphaface',
+    url: 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.9.0/alphaface_256.onnx',
+    sizeMb: 530,
+    nodeClass: 'RaccoonPixelBoostSwap',
+    fieldName: 'swap_model',
+  },
+  // FaceFusion's occlusion segmenter, used only by the VIDEO swap: it decides
+  // which pixels of an aligned face crop are really face, so a hand or a mic
+  // stays in front of the swapped face instead of being painted over. It runs on
+  // the 256px crop rather than the frame, which is what makes it affordable on
+  // every frame of a clip.
+  //
+  // Presence is probed through `RaccoonVideoFaceSwap.occlusion`, which is a combo
+  // of what is installed in `models/facefusion/` — the node exposes it that way
+  // precisely so this catalog and the swap dialog can both read availability off
+  // /object_info instead of needing a disk probe of their own.
+  {
+    name: 'xseg_1.onnx',
+    path: 'facefusion',
+    url: 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_1.onnx',
+    sizeMb: 67,
+    nodeClass: 'RaccoonVideoFaceSwap',
+    fieldName: 'occlusion',
+  },
 ]
 
 const FACESWAP_PRESET: PresetDefinition = {
   id: 'faceswap',
   name: 'Face Swap',
-  description: 'Hyperswap swap models + GPEN-BFR-1024 face restorer (requires ReActor)',
+  description: 'Hyperswap + AlphaFace swap models, the GPEN-BFR-1024 face restorer, and the occlusion mask for video swaps',
   files: [],
 }
 
@@ -446,6 +239,37 @@ const KREA2_NSFW_PRESET: PresetDefinition = {
   files: [],
 }
 
+// Qwen-Image 2.1's optional extras. The enhancer is its own 9.5 GB model rather
+// than the loaded text encoder, so it is a row of its own instead of part of the
+// presets — most prompts do not need it. Filename shared with the builder.
+const QWEN21_EXTRAS: DetailerAsset[] = [
+  {
+    name: QWEN21_PE_T2I,
+    path: 'text_encoders',
+    url: `https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/${QWEN21_PE_T2I}`,
+    sizeMb: 9032,
+    nodeClass: 'CLIPLoader',
+    fieldName: 'clip_name',
+  },
+  // BFS head swap (MIT) — the Edit preset's "Head swap" chip. Both builds:
+  // alternative is the default (won our comparison), v1.1 the author's pick.
+  ...(['alternative', 'v1.1'] as const).map((variant): DetailerAsset => ({
+    name: QWEN21_BFS_LORAS[variant],
+    path: 'loras',
+    url: qwen21BfsUrl(variant),
+    sizeMb: variant === 'alternative' ? 304 : 248,
+    nodeClass: 'LoraLoader',
+    fieldName: 'lora_name',
+  })),
+]
+
+const QWEN21_EXTRAS_PRESET: PresetDefinition = {
+  id: 'qwen21-extras',
+  name: 'Qwen-Image 2.1 extras',
+  description: 'Optional prompt enhancer and head-swap LoRAs for the Qwen-Image 2.1 models',
+  files: [],
+}
+
 // ControlNet + IP-Adapter reference models. Mirrors exactly what the installers
 // fetch (see install-windows.ps1 / install-linux.sh "ControlNet Aux + IP-Adapter"
 // step) so a user who skipped or whose install failed that step can grab them
@@ -467,6 +291,14 @@ const REFERENCE_ASSETS: DetailerAsset[] = [
     path: 'model_patches',
     url: 'https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/Z-Image-Turbo-Fun-Controlnet-Union-2.1-2601-8steps.safetensors',
     sizeMb: 6712,
+    nodeClass: 'ModelPatchLoader',
+    fieldName: 'name',
+  },
+  {
+    name: QWEN21_FUN_MODEL,
+    path: 'model_patches',
+    url: `https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/model_patches/${QWEN21_FUN_MODEL}`,
+    sizeMb: 3604,
     nodeClass: 'ModelPatchLoader',
     fieldName: 'name',
   },
@@ -494,6 +326,115 @@ const REFERENCE_PRESET: PresetDefinition = {
   description: 'Reference-guidance models (ControlNet, IP-Adapter, Z-Image Fun patch)',
   files: [],
 }
+
+// ─── Catalog ──────────────────────────────────────────────────────────────────
+
+type Category = 'image' | 'video' | 'face' | 'extras'
+
+/** One downloadable file, whichever list above it came from. No `url` = import by hand. */
+interface CatalogFile {
+  name: string
+  path: string
+  url?: string
+  sizeMb: number
+  /** Where a file without a `url` comes from. */
+  source?: string
+  /** Not needed to render — an extra; never makes the row read as half-installed. */
+  optional?: boolean
+}
+
+/** One collapsible row. `id` is the state-key prefix that entry's probe writes. */
+interface CatalogEntry {
+  id: string
+  /** Image presets: the family, named as on the Generate panel; `name` is then the variant. */
+  family?: string
+  name: string
+  description: string
+  category: Category
+  files: CatalogFile[]
+}
+
+const GROUPS: { id: Category; chip: string; heading: string }[] = [
+  { id: 'image', chip: 'Image', heading: 'Image models' },
+  { id: 'video', chip: 'Video', heading: 'Video models' },
+  { id: 'face', chip: 'Face', heading: 'Face' },
+  { id: 'extras', chip: 'Extras', heading: 'Extras' },
+]
+const CHIPS: { id: Category | 'all'; label: string }[] = [
+  { id: 'all', label: 'All' },
+  ...GROUPS.map((g) => ({ id: g.id, label: g.chip })),
+]
+/** Which chip was picked last — a per-browser convenience, nothing depends on it. */
+const CATEGORY_KEY = 'raccoon-studio:models-category'
+
+const fromAsset = (a: ModelAsset): CatalogFile =>
+  ({ name: a.name, path: a.folder, url: a.url, sizeMb: a.sizeMb, source: a.source, optional: a.optional })
+
+const CATALOG: CatalogEntry[] = [
+  // Image presets share their ids with the Generate presets, so they take the
+  // same family · variant names.
+  ...IMAGE_PRESETS.map((p): CatalogEntry => {
+    const n = presetNameById(p.id)
+    return { ...p, category: 'image', ...(n && { family: n.family, name: n.variant }) }
+  }),
+  {
+    id: LTX_PRESET.id,
+    name: 'LTX 2.3',
+    category: 'video',
+    description: `Models for the Generate Videos workflow. ${LTX23_ASSETS.filter((a) => !a.url).length} files have no public mirror — bring them in with Import… (or copy from an existing ComfyUI install).`,
+    files: LTX23_ASSETS.map(fromAsset),
+  },
+  {
+    id: MINIMAX_H3_PRESET.id,
+    name: 'MiniMax H3',
+    category: 'video',
+    description: 'Video with natively synced stereo audio, 24 fps. The first four files are required — the audio VAE included, or clips come out silent — and total ~42.5 GB; the rest are optional — the Turbo/ref2v/realism files each unlock one mode in the video form, 10Eros Max is an uncensored finetune you pick as a checkpoint there, and the Mystic style LoRAs are picked by hand in its LoRA slots. Needs ComfyUI 0.30.0 or newer.',
+    files: MINIMAX_H3_ASSETS.map(fromAsset),
+  },
+  {
+    id: DETAILER_PRESET.id,
+    name: DETAILER_PRESET.name,
+    category: 'face',
+    description: 'Models for the Face Detailer stage. Requires ComfyUI Impact Pack + Impact-Subpack.',
+    files: DETAILER_ASSETS,
+  },
+  {
+    id: FACESWAP_PRESET.id,
+    name: FACESWAP_PRESET.name,
+    category: 'face',
+    description: '256px swap models and the GPEN-BFR-1024 face restorer the swap chain uses by default. Hyperswap 1C has the best likeness on straight-on faces; AlphaFace holds up better when the head is turned. Hyperswap and GPEN need the ReActor node; AlphaFace runs through the bundled pixel-boost node.',
+    files: FACESWAP_ASSETS,
+  },
+  {
+    id: REFERENCE_PRESET.id,
+    name: REFERENCE_PRESET.name,
+    category: 'extras',
+    description: 'ControlNet, IP-Adapter, and the Z-Image and Qwen-Image 2.1 Fun ControlNet patches. Needed to enable the ControlNet / IP-Adapter toggles in Generate.',
+    files: REFERENCE_ASSETS,
+  },
+  {
+    // The optional heavyweight uncensor model
+    id: KREA2_NSFW_PRESET.id,
+    name: KREA2_NSFW_PRESET.name,
+    category: 'extras',
+    description: 'Kroma is a re-trained, uncensored version of Krea2. Optional — the Krea2 models already come with a small uncensor patch that costs you nothing, and that is enough for most prompts. Kroma goes further (more willing, better bodies and skin) but it also changes the look of every image and adds 1.9 GB. Once installed, pick it under NSFW in Generate.',
+    files: KREA2_NSFW_LORAS,
+  },
+  {
+    id: KREA2_STYLE_PRESET.id,
+    name: KREA2_STYLE_PRESET.name,
+    category: 'extras',
+    description: 'Optional style LoRAs for the Krea2 models. None is required to generate — grab only the looks you want. They show up in the LoRA picker in Generate once installed.',
+    files: KREA2_STYLE_LORAS,
+  },
+  {
+    id: QWEN21_EXTRAS_PRESET.id,
+    name: QWEN21_EXTRAS_PRESET.name,
+    category: 'extras',
+    description: "Qwen's own prompt enhancer, a separate 9.5 GB model: it turns a short idea into the long, literal description Qwen-Image 2.1 renders best — once installed, the Prompt enhancer switch in Generate turns on for the Qwen presets. Plus the two BFS head-swap LoRAs (MIT) for the Edit preset's Head swap chip: Alternative (default) and v1.1. Only swap in a person who has agreed to it. Qwen Research License — research or evaluation use only.",
+    files: QWEN21_EXTRAS,
+  },
+]
 
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -528,7 +469,7 @@ export default function ModelsPage() {
       const ckptNames = comboOptions(ckptData, 'CheckpointLoaderSimple', 'ckpt_name')
 
       const allPresent = [...unetNames, ...clipNames, ...vaeNames, ...ckptNames]
-      for (const preset of PRESETS) {
+      for (const preset of IMAGE_PRESETS) {
         for (const file of preset.files) {
           const key = `${preset.id}::${file.name}`
           const present = allPresent.some((n) => n === file.name || n.endsWith('/' + file.name))
@@ -573,13 +514,6 @@ export default function ModelsPage() {
       }
       for (const asset of MINIMAX_H3_ASSETS) {
         patchState(`minimax-h3::${asset.name}`, {
-          status: assetInstalled(asset.name, available) ? 'present' : 'missing',
-          progress: 0,
-        })
-      }
-      // Character-sheet LoRAs live in models/loras, already unioned above.
-      for (const asset of CHARACTER_SHEET_ASSETS) {
-        patchState(`character-sheets::${asset.name}`, {
           status: assetInstalled(asset.name, available) ? 'present' : 'missing',
           progress: 0,
         })
@@ -646,6 +580,7 @@ export default function ModelsPage() {
       const groups = [
         ['reference', REFERENCE_ASSETS],
         ['faceswap', FACESWAP_ASSETS],
+        [QWEN21_EXTRAS_PRESET.id, QWEN21_EXTRAS],
       ] as const
       for (const [prefix, assets] of groups) {
         for (const asset of assets) {
@@ -679,6 +614,22 @@ export default function ModelsPage() {
   // download or a run of imports asks once, when the last transfer settles.
   const [restartOpen, setRestartOpen] = useState(false)
   const [tab, setTab] = useState<'catalog' | 'mine' | 'civitai'>('catalog')
+  const [category, setCategory] = useState<Category | 'all'>('all')
+  const [importOpen, setImportOpen] = useState(false)
+  // Simple (spec §5): two tabs — the file list (My Models) is Advanced only.
+  const simple = useUiMode() === 'simple'
+  const shownTab = simple && tab === 'mine' ? 'catalog' : tab
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CATEGORY_KEY)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore from storage
+      if (saved && CHIPS.some((c) => c.id === saved)) setCategory(saved as Category | 'all')
+    } catch { /* storage unavailable */ }
+  }, [])
+  const pickCategory = (c: Category | 'all') => {
+    setCategory(c)
+    try { localStorage.setItem(CATEGORY_KEY, c) } catch { /* quota or unavailable */ }
+  }
   const [justConnected, setJustConnected] = useState(false)
 
   /**
@@ -807,8 +758,9 @@ export default function ModelsPage() {
    * returns as soon as the job is registered and the poll below reports it, so
    * a download outlives the page that started it.
    */
-  const handleDownload = async (preset: PresetDefinition, file: ModelFile) => {
-    const key = `${preset.id}::${file.name}`
+  const handleDownload = async (entryId: string, file: CatalogFile) => {
+    if (!file.url) return // manual-only file; its row offers no download
+    const key = `${entryId}::${file.name}`
     patchState(key, { status: 'downloading', progress: 0, received: 0, total: 0 })
     try {
       const res = await fetch('/api/models/download', {
@@ -848,24 +800,36 @@ export default function ModelsPage() {
         </div>
         <div>
           <h1 className="font-heading text-2xl font-semibold tracking-tight leading-none">Models</h1>
-          <p className="text-sm text-muted-foreground mt-1.5">
-            Download a preset to start generating, import your own, or browse Civitai.
-          </p>
+          {simple ? (
+            <p className="mt-1.5 text-sm text-muted-foreground">Download models that fit your computer, or add your own.</p>
+          ) : (
+            <>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                Not sure what to get? <Link href="/setup" className="font-medium text-foreground underline">Start here</Link> — it picks models that fit your computer.
+              </p>
+              <p className="text-sm text-muted-foreground mt-1.5">
+                Download a preset to start generating, import your own, or browse Civitai.
+              </p>
+            </>
+          )}
+        </div>
+        <div className="ml-auto flex items-center gap-2.5">
+          <GuideChip slug={shownTab === 'civitai' ? 'civitai' : 'models'} />
+          <SimpleAdvancedSwitch />
         </div>
       </div>
 
       {/* Tab strip */}
       <div className="flex gap-1 bg-muted rounded-lg p-1 w-fit">
-        {([
-          ['catalog', 'Catalog'],
-          ['mine', 'My Models'],
-          ['civitai', 'Civitai Browser'],
-        ] as const).map(([id, label]) => (
+        {(simple
+          ? ([['catalog', 'Models'], ['civitai', 'Civitai Browser']] as const)
+          : ([['catalog', 'Catalog'], ['mine', 'My Models'], ['civitai', 'Civitai Browser']] as const)
+        ).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
             className={`text-xs font-semibold px-3.5 py-1.5 rounded-md ${
-              tab === id
+              shownTab === id
                 ? 'bg-gradient-to-br from-primary to-[#ffa64d] text-primary-foreground'
                 : 'text-muted-foreground'
             }`}
@@ -879,9 +843,9 @@ export default function ModelsPage() {
           the dynamic chunk are shared, and only the Civitai pane pays for the
           sign-in state. What is installed no longer sits behind a Civitai
           account, which it never needed. */}
-      {tab === 'mine' && <MyModelsTab pane="library" />}
+      {shownTab === 'mine' && <MyModelsTab pane="library" />}
 
-      {tab === 'civitai' && (
+      {shownTab === 'civitai' && (
         <MyModelsTab
           pane="civitai"
           activeTransfers={liveTransfers}
@@ -899,176 +863,72 @@ export default function ModelsPage() {
         />
       )}
 
-      {tab === 'catalog' && (<>
+      {/* Simple (spec §5). Its own import strip, opened by "Add a model file…": a mode
+          switch mid-import restarts only the progress row — the import itself runs on the server. */}
+      {shownTab === 'catalog' && simple && (
+        <>
+          <SimpleModels onSearchCivitai={() => setTab('civitai')} onAddFile={() => setImportOpen(true)} />
+          <div className={importOpen ? undefined : 'hidden'}>
+            <ImportPanel onBegin={() => transfers.begin()} onEnd={(ok) => transfers.end(ok)} />
+          </div>
+        </>
+      )}
 
-      {/* Import any LoRA or checkpoint — no filename rules, no Patreon key. */}
-      <ImportPanel onBegin={() => transfers.begin()} onEnd={(ok) => transfers.end(ok)} />
+      {shownTab === 'catalog' && !simple && (<>
 
-      {/* Preset cards — 3-column grid */}
-      <div className="space-y-3">
-      <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Image Models</h2>
-      {/* data-tour: what the first-run tour rings on its Models step — "download
-          one of these" is the whole point of the page for a new install. On the
-          grid, not the section, so the ring doesn't cut through the heading. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" data-tour="/models">
-        {PRESETS.map((preset) => (
-          <PresetCard
-            key={preset.id}
-            preset={preset}
-            states={states}
-            onDownload={(file) => void handleDownload(preset, file)}
-            onCancel={(file) => cancelDownload(`${preset.id}::${file.name}`)}
-          />
+      {/* Toolbar — category chips, and Import… opening the import strip */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* A filter, not navigation: kept quieter than the orange tab strip above. */}
+        {CHIPS.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            aria-pressed={category === c.id}
+            onClick={() => pickCategory(c.id)}
+            className={`h-7 rounded-full border px-3 text-xs font-medium transition-colors ${
+              category === c.id
+                ? 'border-primary/50 bg-primary/10 text-foreground'
+                : 'border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {c.label}
+          </button>
         ))}
+        <Button
+          variant="outline"
+          className="ml-auto h-8 gap-1.5 px-3 text-xs"
+          aria-expanded={importOpen}
+          onClick={() => setImportOpen((o) => !o)}
+        >
+          <FolderInput className="h-3.5 w-3.5" /> Import…
+        </Button>
       </div>
+
+      {/* Import any LoRA or checkpoint — no filename rules, no Patreon key. Kept
+          mounted while closed, so an import in flight keeps its row. */}
+      <div className={importOpen ? undefined : 'hidden'}>
+        <ImportPanel onBegin={() => transfers.begin()} onEnd={(ok) => transfers.end(ok)} />
       </div>
 
-      {/* Character-sheet LoRAs for the Generate Image toggle */}
-      <ModelAssetSection
-        title="Character sheets (Image)"
-        blurb="Turns on the Character sheet switch in Generate Image, which renders your subject from three angles as a reference for MiniMax H3 video. One per model family — install only the ones you generate with. The Anima LoRA has no public mirror (its licence forbids re-hosting); import it below, or grab it from the Civitai link."
-        assets={CHARACTER_SHEET_ASSETS}
-        keyPrefix={CHARACTER_SHEET_PRESET.id}
-        states={states}
-        onDownload={(asset) =>
-          void handleDownload(CHARACTER_SHEET_PRESET, {
-            name: asset.name,
-            path: asset.folder,
-            url: asset.url ?? '',
-            sizeMb: asset.sizeMb,
-          })
-        }
-        onCancel={(asset) => cancelDownload(`${CHARACTER_SHEET_PRESET.id}::${asset.name}`)}
-      />
 
-      {/* LTX 2.3 video models */}
-      <ModelAssetSection
-        title="LTX 2.3 (Video)"
-        blurb={`Models for the Generate Videos workflow. ${LTX23_ASSETS.filter((a) => !a.url).length} files have no public mirror — import them below (or copy from an existing ComfyUI install).`}
-        assets={LTX23_ASSETS}
-        keyPrefix={LTX_PRESET.id}
-        states={states}
-        onDownload={(asset) =>
-          void handleDownload(LTX_PRESET, {
-            name: asset.name,
-            path: asset.folder,
-            url: asset.url ?? '',
-            sizeMb: asset.sizeMb,
-          })
-        }
-        onCancel={(asset) => cancelDownload(`${LTX_PRESET.id}::${asset.name}`)}
-      />
-
-      {/* MiniMax H3 video models */}
-      <ModelAssetSection
-        title="MiniMax H3 (Video)"
-        blurb="Video with natively synced stereo audio, 24 fps. The first four files are required — the audio VAE included, or clips come out silent — and total ~42.5 GB; the rest are optional — the Turbo/ref2v/realism files each unlock one mode in the video form, 10Eros Max is an uncensored finetune you pick as a checkpoint there, and the Mystic style LoRAs are picked by hand in its LoRA slots. Needs ComfyUI 0.30.0 or newer."
-        assets={MINIMAX_H3_ASSETS}
-        keyPrefix={MINIMAX_H3_PRESET.id}
-        states={states}
-        onDownload={(asset) =>
-          void handleDownload(MINIMAX_H3_PRESET, {
-            name: asset.name,
-            path: asset.folder,
-            url: asset.url ?? '',
-            sizeMb: asset.sizeMb,
-          })
-        }
-        onCancel={(asset) => cancelDownload(`${MINIMAX_H3_PRESET.id}::${asset.name}`)}
-      />
-
-      {/* ControlNet + IP-Adapter reference models */}
-      <AssetSection
-        assets={REFERENCE_ASSETS}
-        keyPrefix="reference"
-        title={REFERENCE_PRESET.name}
-        description="ControlNet, IP-Adapter, and the Z-Image Fun ControlNet patch. Needed to enable the ControlNet / IP-Adapter toggles in Generate."
-        states={states}
-        onDownload={(asset) =>
-          void handleDownload(REFERENCE_PRESET, {
-            name: asset.name,
-            path: asset.path,
-            url: asset.url,
-            sizeMb: asset.sizeMb,
-          })
-        }
-        onCancel={(asset) => cancelDownload(`${REFERENCE_PRESET.id}::${asset.name}`)}
-      />
-
-      {/* Face Detailer models */}
-      <AssetSection
-        assets={DETAILER_ASSETS}
-        keyPrefix="detailer"
-        title={DETAILER_PRESET.name}
-        description="Models for the Face Detailer stage. Requires ComfyUI Impact Pack + Impact-Subpack."
-        states={states}
-        onDownload={(asset) =>
-          void handleDownload(DETAILER_PRESET, {
-            name: asset.name,
-            path: asset.path,
-            url: asset.url,
-            sizeMb: asset.sizeMb,
-          })
-        }
-        onCancel={(asset) => cancelDownload(`${DETAILER_PRESET.id}::${asset.name}`)}
-      />
-
-      {/* Face-swap models (hyperswap + GPEN restore) */}
-      <AssetSection
-        assets={FACESWAP_ASSETS}
-        keyPrefix="faceswap"
-        title={FACESWAP_PRESET.name}
-        description="Hyperswap 256px swap models (1C has the best likeness) and the GPEN-BFR-1024 face restorer the swap chain uses by default. Requires the ReActor node."
-        states={states}
-        onDownload={(asset) =>
-          void handleDownload(FACESWAP_PRESET, {
-            name: asset.name,
-            path: asset.path,
-            url: asset.url,
-            sizeMb: asset.sizeMb,
-          })
-        }
-        onCancel={(asset) => cancelDownload(`${FACESWAP_PRESET.id}::${asset.name}`)}
-      />
-
-      {/* Krea2 NSFW — the optional heavyweight uncensor model */}
-      <AssetSection
-        assets={KREA2_NSFW_LORAS}
-        keyPrefix={KREA2_NSFW_PRESET.id}
-        title={KREA2_NSFW_PRESET.name}
-        description="Kroma is a re-trained, uncensored version of Krea2. Optional — the Krea2 models already come with a small uncensor patch that costs you nothing, and that is enough for most prompts. Kroma goes further (more willing, better bodies and skin) but it also changes the look of every image and adds 1.9 GB. Once installed, pick it under NSFW in Generate."
-        states={states}
-        onDownload={(asset) =>
-          void handleDownload(KREA2_NSFW_PRESET, {
-            name: asset.name,
-            path: asset.path,
-            url: asset.url,
-            sizeMb: asset.sizeMb,
-          })
-        }
-        onCancel={(asset) => cancelDownload(`${KREA2_NSFW_PRESET.id}::${asset.name}`)}
-      />
-
-      {/* Krea2 style LoRAs — optional looks, pick any */}
-      <AssetSection
-        assets={KREA2_STYLE_LORAS}
-        keyPrefix="krea2-styles"
-        title={KREA2_STYLE_PRESET.name}
-        description="Optional style LoRAs for the Krea2 models. None is required to generate — grab only the looks you want. They show up in the LoRA picker in Generate once installed."
-        states={states}
-        onDownload={(asset) =>
-          void handleDownload(KREA2_STYLE_PRESET, {
-            name: asset.name,
-            path: asset.path,
-            url: asset.url,
-            sizeMb: asset.sizeMb,
-          })
-        }
-        onCancel={(asset) => cancelDownload(`${KREA2_STYLE_PRESET.id}::${asset.name}`)}
-      />
-
-      {/* Manage installed models — disk usage + delete */}
-      <ManageModelsSection />
+      {GROUPS.filter((g) => category === 'all' || category === g.id).map((g) => (
+        <section key={g.id} className="space-y-2">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">{g.heading}</h2>
+          {/* data-tour: what the first-run tour rings on its Models step — "download
+              one of these" is the whole point of the page for a new install. */}
+          <div className="space-y-2" data-tour={g.id === 'image' ? '/models' : undefined}>
+            {CATALOG.filter((e) => e.category === g.id).map((entry) => (
+              <CatalogRow
+                key={entry.id}
+                entry={entry}
+                states={states}
+                onDownload={(file) => void handleDownload(entry.id, file)}
+                onCancel={(file) => cancelDownload(`${entry.id}::${file.name}`)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
 
       </>)}
 
@@ -1090,60 +950,115 @@ export default function ModelsPage() {
   )
 }
 
-// ─── PresetCard ───────────────────────────────────────────────────────────────
+// ─── CatalogRow ───────────────────────────────────────────────────────────────
 
-function PresetCard({
-  preset,
+const IDLE: DownloadState = { status: 'idle', progress: 0 }
+const isInstalled = (st: DownloadState) => st.status === 'present' || st.status === 'done'
+const fmtMb = (mb: number) => (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${Math.round(mb)} MB`)
+
+/**
+ * One catalog entry as a single collapsible row: status and Download act on the
+ * collapsed line, the file list opens underneath. Rows start collapsed — most
+ * entries on a real install are partly installed (optional files), so
+ * "collapse once complete" would leave most of them open.
+ */
+function CatalogRow({
+  entry,
   states,
   onDownload,
   onCancel,
 }: {
-  preset: PresetDefinition
+  entry: CatalogEntry
   states: Record<string, DownloadState>
-  onDownload: (file: ModelFile) => void
-  onCancel: (file: ModelFile) => void
+  onDownload: (file: CatalogFile) => void
+  onCancel: (file: CatalogFile) => void
 }) {
-  const missingFiles = preset.files.filter((f) => {
-    const s = states[`${preset.id}::${f.name}`]?.status
-    return !s || s === 'missing' || s === 'idle'
-  })
+  const [open, setOpen] = useState(false)
+  const rows = entry.files.map((file) => ({ file, state: states[`${entry.id}::${file.name}`] ?? IDLE }))
+  const downloading = rows.filter((r) => r.state.status === 'downloading')
+  const failed = rows.filter((r) => r.state.status === 'error').length
+  // Ready / one size (fixes 2 + 6): optional extras never make a row look half-installed.
+  // Only files with a verified public URL can be fetched here; the rest are imported by hand.
+  const sum = rowSummary(rows.map((r) => ({
+    optional: r.file.optional, sizeMb: r.file.sizeMb, installed: isInstalled(r.state),
+    downloadable: !!r.file.url && (r.state.status === 'missing' || r.state.status === 'idle'),
+  })))
+  // Download takes what the size shows (the required files); extras come after, as "Get N extras".
+  const missing = sum.fetch.map((i) => rows[i])
+
+  const status =
+    downloading.length > 0 ? (
+      <span className="text-primary tabular-nums">
+        Downloading {Math.round(downloading.reduce((n, r) => n + r.state.progress, 0) / downloading.length)}%
+      </span>
+    ) : failed > 0 ? (
+      <span className="text-destructive">{failed} failed</span>
+    ) : rows.every((r) => r.state.status === 'idle') ? (
+      <span>Checking…</span>
+    ) : sum.ready ? (
+      <span className="flex items-center gap-1 text-green-500"><CheckCircle className="h-3.5 w-3.5" /> Ready</span>
+    ) : sum.installedRequired === 0 ? (
+      <span>Not installed</span>
+    ) : (
+      <span>{sum.installedRequired} of {sum.required} needed files</span>
+    )
 
   return (
-    <div className="group rounded-xl border border-border bg-card p-3.5 flex flex-col gap-2.5 transition-colors hover:border-primary/30">
-      <div>
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/12 ring-1 ring-primary/20 shrink-0">
-            <Package className="h-3.5 w-3.5 text-primary" />
-          </div>
-          <h2 className="font-heading font-bold text-base tracking-tight">{preset.name}</h2>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1 leading-snug line-clamp-2">{preset.description}</p>
-      </div>
-
-      <div className="flex flex-col gap-1.5 flex-1">
-        {preset.files.map((file) => {
-          const key = `${preset.id}::${file.name}`
-          const state = states[key] ?? { status: 'idle', progress: 0 }
-          return (
-            <FileRow
-              key={key}
-              file={file}
-              state={state}
-              onDownload={() => onDownload(file)}
-              onCancel={() => onCancel(file)}
-            />
-          )
-        })}
-      </div>
-
-      {missingFiles.length > 0 && (
-        <Button
-          className="w-full h-8 mt-auto text-sm font-semibold shadow-md shadow-primary/20"
-          onClick={() => missingFiles.forEach((f) => onDownload(f))}
+    <div className="rounded-xl border border-border bg-card transition-colors hover:border-primary/30">
+      <div className="flex items-center gap-3 px-3.5 py-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
         >
-          <Download className="h-3.5 w-3.5 mr-1.5" />
-          Download all
-        </Button>
+          <ChevronRight className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
+          <span className="flex w-52 shrink-0 items-baseline gap-2">
+            {entry.family && (
+              <span className="w-[4.5rem] shrink-0 truncate font-heading text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                {entry.family}
+              </span>
+            )}
+            <span className="min-w-0 truncate font-heading text-sm font-bold tracking-tight">{entry.name}</span>
+          </span>
+          {!open && <span className="min-w-0 flex-1 text-xs text-muted-foreground line-clamp-2">{entry.description}</span>}
+        </button>
+        <span className="w-36 shrink-0 text-xs text-muted-foreground">{status}</span>
+        <span className="w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground" title={sum.sizeIsDownload ? 'Still to download' : 'On disk'}>
+          {fmtMb(sum.sizeMb)}
+        </span>
+        <div className="flex h-8 w-44 shrink-0 items-center justify-end">
+          {missing.length > 0 && (
+            <Button
+              // An image preset with nothing installed is the call to action — it
+              // cannot generate yet. Topping up, and optional packs, stay quiet.
+              variant={sum.installedRequired === 0 && !sum.ready && entry.category === 'image' ? 'default' : 'outline'}
+              className="h-8 px-3 text-xs font-semibold"
+              title={missing.map((r) => r.file.name).join('\n')}
+              onClick={() => missing.forEach((r) => onDownload(r.file))}
+            >
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+              {sum.ready ? `Get ${missing.length} extra${missing.length > 1 ? 's' : ''}` : 'Download'}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {open && (
+        <div className="space-y-3 border-t border-border px-3.5 py-3">
+          <p className="text-xs leading-relaxed text-muted-foreground">{entry.description}</p>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {rows.map(({ file, state }) => (
+              <FileRow
+                key={file.name}
+                file={file}
+                state={state}
+                onDownload={() => onDownload(file)}
+                onCancel={() => onCancel(file)}
+              />
+            ))}
+          </div>
+        </div>
       )}
     </div>
   )
@@ -1187,140 +1102,12 @@ function FileRow({
   onDownload,
   onCancel,
 }: {
-  file: ModelFile
+  file: CatalogFile
   state: DownloadState
   onDownload: () => void
   onCancel?: () => void
 }) {
-  const barWidth =
-    state.status === 'present' || state.status === 'done' ? 100
-    : state.status === 'downloading' ? state.progress
-    : 0
-
-  const barColor =
-    state.status === 'present' || state.status === 'done' ? 'color-mix(in oklch, #22c55e 70%, transparent)'
-    : state.status === 'error' ? 'var(--destructive)'
-    : 'var(--action)'
-
-  const icon =
-    state.status === 'present' || state.status === 'done' ? (
-      <CheckCircle className="h-4 w-4 text-green-500 shrink-0" />
-    ) : state.status === 'error' ? (
-      <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
-    ) : (
-      <div className="h-4 w-4 rounded-full border border-muted-foreground/50 shrink-0" />
-    )
-
-  return (
-    <div className="relative flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 overflow-hidden">
-      {icon}
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-mono truncate leading-tight">{file.name}</p>
-        <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">
-          {file.path} · {file.sizeMb >= 1000 ? `${(file.sizeMb / 1000).toFixed(1)} GB` : `${file.sizeMb} MB`}
-        </p>
-      </div>
-      <div className="shrink-0">
-        {state.status === 'present' || state.status === 'done' ? (
-          <Badge variant="secondary" className="text-[11px] h-5 px-2">Installed</Badge>
-        ) : state.status === 'downloading' ? (
-          <DownloadingBadge state={state} onCancel={onCancel} />
-        ) : (
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onDownload} title="Download">
-            <Download className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
-
-      {/* Thin progress bar */}
-      <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-muted/20">
-        <div
-          className="h-full transition-all duration-300 ease-out"
-          style={{ width: `${barWidth}%`, backgroundColor: barColor }}
-        />
-      </div>
-    </div>
-  )
-}
-
-// ─── ModelAssetSection ───────────────────────────────────────────────────────
-
-/**
- * One video family's model files. Shared by LTX 2.3 and MiniMax H3 — the two
- * differ only in title, blurb, asset list and state-key prefix, so they render
- * through the same component rather than a copied one.
- */
-function ModelAssetSection({
-  title,
-  blurb,
-  assets,
-  keyPrefix,
-  states,
-  onDownload,
-  onCancel,
-}: {
-  title: string
-  blurb: string
-  assets: ModelAsset[]
-  keyPrefix: string
-  states: Record<string, DownloadState>
-  onDownload: (asset: ModelAsset) => void
-  onCancel: (asset: ModelAsset) => void
-}) {
-  const isMissing = (a: ModelAsset) => {
-    const s = states[`${keyPrefix}::${a.name}`]?.status
-    return !s || s === 'missing' || s === 'idle'
-  }
-  // Only files with a verified public URL can be fetched here; the rest are
-  // imported manually via the section below.
-  const downloadableMissing = assets.filter((a) => a.url && isMissing(a))
-  const totalGb = downloadableMissing.reduce((n, a) => n + a.sizeMb, 0) / 1000
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">{title}</h2>
-          <p className="text-xs text-muted-foreground mt-1">{blurb}</p>
-        </div>
-        {downloadableMissing.length > 0 && (
-          <Button
-            className="h-9 font-semibold shadow-md shadow-primary/20 shrink-0"
-            onClick={() => downloadableMissing.forEach((a) => onDownload(a))}
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Download available ({downloadableMissing.length} · {totalGb.toFixed(1)} GB)
-          </Button>
-        )}
-      </div>
-
-      <div className="rounded-xl border border-border bg-card p-4 grid grid-cols-1 md:grid-cols-2 gap-2">
-        {assets.map((asset) => (
-          <LtxAssetRow
-            key={asset.name}
-            asset={asset}
-            state={states[`${keyPrefix}::${asset.name}`] ?? { status: 'idle', progress: 0 }}
-            onDownload={() => onDownload(asset)}
-            onCancel={() => onCancel(asset)}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function LtxAssetRow({
-  asset,
-  state,
-  onDownload,
-  onCancel,
-}: {
-  asset: ModelAsset
-  state: DownloadState
-  onDownload: () => void
-  onCancel?: () => void
-}) {
-  const installed = state.status === 'present' || state.status === 'done'
+  const installed = isInstalled(state)
   const barWidth = installed ? 100 : state.status === 'downloading' ? state.progress : 0
   const barColor = installed
     ? 'color-mix(in oklch, #22c55e 70%, transparent)'
@@ -1338,10 +1125,10 @@ function LtxAssetRow({
         <div className="h-4 w-4 rounded-full border border-muted-foreground/50 shrink-0" />
       )}
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-mono truncate leading-tight">{asset.name}</p>
+        <p className="text-xs font-mono truncate leading-tight">{file.name}</p>
         <p className="text-[11px] text-muted-foreground leading-tight mt-0.5 truncate">
-          {asset.folder} · {asset.sizeMb >= 1000 ? `${(asset.sizeMb / 1000).toFixed(1)} GB` : `${asset.sizeMb} MB`}
-          {!asset.url && <span> · {asset.source}</span>}
+          {file.path} · {fmtMb(file.sizeMb)}{file.optional ? ' · optional' : ''}
+          {!file.url && file.source && <span> · {file.source}</span>}
         </p>
       </div>
       <div className="shrink-0">
@@ -1349,217 +1136,22 @@ function LtxAssetRow({
           <Badge variant="secondary" className="text-[11px] h-5 px-2">Installed</Badge>
         ) : state.status === 'downloading' ? (
           <DownloadingBadge state={state} onCancel={onCancel} />
-        ) : asset.url ? (
+        ) : file.url ? (
           <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onDownload} title="Download">
             <Download className="h-3.5 w-3.5" />
           </Button>
         ) : (
-          <Badge variant="outline" className="text-[11px] h-5 px-2" title={asset.source}>Manual</Badge>
+          <Badge variant="outline" className="text-[11px] h-5 px-2" title={file.source}>Manual</Badge>
         )}
       </div>
 
+      {/* Thin progress bar */}
       <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-muted/20">
         <div
           className="h-full transition-all duration-300 ease-out"
           style={{ width: `${barWidth}%`, backgroundColor: barColor }}
         />
       </div>
-    </div>
-  )
-}
-
-// ─── DetailerSection ──────────────────────────────────────────────────────────
-
-// Renders a grid of downloadable assets (detailer, ControlNet/IP-Adapter) with a
-// "Download all" action. Presence keys are `${keyPrefix}::${asset.name}`, matching
-// the per-section availability probes above.
-function AssetSection({
-  assets,
-  keyPrefix,
-  title,
-  description,
-  states,
-  onDownload,
-  onCancel,
-}: {
-  assets: DetailerAsset[]
-  keyPrefix: string
-  title: string
-  description: string
-  states: Record<string, DownloadState>
-  onDownload: (asset: DetailerAsset) => void
-  onCancel: (asset: DetailerAsset) => void
-}) {
-  const missingDownloadable = assets.filter((a) => {
-    const s = states[`${keyPrefix}::${a.name}`]?.status
-    return !s || s === 'missing' || s === 'idle'
-  })
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">{title}</h2>
-          <p className="text-xs text-muted-foreground mt-1">{description}</p>
-        </div>
-        {missingDownloadable.length > 0 && (
-          <Button
-            className="h-9 font-semibold shadow-md shadow-primary/20 shrink-0"
-            onClick={() => missingDownloadable.forEach((a) => onDownload(a))}
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Download all ({missingDownloadable.length})
-          </Button>
-        )}
-      </div>
-
-      <div className="rounded-xl border border-border bg-card p-4 grid grid-cols-1 md:grid-cols-2 gap-2">
-        {assets.map((asset) => {
-          const state = states[`${keyPrefix}::${asset.name}`] ?? { status: 'idle', progress: 0 }
-          const installed = state.status === 'present' || state.status === 'done'
-          const barWidth = installed ? 100 : state.status === 'downloading' ? state.progress : 0
-          const barColor = installed
-            ? 'color-mix(in oklch, #22c55e 70%, transparent)'
-            : state.status === 'error' ? 'var(--destructive)' : 'var(--action)'
-          return (
-            <div key={asset.name} className="relative flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 overflow-hidden">
-              {installed ? (
-                <CheckCircle className="h-4 w-4 text-green-500 shrink-0" />
-              ) : state.status === 'error' ? (
-                <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
-              ) : (
-                <div className="h-4 w-4 rounded-full border border-muted-foreground/50 shrink-0" />
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-mono truncate leading-tight">{asset.name}</p>
-                <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">
-                  {asset.path} · {asset.sizeMb >= 1000 ? `${(asset.sizeMb / 1000).toFixed(1)} GB` : `${asset.sizeMb} MB`}
-                </p>
-              </div>
-              <div className="shrink-0">
-                {installed ? (
-                  <Badge variant="secondary" className="text-[11px] h-5 px-2">Installed</Badge>
-                ) : state.status === 'downloading' ? (
-                  <DownloadingBadge state={state} onCancel={() => onCancel(asset)} />
-                ) : (
-                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onDownload(asset)} title="Download">
-                    <Download className="h-3.5 w-3.5" />
-                  </Button>
-                )}
-              </div>
-              <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-muted/20">
-                <div className="h-full transition-all duration-300 ease-out" style={{ width: `${barWidth}%`, backgroundColor: barColor }} />
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ─── ManageModelsSection ────────────────────────────────────────────────────────
-
-interface DiskFile { name: string; path: string; sizeBytes: number; mtime: string }
-interface DiskGroup { subfolder: string; sizeBytes: number; count: number; files: DiskFile[] }
-interface DiskUsage { modelsDir: string | null; total: { sizeBytes: number; count: number }; subfolders: DiskGroup[] }
-
-function fmtBytes(n: number): string {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`
-  if (n >= 1e3) return `${(n / 1e3).toFixed(0)} KB`
-  return `${n} B`
-}
-
-function ManageModelsSection() {
-  const [open, setOpen] = useState(false)
-  const [usage, setUsage] = useState<DiskUsage | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [pending, setPending] = useState<DiskFile | null>(null)
-
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/models/disk-usage', { cache: 'no-store' })
-      setUsage((await res.json()) as DiskUsage)
-    } catch { toast.error('Could not read disk usage') }
-    finally { setLoading(false) }
-  }, [])
-
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- lazy-load disk usage the first time the section opens
-  useEffect(() => { if (open && !usage) void refresh() }, [open, usage, refresh])
-
-  const doDelete = async (file: DiskFile) => {
-    try {
-      const res = await fetch('/api/models/delete', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: file.path }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      toast.success(`Deleted ${file.name}`)
-      await refresh()
-    } catch (e) {
-      toast.error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-  }
-
-  return (
-    <div className="rounded-lg border border-border bg-card">
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen((v) => !v)}>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <HardDrive className="h-3.5 w-3.5" />
-          <span>Manage installed models{usage && ` · ${fmtBytes(usage.total.sizeBytes)} across ${usage.total.count} files`}</span>
-        </div>
-        {open ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
-      </button>
-
-      {open && (
-        <div className="border-t border-border px-4 py-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-muted-foreground">Files are read straight from disk. Restart ComfyUI for changes to take effect.</p>
-            <Button size="sm" variant="outline" className="h-8 gap-1.5" disabled={loading} onClick={() => void refresh()}>
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
-            </Button>
-          </div>
-
-          {!usage?.modelsDir ? (
-            <p className="text-xs text-primary">Set <code>COMFYUI_MODELS_DIR</code> in <code>.env.local</code> to enable.</p>
-          ) : usage.subfolders.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">No model files found.</p>
-          ) : (
-            usage.subfolders.map((group) => (
-              <div key={group.subfolder} className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{group.subfolder}</h3>
-                  <span className="text-xs text-muted-foreground tabular-nums">{fmtBytes(group.sizeBytes)} · {group.count}</span>
-                </div>
-                <div className="space-y-1">
-                  {group.files.map((file) => (
-                    <div key={file.path} className="flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-mono truncate">{file.name}</p>
-                      </div>
-                      <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{fmtBytes(file.sizeBytes)}</span>
-                      <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive shrink-0"
-                        title="Delete" onClick={() => setPending(file)}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={pending !== null} onOpenChange={(v) => { if (!v) setPending(null) }}
-        title={pending ? `Delete ${pending.name}?` : ''}
-        description={pending ? `This permanently removes ${fmtBytes(pending.sizeBytes)} from disk and cannot be undone.` : ''}
-        confirmLabel="Delete" destructive
-        onConfirm={() => { if (pending) void doDelete(pending); setPending(null) }}
-      />
     </div>
   )
 }

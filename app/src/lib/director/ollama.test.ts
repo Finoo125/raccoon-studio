@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { setSettings } from '@/lib/settings/settings'
-import { buildStoryboardMessages, parseStoryboard, chatStoryboard, listOllamaModels } from './ollama'
+import { buildStoryboardMessages, parseStoryboard, chatStoryboard, listOllamaModels, chatText, listOllamaVisionModels } from './ollama'
 
 describe('buildStoryboardMessages', () => {
   it('produces a system + user message asking for N beats and the plot', () => {
@@ -134,5 +134,24 @@ describe('ollama uses settings base url', () => {
     // calls to read the first arg (the fetched URL).
     const calls = spy.mock.calls as unknown as unknown[][]
     expect(String(calls[0]?.[0])).toContain('http://configured:11434')
+  })
+})
+
+describe('vision', () => {
+  it('sends images on a message and lists only vision models', async () => {
+    const bodies: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: { body?: string }) => {
+      if (url.endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [{ name: 'see' }, { name: 'blind' }] }) }
+      if (url.endsWith('/api/show')) {
+        const m = JSON.parse(init!.body!).model
+        return { ok: true, json: async () => ({ capabilities: m === 'see' ? ['completion', 'vision'] : ['completion'] }) }
+      }
+      bodies.push(init!.body!)
+      return { ok: true, json: async () => ({ message: { content: ' A woman. ' } }) }
+    })
+    expect(await listOllamaVisionModels()).toEqual(['see'])
+    expect(await chatText('see', [{ role: 'user', content: 'Describe.', images: ['QUJD'] }])).toBe('A woman.')
+    expect(JSON.parse(bodies[0]).messages[0].images).toEqual(['QUJD'])
+    vi.unstubAllGlobals()
   })
 })

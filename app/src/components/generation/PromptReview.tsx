@@ -7,13 +7,19 @@ import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 
 interface PromptReviewProps {
-  status: string
-  isStreaming: boolean
-  error: string | null
+  /** The writer's stream; omitted where this box only holds typed text. */
+  status?: string
+  isStreaming?: boolean
+  error?: string | null
   prompt: string
   onPromptChange: (v: string) => void
-  onRefine: (instruction: string) => void
-  onStop: () => void
+  /** Omitted where there is nothing to refine with — Edit mode's instruction is sent as typed. */
+  onRefine?: (instruction: string) => void
+  onStop?: () => void
+  /** The refine button's label. */
+  refineLabel?: string
+  /** Why refine cannot run now (no writer, ComfyUI down…), or null. */
+  refineBlock?: string | null
   /** Director mode uses this field as the timeline's global prompt. */
   label?: string
   placeholder?: string
@@ -21,9 +27,10 @@ interface PromptReviewProps {
 
 export default function PromptReview({
   status, isStreaming, error,
-  prompt, onPromptChange, onRefine, onStop, label, placeholder,
+  prompt, onPromptChange, onRefine, onStop, label, placeholder, refineLabel = 'Refine', refineBlock,
 }: PromptReviewProps) {
   const [refineText, setRefineText] = useState('')
+  const canRefine = !isStreaming && !refineBlock && !!refineText.trim()
 
   return (
     <div className="space-y-2">
@@ -51,9 +58,7 @@ export default function PromptReview({
       <div className="space-y-2">
         <SectionLabel>{label ?? 'Final prompt'}</SectionLabel>
         <Textarea
-          placeholder={
-            placeholder ?? 'Enhance an idea above, or write/paste the final cinematic prompt here…'
-          }
+          placeholder={placeholder ?? 'Use ✨ Help me write, or write or paste the final prompt here…'}
           className="min-h-[160px] resize-y leading-relaxed text-sm font-mono"
           value={prompt}
           onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => onPromptChange(e.target.value)}
@@ -61,14 +66,15 @@ export default function PromptReview({
       </div>
 
       {/* Refine + kill */}
+      {onRefine && (
       <div className="flex gap-2">
         <Input
-          placeholder="Refine: e.g. make beat 2 rougher"
+          placeholder="What to change, e.g. make shot 2 rougher"
           className="h-9 flex-1 text-sm"
           value={refineText}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRefineText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && refineText.trim() && !isStreaming) {
+            if (e.key === 'Enter' && canRefine) {
               onRefine(refineText.trim())
               setRefineText('')
             }
@@ -77,12 +83,14 @@ export default function PromptReview({
         <Button
           variant="outline"
           className="h-9 px-3 text-sm shrink-0"
-          disabled={isStreaming || !refineText.trim() || !prompt.trim()}
+          disabled={!canRefine || !prompt.trim()}
+          title={refineBlock ?? undefined}
           onClick={() => { onRefine(refineText.trim()); setRefineText('') }}
         >
-          <Wand2 className="h-4 w-4 mr-1.5" /> Refine
+          <Wand2 className="h-4 w-4 mr-1.5" /> {refineLabel}
         </Button>
       </div>
+      )}
     </div>
   )
 }

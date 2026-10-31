@@ -13,7 +13,7 @@
  * second test here matters as much as the first — a guard that cannot tell
  * "slow" from "dead" is worse than no guard.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -178,5 +178,56 @@ describe('transfers outlive the page that started them', () => {
     const { error, transfer } = startTransfer({ url: trickleUrl, path: '../../etc', name: 'passwd' })
     expect(transfer).toBeUndefined()
     expect(error).toMatch(/outside the models folder/i)
+  })
+
+  // A model's files download as a set, and the browser counts the set finished
+  // only once every key reads done. A file that ended long before its last
+  // sibling must still be listed on the first poll after that sibling ends:
+  // pruning it there (it was older than RETAIN_MS, and nothing ran any more)
+  // left `summarize` waiting on a vanished key — "Downloading…" forever.
+  it('keeps a whole set listed until the store has been quiet for RETAIN_MS', async () => {
+    const { startTransfer, listTransfers, getTransfer } = await import('./transfers')
+    const { summarize } = await import('./download-client')
+    const RETAIN_MS = 10 * 60_000
+    const sleep = () => new Promise((r) => setTimeout(r, 50))
+    fs.mkdirSync(path.join(tmp, 'vae'), { recursive: true })
+    fs.writeFileSync(path.join(tmp, 'vae', 'early.safetensors'), 'x')
+    // The small file of the set settled eleven minutes before the big one ends.
+    const past = vi.spyOn(Date, 'now').mockReturnValue(Date.now() - RETAIN_MS - 60_000)
+    const early = startTransfer({ url: 'http://127.0.0.1:1/nope', path: 'vae', name: 'early.safetensors' }).transfer!
+    past.mockRestore()
+    const late = startTransfer({ url: trickleUrl, path: 'loras', name: 'late.safetensors' }).transfer!
+    const keys = [early.key, late.key]
+    while (getTransfer(late.key)!.status === 'running') await sleep()
+    // Earlier tests' cancellations settle asynchronously: nothing may still run.
+    while (listTransfers().some((t) => t.status === 'running')) await sleep()
+
+    // The poll right after the last file ended: the whole set, finished.
+    const list = listTransfers()
+    expect(list.map((t) => t.key)).toEqual(expect.arrayContaining(keys))
+    expect(summarize(list, keys).done).toBe(true)
+
+    const lastEnd = Math.max(...list.map((t) => t.endedAt ?? 0))
+    const almost = vi.spyOn(Date, 'now').mockReturnValue(lastEnd + RETAIN_MS - 1000)
+    try {
+      expect(listTransfers().map((t) => t.key)).toEqual(expect.arrayContaining(keys))
+    } finally { almost.mockRestore() }
+    // RETAIN_MS after the LAST end, the set goes together.
+    const quiet = vi.spyOn(Date, 'now').mockReturnValue(lastEnd + RETAIN_MS + 1000)
+    try {
+      const left = listTransfers().map((t) => t.key)
+      expect(left).not.toContain(early.key)
+      expect(left).not.toContain(late.key)
+    } finally { quiet.mockRestore() }
+  }, 20_000)
+
+  it('downloads under another root when given one, and keeps it fenced in', async () => {
+    const { startTransfer } = await import('./transfers')
+    const other = path.join(tmp, 'elsewhere')
+    fs.mkdirSync(path.join(other, 'downloads'), { recursive: true })
+    fs.writeFileSync(path.join(other, 'downloads', 'Setup.exe'), 'x')
+    const { transfer } = startTransfer({ url: 'http://127.0.0.1:1/nope', path: 'downloads', name: 'Setup.exe', root: other })
+    expect(transfer!.alreadyExists).toBe(true)
+    expect(startTransfer({ url: trickleUrl, path: '..', name: 'x', root: other }).error).toMatch(/outside/i)
   })
 })

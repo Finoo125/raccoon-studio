@@ -14,10 +14,14 @@ export function getSidecarDir(): string {
  * second server started against this checkout with a different
  * COMFYUI_OUTPUT_DIR would otherwise be served the first one's scan.
  */
-const CACHE_FILE =
+const cacheFile = () =>
   process.env.RACCOON_GALLERY_CACHE ?? path.join(process.cwd(), '.gallery-cache.json')
-// How long a persisted scan is considered fresh before an automatic rescan.
+// A backstop only: a scan is reused while no gallery folder changed (folderStamp),
+// but a file rewritten in place changes no folder.
 const CACHE_TTL_MS = 10 * 60 * 1000
+// A file still being written when a scan ran changes no folder when it finishes,
+// so scans keep running for this long after the last folder change.
+const SETTLE_MS = 60 * 1000
 
 export function getImagesDir(): string {
   return path.join(OUTPUT_DIR, 'images')
@@ -27,7 +31,7 @@ export function getVideoDir(): string {
   return path.join(OUTPUT_DIR, 'video')
 }
 
-const VIDEO_RE = /\.(mp4|webm|mov|mkv|m4v)$/i
+export const VIDEO_RE = /\.(mp4|webm|mov|mkv|m4v)$/i
 
 // Auto-discover every workflow folder under output/images/ (e.g. ZIT, Anima,
 // ERNIE). This avoids a hardcoded list that breaks on renames or new models.
@@ -48,6 +52,9 @@ function discoverWorkflowFolders(imagesBase: string): string[] {
 }
 
 function getSidecarPath(imageId: string): string {
+  // Ids are base64url (imageId below); the routes pass the client's string straight in,
+  // so anything else — `../x`, `C:/x` — would put the sidecar somewhere else on disk.
+  if (!/^[A-Za-z0-9_-]+$/.test(imageId)) throw new Error(`Invalid image id: ${imageId}`)
   const dir = getSidecarDir()
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   return path.join(dir, `${imageId}.json`)
@@ -173,6 +180,32 @@ export interface ScanOptions {
   dimensions?: string // "WxH"
 }
 
+/** A small cached JPEG (api/gallery/thumb); `v` makes the URL change with the file. */
+function thumbUrl(id: string, stat: fs.Stats): string {
+  return `/api/gallery/thumb?id=${id}&v=${Math.round(stat.mtimeMs)}`
+}
+
+/**
+ * Newest mtime of every gallery folder. A folder's mtime moves when a file is
+ * added, removed or renamed in it, so this changes exactly when a rescan could
+ * find something — ~170 stats instead of one per file.
+ */
+function folderStamp(): number {
+  let newest = 0
+  const stamp = (dir: string) => {
+    newest = Math.max(newest, fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? 0)
+  }
+  for (const base of [getImagesDir(), getVideoDir()]) {
+    stamp(base)
+    for (const wf of discoverWorkflowFolders(base)) {
+      const wfDir = path.join(base, wf)
+      stamp(wfDir)
+      for (const date of discoverWorkflowFolders(wfDir)) stamp(path.join(wfDir, date))
+    }
+  }
+  return newest
+}
+
 // ---------------------------------------------------------------------------
 // Raw filesystem scan. Incremental: a file whose mtime matches the previous
 // scan reuses its cached metadata, so only new/changed files are read from
@@ -231,7 +264,7 @@ function scanRaw(prev: GalleryImage[] = []): GalleryImage[] {
           subfolder,
           dir: dateDir,
           url: viewUrl,
-          thumbnailUrl: viewUrl,
+          thumbnailUrl: thumbUrl(id, stat),
           createdAt: stat.mtime.toISOString(),
           mtimeMs: stat.mtimeMs,
           metadata,
@@ -298,7 +331,7 @@ function scanVideosRaw(sidecars: Map<string, { favorite: boolean; tags: string[]
           subfolder,
           dir: dateDir,
           url: viewUrl,
-          thumbnailUrl: viewUrl,
+          thumbnailUrl: thumbUrl(id, stat),
           createdAt: stat.mtime.toISOString(),
           mtimeMs: stat.mtimeMs,
           metadata: { workflow: preset },
@@ -319,14 +352,18 @@ function scanVideosRaw(sidecars: Map<string, { favorite: boolean; tags: string[]
 interface GalleryCache {
   version: number
   scannedAt: string
+  /** folderStamp() when the scan ran. */
+  stamp?: number
   images: GalleryImage[]
 }
 
-const GALLERY_CACHE_VERSION = 2
+// Bump when extraction changes, so cached metadata is read again (3: built-in LoRAs left out;
+// 4: linked inputs are no longer stored as prompt/model — they crashed the search).
+const GALLERY_CACHE_VERSION = 4
 
 function readCache(): GalleryCache | null {
   try {
-    return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')) as GalleryCache
+    return JSON.parse(fs.readFileSync(cacheFile(), 'utf8')) as GalleryCache
   } catch {
     return null
   }
@@ -334,8 +371,16 @@ function readCache(): GalleryCache | null {
 
 function writeCache(cache: GalleryCache): void {
   try {
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(cache))
+    fs.writeFileSync(cacheFile(), JSON.stringify(cache))
   } catch { /* non-fatal */ }
+}
+
+/** Drop deleted items from the cached scan; a cache hit would otherwise show them for up to CACHE_TTL_MS. */
+export function forgetImages(ids: string[]): void {
+  const cache = readCache()
+  if (!cache || ids.length === 0) return
+  const drop = new Set(ids)
+  writeCache({ ...cache, images: cache.images.filter((img) => !drop.has(img.id)) })
 }
 
 export interface GalleryResult {
@@ -353,7 +398,10 @@ export interface GalleryResult {
 export function getGalleryRaw(refresh = false): GalleryResult {
   const cache = readCache()
   const cacheIsCurrent = cache?.version === GALLERY_CACHE_VERSION
-  const fresh = cacheIsCurrent && Date.now() - new Date(cache.scannedAt).getTime() < CACHE_TTL_MS
+  const stamp = folderStamp()
+  const scannedMs = cache ? new Date(cache.scannedAt).getTime() : 0
+  const fresh = cacheIsCurrent && cache.stamp === stamp
+    && scannedMs - stamp > SETTLE_MS && Date.now() - scannedMs < CACHE_TTL_MS
 
   if (!refresh && fresh && cache) {
     const sidecars = readAllSidecars()
@@ -368,7 +416,7 @@ export function getGalleryRaw(refresh = false): GalleryResult {
   const started = Date.now()
   const images = scanRaw(cacheIsCurrent ? cache.images : [])
   const scannedAt = new Date().toISOString()
-  writeCache({ version: GALLERY_CACHE_VERSION, scannedAt, images })
+  writeCache({ version: GALLERY_CACHE_VERSION, scannedAt, stamp, images })
   log('info', 'gallery', `Scanned ${images.length} images in ${Date.now() - started}ms`)
   return { images, scannedAt, imagesDir: getImagesDir(), cached: false }
 }

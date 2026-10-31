@@ -8,7 +8,9 @@ export async function POST(req: NextRequest) {
 
   let target: string
   try {
-    target = ((await req.json()) as { path?: string }).path ?? ''
+    const body = (await req.json()) as { path?: string; folder?: string; name?: string }
+    // The disk scan reports names, not paths, so Simple Models' Remove sends folder + name.
+    target = body.path ?? (body.folder && body.name ? path.join(modelsDir, body.folder, body.name) : '')
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
@@ -22,6 +24,11 @@ export async function POST(req: NextRequest) {
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
-  fs.unlinkSync(filePath)
+  try {
+    fs.unlinkSync(filePath)
+  } catch (e) {
+    // Windows refuses while a process holds the file (ComfyUI with the model loaded): say so, the caller reports it.
+    return NextResponse.json({ error: `Could not delete (in use?): ${e instanceof Error ? e.message : String(e)}` }, { status: 500 })
+  }
   return NextResponse.json({ ok: true })
 }

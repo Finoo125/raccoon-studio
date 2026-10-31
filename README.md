@@ -11,7 +11,7 @@ AI-powered creative studio built on ComfyUI.
 3. Paste this **one command** and press Enter:
 
 ```bat
-curl.exe -fsSL -o bootstrap.ps1 https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1 && powershell -ExecutionPolicy Bypass -NoProfile -File bootstrap.ps1
+curl.exe -fsSL --ssl-revoke-best-effort -o bootstrap.ps1 https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1 && powershell -ExecutionPolicy Bypass -NoProfile -File bootstrap.ps1
 ```
 
 That installs Git (if needed), clones the repo into a `raccoon-studio` subfolder,
@@ -23,7 +23,7 @@ inside that subfolder (or the Desktop shortcut).
 > instead:
 >
 > ```bat
-> curl.exe -fsSL -o bootstrap.ps1 https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1 && powershell -ExecutionPolicy Bypass -NoProfile -File bootstrap.ps1 -Gpu amd
+> curl.exe -fsSL --ssl-revoke-best-effort -o bootstrap.ps1 https://raw.githubusercontent.com/Finoo125/raccoon-studio/main/bootstrap.ps1 && powershell -ExecutionPolicy Bypass -NoProfile -File bootstrap.ps1 -Gpu amd
 > ```
 
 > Already have the repo cloned? Just run `powershell -ExecutionPolicy Bypass -File bootstrap.ps1`
@@ -50,22 +50,23 @@ the **Raccoon Studio** entry in your application menu / Desktop).
 
 > Already have the repo cloned? Just run `bash bootstrap.sh` — or `bash install-linux.sh` — from inside the folder.
 
-## Add-ons (Patreon)
+## Supporter features
 
-Raccoon Studio ships as a **core** product that is free for everyone, plus optional **add-on** features for Patreon supporters.
+Raccoon Studio ships as a **core** product that is free for everyone, plus optional **add-on** features for subscribers.
 
 ### Core vs add-ons
 
 | Feature | Who gets it |
 |---|---|
-| Generate Images, Generate Videos, Gallery | Everyone (core) |
-| Photo Editing | Patreon supporters |
-| Movie Maker + Director AI | Patreon supporters |
+| Generate Images, Generate Videos, Gallery, Models | Everyone (core) |
+| LTX 2.3 Director, Photo Editing, Civitai Browser, Prompt Helper (✨ Help me write) | Patreon and DeviantArt subscribers |
 
-Locked add-on code still ships in every build — supporters get a signed key that unlocks it client-side and server-side. There is no separate download.
+Locked add-on code still ships in every build — subscribers get a signed key that unlocks it client-side and server-side. There is no separate download.
 
-### How supporters unlock add-ons
+### How subscribers unlock add-ons
 
-1. Obtain your unlock key from Patreon (a single token string).
-2. Open Raccoon Studio and navigate to **Add-ons** in the top menu.
-3. Paste the key into the input field and click **Unlock**.
+1. Log in on the [unlock page](https://raccoon-unlock.finoo125.workers.dev) with the Patreon or DeviantArt account you subscribe with, and copy your personal key.
+2. Open Raccoon Studio and go to **Supporters** in the top menu.
+3. Paste the key into the input field and click **Activate**.
+
+A key unlocks the add-ons that existed when you got it. When a new one comes out (the Prompt Helper came with 2.0), log in on the unlock page again and activate the new key.

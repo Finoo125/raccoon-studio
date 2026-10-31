@@ -13,10 +13,14 @@ export function formatEta(
 
   const perStep = (now - startedAt) / progress
   const remainingMs = (maxProgress - progress) * perStep
-  const totalSec = Math.max(0, Math.round(remainingMs / 1000))
+  return `~${formatSeconds(remainingMs / 1000)}`
+}
 
-  if (totalSec < 60) return `~${totalSec}s`
+/** `8s` / `1m 48s`. Shared with the video panel's render estimate. */
+export function formatSeconds(seconds: number): string {
+  const totalSec = Math.max(0, Math.round(seconds))
+  if (totalSec < 60) return `${totalSec}s`
   const min = Math.floor(totalSec / 60)
   const sec = totalSec % 60
-  return `~${min}m ${sec}s`
+  return `${min}m ${sec}s`
 }

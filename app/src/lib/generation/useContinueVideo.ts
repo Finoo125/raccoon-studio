@@ -3,8 +3,11 @@
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { useStudioStore, type StudioPrefill } from './studio-store'
-import { minimaxH3Workflow } from '@/lib/workflows/minimax-h3'
+import { minimaxH3Workflow, h3RefCount } from '@/lib/workflows/minimax-h3'
+import { clipRefFromUrl, refToPath } from '@/lib/video/join'
+import type { GenerationJob } from '@/lib/comfyui/queue'
 import type { GalleryImage } from '@/types/gallery'
+import type { VideoGenerationParams } from '@/types/video-workflow'
 
 /**
  * The clip's path relative to ComfyUI's output dir, which is what
@@ -15,7 +18,22 @@ export const clipOutputPath = (v: Pick<GalleryImage, 'filename' | 'subfolder'>):
   v.subfolder ? `${v.subfolder.replace(/\\/g, '/')}/${v.filename}` : v.filename
 
 /**
- * Only H3 can be continued. LTX has no equivalent of `MiniMaxH3AddGuide`, and
+ * The inverse: the proxied view URL for a `continueFrom` path, so the clip can
+ * be fetched back out of ComfyUI's output dir — the writer's vision pass lifts
+ * its last frame from it.
+ */
+export function clipViewUrl(continueFrom: string): string {
+  const cut = continueFrom.lastIndexOf('/')
+  const q = new URLSearchParams({
+    filename: continueFrom.slice(cut + 1),
+    subfolder: cut === -1 ? '' : continueFrom.slice(0, cut),
+    type: 'output',
+  })
+  return `/api/comfyui/view?${q}`
+}
+
+/**
+ * Only H3 can be continued. LTX has no equivalent of the H3 masked prefix, and
  * offering the button on a clip that cannot be continued is worse than not
  * offering it — the render would fail at validation with a node error.
  *
@@ -24,6 +42,28 @@ export const clipOutputPath = (v: Pick<GalleryImage, 'filename' | 'subfolder'>):
  */
 export const canContinue = (v: GalleryImage): boolean =>
   v.media === 'video' && /minimax|h3/i.test(v.metadata?.workflow ?? '')
+
+/**
+ * The settings of the job that rendered `video`, out of the queue history —
+ * matched on the clip's output path exactly as `VideoCanvas` matches for Join.
+ * Undefined for a clip from an earlier install or copied in by hand.
+ */
+export function sourceParamsFor(
+  video: Pick<GalleryImage, 'filename' | 'subfolder'>,
+  jobs: Pick<GenerationJob, 'kind' | 'status' | 'outputVideos' | 'generationParams'>[],
+): VideoGenerationParams | undefined {
+  const path = clipOutputPath(video)
+  const job = jobs.find((j) => {
+    if (j.kind !== 'video' || j.status !== 'done' || !j.outputVideos?.length) return false
+    const ref = clipRefFromUrl(j.outputVideos[0])
+    return ref ? refToPath(ref) === path : false
+  })
+  return job?.generationParams as VideoGenerationParams | undefined
+}
+
+/** Whether a continuation of `source` stays in reference mode — the dialog's toast reads this too. */
+export const continuesInReferenceMode = (source?: VideoGenerationParams): boolean =>
+  source?.mode === 'ref2v' && h3RefCount(source) > 0
 
 /**
  * Set up the video form to continue an existing H3 clip.
@@ -41,8 +81,11 @@ export const canContinue = (v: GalleryImage): boolean =>
  * clip's own frames (`GetImageSize` in `minimax-h3.ts`). The gallery does not
  * record video dimensions anyway, so this side genuinely cannot know them.
  */
-export function continuationPrefill(video: GalleryImage, huntCount = 0): StudioPrefill {
+export function continuationPrefill(video: GalleryImage, huntCount = 0, source?: VideoGenerationParams): StudioPrefill {
   const m = video.metadata ?? {}
+  // Reference mode only with something to reference: with none, the form
+  // refuses both Enhance and Generate ("Add at least one reference").
+  const refMode = continuesInReferenceMode(source)
   return {
     workflowId: minimaxH3Workflow.id,
     /**
@@ -62,8 +105,25 @@ export function continuationPrefill(video: GalleryImage, huntCount = 0): StudioP
        * builder and never go through the form's model selection.
        */
       videoModel: minimaxH3Workflow.id,
-      // t2v: the pinned head is the opening, so there is no start frame.
-      mode: 't2v',
+      // t2v: the pinned head is the opening, so there is no start frame. A
+      // reference-mode clip stays in reference mode WITH its references —
+      // forcing t2v here silently dropped the character picture from every
+      // continuation (found 2026-10-02; the chain spike only worked because
+      // its harness kept ref2v by hand).
+      mode: refMode ? 'ref2v' : 't2v',
+      ...(refMode && source
+        ? {
+            refImages: source.refImages, refImageRoles: source.refImageRoles,
+            refVideos: source.refVideos, refAudios: source.refAudios, refHiFi: source.refHiFi,
+            // The same model across a chain — and a remounted form on a pick
+            // that cannot serve reference mode would drop ref2v right after
+            // this prefill, taking the references with it.
+            h3Checkpoint: source.h3Checkpoint,
+          }
+        : {}),
+      // Each link picks its own destination; a keyframe left from the last
+      // render would pull this one back onto it.
+      keyframes: undefined,
       continueFrom: clipOutputPath(video),
       /**
        * Carried when the clip actually recorded one — which for video is the
@@ -83,6 +143,29 @@ export function continuationPrefill(video: GalleryImage, huntCount = 0): StudioP
       ...(m.prompt ? { prompt: m.prompt } : {}),
       // A fresh seed every time, so pressing Generate again is a re-roll of
       // this same link rather than a repeat of it.
+      seed: -1,
+    },
+  }
+}
+
+/**
+ * Open Generate Video in H3 Edit mode on a gallery clip — any family, unlike
+ * Continue: an edit only needs frames, not H3's own tail. Read in place with the
+ * ` [output]` annotation (VHS honours it), so nothing is copied. The facts are
+ * blanked so the form's probe reads this clip, not the last one.
+ */
+export function editVideoPrefill(video: GalleryImage): StudioPrefill {
+  return {
+    workflowId: minimaxH3Workflow.id,
+    params: {
+      videoModel: minimaxH3Workflow.id,
+      mode: 'edit',
+      editSource: `${clipOutputPath(video)} [output]`,
+      editSourceWidth: undefined, editSourceHeight: undefined,
+      editSourceFrames: undefined, editSourceHasAudio: undefined,
+      // A first frame belongs to the clip it was cut from, not to this one.
+      editFirstFrame: undefined,
+      prompt: '',
       seed: -1,
     },
   }

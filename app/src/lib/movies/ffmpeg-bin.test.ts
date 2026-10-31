@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { setSettings } from '@/lib/settings/settings'
-import { ffmpegBin, ffprobeBin, friendlyFfmpegError } from './ffmpeg-bin'
+import { ffmpegBin, ffprobeBin, friendlyFfmpegError, ffmpegPathProblem } from './ffmpeg-bin'
 
 let tmp: string
 beforeEach(() => {
@@ -32,5 +32,27 @@ describe('ffmpeg binary resolution', () => {
   it('maps ENOENT to an actionable message and passes other errors through', () => {
     expect(friendlyFfmpegError(new Error('spawn ffmpeg ENOENT'), 'ffmpeg')).toMatch(/Settings/)
     expect(friendlyFfmpegError(new Error('boom'), 'ffmpeg')).toBe('boom')
+  })
+})
+
+describe('ffmpegPathProblem (Settings accepts only a real local ffmpeg)', () => {
+  it('accepts empty (PATH) and an existing ffmpeg / ffmpeg.exe', () => {
+    expect(ffmpegPathProblem('')).toBeNull()
+    for (const name of ['ffmpeg.exe', 'ffmpeg']) {
+      const ff = path.join(tmp, name)
+      fs.writeFileSync(ff, '')
+      expect(ffmpegPathProblem(ff), name).toBeNull()
+    }
+  })
+  it('refuses other programs, missing files, folders, relative and network paths', () => {
+    const other = path.join(tmp, 'calc.exe')
+    fs.writeFileSync(other, '')
+    expect(ffmpegPathProblem(other)).toMatch(/ffmpeg/)
+    expect(ffmpegPathProblem(path.join(tmp, 'nope', 'ffmpeg.exe'))).toMatch(/not found/i)
+    fs.mkdirSync(path.join(tmp, 'ffmpeg'))
+    expect(ffmpegPathProblem(path.join(tmp, 'ffmpeg'))).toMatch(/not found/i)
+    expect(ffmpegPathProblem('bin/ffmpeg.exe')).toMatch(/full path/i)
+    expect(ffmpegPathProblem(String.raw`\\server\share\ffmpeg.exe`)).toMatch(/network/i)
+    expect(ffmpegPathProblem('//server/share/ffmpeg')).toMatch(/network/i)
   })
 })

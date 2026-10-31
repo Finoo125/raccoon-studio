@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { usePhotoEditStore } from '@/lib/photo-edit/store'
+import { useUiMode } from '@/lib/ui-mode'
 import { HUE_BANDS, type HslBand } from '@/lib/photo-edit/types'
 import { cn } from '@/lib/utils'
 import ColorWheel from './ColorWheel'
@@ -29,6 +30,10 @@ export default function ColorPanel() {
   const endGesture = usePhotoEditStore((s) => s.endGesture)
   const showHint = usePhotoEditStore((s) => !s.dismissedHints.includes('color'))
   const [axis, setAxis] = useState<keyof HslBand>('sat')
+  const simple = useUiMode() === 'simple'
+
+  // Simple keeps white balance and saturation; the mixer and wheels are Advanced.
+  if (simple) return <GroupSliders id="color" />
 
   return (
     <div className="flex flex-col gap-3">

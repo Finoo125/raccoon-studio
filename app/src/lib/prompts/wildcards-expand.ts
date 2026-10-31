@@ -9,6 +9,21 @@ export function hasWildcards(s: string): boolean {
   return s.includes('{') || TOKEN_RE.test(s)
 }
 
+/**
+ * Every wildcard in `s`, verbatim and once each: `__name__` tokens and
+ * top-level `{…}` groups. For code that rewrites a prompt and must not lose one.
+ */
+export function wildcardTokens(s: string): string[] {
+  const out: string[] = [...(s.match(new RegExp(TOKEN_RE.source, 'g')) ?? [])]
+  let depth = 0
+  let start = -1
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '{') { if (depth++ === 0) start = i }
+    else if (s[i] === '}' && depth > 0 && --depth === 0) out.push(s.slice(start, i + 1))
+  }
+  return [...new Set(out)]
+}
+
 /** Splits the top-level `|` separators of a group body, respecting nested braces. */
 function splitOptions(body: string): string[] {
   const out: string[] = []

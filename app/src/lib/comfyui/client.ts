@@ -25,8 +25,8 @@ export async function getSystemStats() {
   return get<Record<string, unknown>>('/system_stats')
 }
 
-export async function queuePrompt(prompt: ComfyUIPrompt, clientId: string): Promise<PromptResponse> {
-  return post<PromptResponse>('/prompt', { prompt, client_id: clientId })
+export async function queuePrompt(prompt: ComfyUIPrompt, clientId: string, front = false): Promise<PromptResponse> {
+  return post<PromptResponse>('/prompt', { prompt, client_id: clientId, ...(front ? { front: true } : {}) })
 }
 
 export async function getQueue(): Promise<QueueStatus> {

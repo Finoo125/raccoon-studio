@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Download, Clapperboard, Clock, Check, Loader2, FastForward, Link2, RotateCcw } from 'lucide-react'
+import { Download, Clapperboard, Clock, Check, Loader2, FastForward, Link2, RotateCcw, ScanFace } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { useQueueStore, isSeedHunt } from '@/lib/comfyui/queue'
@@ -12,9 +12,12 @@ import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { useRecentVideosStore } from '@/lib/generation/recent-videos-store'
 import { useContinueVideo, canContinue } from '@/lib/generation/useContinueVideo'
+import FaceSwapDialog from '@/components/video/FaceSwapDialog'
+import { clipFromUrl, pendingPost } from '@/lib/workflows/video-face-swap'
 import { deriveChain, clipRefFromUrl, refToPath } from '@/lib/video/join'
 import { useDirectorStage } from '@/lib/director/director-stage'
 import type { VideoGenerationParams } from '@/types/video-workflow'
+import { GuideInvite } from '@/components/GuideLink'
 
 /**
  * Center stage for the Generate Videos page. While a video job samples it shows
@@ -24,11 +27,14 @@ import type { VideoGenerationParams } from '@/types/video-workflow'
 export default function VideoCanvas({
   videoRef,
   hideControls = false,
+  guide,
 }: {
   /** Director mode drives this element from its transport bar and playhead. */
   videoRef?: React.RefObject<HTMLVideoElement | null>
   /** Suppress the native controls when an external transport owns playback. */
   hideControls?: boolean
+  /** The guide the empty canvas invites a Simple user to read (the video page passes it; Movie Maker does not). */
+  guide?: string
 } = {}) {
   const [isHovered, setIsHovered] = useState(false)
   const director = useDirectorStage('video')
@@ -57,6 +63,7 @@ export default function VideoCanvas({
     : ''
   const activeClip = activeName ? recentVideos.find((v) => v.filename === activeName) : undefined
   const continueVideo = useContinueVideo()
+  const [swapOpen, setSwapOpen] = useState(false)
 
   // The job that produced the clip on screen, for Regenerate. Unlike the
   // gallery lookup above this one can match on the url, because the url is the
@@ -65,6 +72,13 @@ export default function VideoCanvas({
   const activeJob = activeVideoUrl
     ? jobs.find((j) => j.status === 'done' && j.outputVideos?.includes(activeVideoUrl))
     : undefined
+
+  /**
+   * The finishing passes this clip is still waiting on, if it was rendered with
+   * "Swap faces first". Null for every other clip, which is what keeps the swap
+   * from graining an already-grained one a second time.
+   */
+  const deferredPost = pendingPost(activeJob?.generationParams as VideoGenerationParams | undefined)
 
   /**
    * Reload this clip's settings into the form — **with a fresh seed**.
@@ -298,6 +312,7 @@ export default function VideoCanvas({
                 <Clock className="h-3.5 w-3.5" /> Video generation takes several minutes.
               </p>
             </div>
+            {guide && <GuideInvite slug={guide} />}
           </motion.div>
         )}
       </AnimatePresence>
@@ -388,6 +403,24 @@ export default function VideoCanvas({
               Finalize Video
             </Button>
           )}
+          {/* The clip you just rendered is the one whose face is most likely
+              wrong, so this belongs beside Continue rather than only in the
+              inspectors. Always offered: the dialog is what explains a missing
+              node pack, and a button that vanishes teaches nothing. */}
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 font-semibold"
+            title={
+              deferredPost
+                ? 'Swap faces, then run the finishing passes this render held back'
+                : "Swap faces — replace a character's face without re-rendering"
+            }
+            onClick={() => setSwapOpen(true)}
+          >
+            {/* Says the clip is unfinished at the one moment it matters: the
+                render has landed and this is the button that completes it. */}
+            <ScanFace className="h-4 w-4" /> {deferredPost ? 'Swap faces & finish' : 'Swap faces'}
+          </Button>
           <Button
             size="icon"
             variant="secondary"
@@ -399,6 +432,15 @@ export default function VideoCanvas({
           </Button>
         </motion.div>
       )}
+
+      <FaceSwapDialog
+        open={swapOpen}
+        onOpenChange={setSwapOpen}
+        clip={activeVideoUrl ? clipFromUrl(activeVideoUrl) : null}
+        clipUrl={activeVideoUrl ?? ''}
+        clipKey={activeName.replace(/\.[a-z0-9]+$/i, '') || 'clip'}
+        post={deferredPost}
+      />
     </div>
   )
 }

@@ -74,3 +74,4 @@ app/.next-manual/
 # which is in the repo. Ignored rather than committed so it cannot block a
 # publish, which refuses a dirty tree and counts untracked files as dirty.
 app/src/lib/workflows/eros-ab.live.test.ts
+app/src/lib/workflows/h3-face-drift.live.test.ts

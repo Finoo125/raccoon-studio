@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
 import { uploadImageBlob } from '@/lib/generation/upload'
 import { useImagePicker } from './PickImageDialog'
+import { SwitchTile, TileBody } from './SwitchTile'
 import type { GenerationParams } from '@/types/workflow'
 
 type ControlNet = NonNullable<GenerationParams['controlNet']>
@@ -20,8 +21,8 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
 
 interface Props {
   value?: ControlNet
-  /** ComfyUI has the ControlNet preprocessor nodes installed. */
-  available: boolean
+  /** ComfyUI has the ControlNet preprocessor nodes installed; null while still checking. */
+  available: boolean | null
   /** Shown under the toggle when unavailable — names the actual missing piece. */
   unavailableHint?: string
   onChange: (v: ControlNet | undefined) => void
@@ -79,34 +80,19 @@ export default function ControlNetInput({ value, available, unavailableHint, onC
   }
 
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={enabled}
+    <div className="contents">
+      <SwitchTile
+        label="ControlNet"
+        icon={Move3d}
+        on={enabled}
+        onToggle={toggle}
         disabled={!available}
-        onClick={toggle}
-        className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
-          !available ? 'border-border bg-muted/20 opacity-60 cursor-not-allowed'
-            : enabled ? 'border-primary/40 bg-primary/10' : 'border-border bg-muted/30 hover:bg-muted/50'
-        }`}
-      >
-        <span className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${enabled ? 'bg-primary' : 'bg-input'}`}>
-          <span className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-sm transition-transform mt-0.5 ${enabled ? 'translate-x-[1.375rem]' : 'translate-x-0.5'}`} />
-        </span>
-        <span className="min-w-0 flex items-center gap-2">
-          <Move3d className="h-4 w-4 shrink-0 text-primary" />
-          <span>
-            <span className="block text-sm font-semibold">ControlNet</span>
-            <span className="block text-xs text-muted-foreground">
-              {available ? 'Copy pose / depth / edges from a reference' : (unavailableHint ?? 'Requires ComfyUI ControlNet Aux')}
-            </span>
-          </span>
-        </span>
-      </button>
+        hint="Copy pose / depth / edges from a reference"
+        note={available === false ? (unavailableHint ?? 'Requires ComfyUI ControlNet Aux') : undefined}
+      />
 
       {enabled && (
-        <div className="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
+        <TileBody title="ControlNet">
           <div className="grid grid-cols-4 gap-1.5">
             {MODES.map((m) => {
               const active = value?.mode === m.id
@@ -151,7 +137,7 @@ export default function ControlNetInput({ value, available, unavailableHint, onC
             </div>
             <input type="range" min={0.1} max={1} step={0.05} value={value?.strength ?? 0.8} onChange={(e) => value && onChange({ ...value, strength: Number(e.target.value) })} className="w-full accent-primary" aria-label="ControlNet strength" />
           </div>
-        </div>
+        </TileBody>
       )}
     </div>
   )

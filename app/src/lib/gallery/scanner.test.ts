@@ -97,4 +97,13 @@ describe('sidecar tags + id codec', () => {
   it('decodeImageId returns null for garbage input', () => {
     expect(decodeImageId('!!!not-base64!!!@@@')).toBeNull()
   })
+
+  it('a sidecar never lands outside its folder, whatever the id', () => {
+    const out = `${path.basename(tmp)}-out`
+    for (const bad of [`../${out}`, `..\\${out}`, 'sub/x', 'C:/Windows/x', '/etc/x', '']) {
+      expect(() => writeFavorite(bad, true), bad).toThrow(/invalid image id/i)
+      expect(() => writeTags(bad, ['t']), bad).toThrow(/invalid image id/i)
+    }
+    expect(fs.existsSync(path.join(path.dirname(tmp), `${out}.json`))).toBe(false)
+  })
 })

@@ -34,6 +34,9 @@ const PROMPT_ID = idOf('RaccoonVideoPrompt')
 const LORA_ID = idOf('RaccoonLoraStack')
 const SEED_ID = idOf('Seed (rgthree)')
 const RIFE_ID = idOf('RIFEInterpolation')
+// RIFE's target fps arrives over a link from an mxSlider (`isfloatX: 1`, so it
+// returns `Xf`). Read the id off the link rather than hardcoding it.
+const RIFE_FPS_ID = (BASE[RIFE_ID].inputs.target_fps as [string, number])[0]
 // duration_s / fps arrive over links from value nodes (JWFloat / PrimitiveInt).
 const DURATION_ID = (BASE[PROMPT_ID].inputs.duration_s as [string, number])[0]
 const FPS_ID = (BASE[PROMPT_ID].inputs.fps as [string, number])[0]
@@ -167,6 +170,19 @@ export function loraStackData(params: VideoGenerationParams, faceId: boolean): s
   return JSON.stringify(rows)
 }
 
+/** LTX's own fps when the form leaves it unset. */
+export const LTX_FPS = 30
+
+/**
+ * What RIFE interpolates an LTX clip up to: 1.5x the render's own fps, matching
+ * H3's `H3_RIFE_FPS`. The graph ships a fixed 60 on that slider, which is 2x
+ * only when fps is left at 30 — and 2.5x at 24, i.e. the "doubling" was never
+ * the same thing at every fps. Both consumers (RIFE's `target_fps` and the
+ * saving combine's `frame_rate`) read that one node, so they cannot disagree,
+ * and a fractional result is fine: RIFE resamples on arbitrary timestamps.
+ */
+export const ltxRifeFps = (fps: number = LTX_FPS) => fps * 1.5
+
 export const ltx23Workflow: VideoWorkflowDefinition = {
   id: 'ltx23',
   name: 'LTX 2.3 Video',
@@ -177,7 +193,7 @@ export const ltx23Workflow: VideoWorkflowDefinition = {
     mode: 't2v',
     orientation: 'landscape',
     durationSeconds: 15,
-    fps: 30,
+    fps: LTX_FPS,
     seed: -1,
     dialogueTier: 'standard',
     energy: 5,
@@ -263,7 +279,13 @@ export const ltx23Workflow: VideoWorkflowDefinition = {
     wf[CHUNK_ID].inputs.chunks = tier === 'low' ? 3 : 1
 
     wf[DURATION_ID].inputs.value = params.durationSeconds
-    wf[FPS_ID].inputs.value = params.fps ?? 30
+    wf[FPS_ID].inputs.value = params.fps ?? LTX_FPS
+    // Retarget the fixed-60 slider RIFE reads. Xf is the value the node returns;
+    // Xi is the int face of the same slider, kept in step so the graph still
+    // reads sanely if it is ever opened in ComfyUI.
+    const rifeFps = ltxRifeFps(params.fps)
+    wf[RIFE_FPS_ID].inputs.Xf = rifeFps
+    wf[RIFE_FPS_ID].inputs.Xi = Math.round(rifeFps)
 
     // Seed — resolve a random request to a concrete int so the run is reproducible.
     wf[SEED_ID].inputs.seed =
@@ -290,7 +312,7 @@ export const ltx23Workflow: VideoWorkflowDefinition = {
     }
 
     // RIFE off: feed the saving combine straight from RIFE's own sources — the
-    // raw frames and the base fps (RIFE normally upsamples to a fixed 60).
+    // raw frames and the base fps (RIFE otherwise lifts it to `ltxRifeFps`).
     if (params.rife === false) {
       wf[SAVE_ID].inputs.images = wf[RIFE_ID].inputs.images
       wf[SAVE_ID].inputs.frame_rate = wf[RIFE_ID].inputs.source_fps

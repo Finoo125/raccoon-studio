@@ -33,8 +33,8 @@ const FPS = 30
  * would still pass is worse than no smoke test.
  */
 const SEED = Number(process.env.LIVE_SEED ?? Date.now() % 9_000_000_000)
-/** RIFE is on by default and doubles the frame rate on the way out. */
-const RIFE_MULTIPLIER = 2
+/** RIFE is on by default and lifts the frame rate 1.5x on the way out. */
+const RIFE_MULTIPLIER = 1.5
 
 /** vitest's default 5 s cap is nowhere near a real render. */
 const RENDER_TIMEOUT_MS = 25 * 60_000

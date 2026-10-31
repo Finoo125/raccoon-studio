@@ -13,7 +13,7 @@ import type { Transfer } from '@/lib/models/transfers'
 type Pane = 'library' | 'civitai'
 
 /**
- * The Patreon-gated tabs of the Models page: **My Models** (what is installed)
+ * The subscription-gated tabs of the Models page: **My Models** (what is installed)
  * and **Civitai Browser**.
  *
  * One component serves both so the add-on lock, the locked panel and the
@@ -133,12 +133,12 @@ export default function MyModelsTab({
       <div className="rounded-xl border border-primary/25 bg-primary/[0.04] px-6 py-10 text-center">
         <Lock className="h-6 w-6 text-primary mx-auto mb-3" />
         <h2 className="font-heading font-bold text-lg">
-          {pane === 'library' ? 'My Models' : 'The Civitai Browser'} is a Patreon add-on
+          {pane === 'library' ? 'My Models' : 'The Civitai Browser'} is a supporter feature
         </h2>
         <p className="text-sm text-muted-foreground mt-2 mb-4">
           Browse Civitai and manage everything installed, without leaving the studio.
         </p>
-        <Button size="sm" onClick={() => { window.location.href = '/add-ons' }}>See add-ons</Button>
+        <Button size="sm" onClick={() => { window.location.href = '/add-ons' }}>See Supporters</Button>
       </div>
     )
   }

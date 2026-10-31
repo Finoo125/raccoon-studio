@@ -25,7 +25,7 @@ export default function GeneratePage() {
               transition={{ duration: 0.15, ease: 'easeInOut' }}
               className="border-r border-border bg-card overflow-hidden shrink-0"
             >
-              <div className="w-[37.5rem] h-full overflow-y-auto p-5">
+              <div className="w-[37.5rem] h-full overflow-y-auto px-5 pt-5">
                 <Suspense fallback={null}>
                   <GenerationForm />
                 </Suspense>
@@ -59,7 +59,7 @@ export default function GeneratePage() {
 
         {/* Canvas */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <StudioCanvas />
+          <StudioCanvas guide="generate-image" />
         </div>
 
         {/* Recent images rail */}

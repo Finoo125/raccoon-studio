@@ -11,6 +11,7 @@ import VideoGenerationForm from '@/components/generation/VideoGenerationForm'
 import VideoCanvas from '@/components/generation/VideoCanvas'
 import RecentVideoRail from '@/components/generation/RecentVideoRail'
 import VideoInspector from '@/components/generation/VideoInspector'
+import { VideoFormProvider } from '@/components/generation/video-form-context'
 
 /**
  * Embeds the full Generate Image / Generate Videos studio inside a Director
@@ -46,7 +47,7 @@ export default function DirectorGenerationStage({
     }
   }
 
-  return (
+  const stage = (
     <DirectorStageProvider value={{ kind, label, selecting, onSelect: handleSelect }}>
       <div className="flex h-full min-h-[26rem] overflow-hidden rounded-xl border border-border bg-card">
         <div className="w-[26.25rem] shrink-0 overflow-y-auto border-r border-border p-4">
@@ -60,4 +61,6 @@ export default function DirectorGenerationStage({
       {kind === 'image' ? <GenerateInspector /> : <VideoInspector />}
     </DirectorStageProvider>
   )
+  // The video form keeps its state in a context, as on /generate-videos.
+  return kind === 'video' ? <VideoFormProvider>{stage}</VideoFormProvider> : stage
 }

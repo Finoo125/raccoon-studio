@@ -8,8 +8,9 @@ import { galleryOriginMatches, startGalleryLoad } from '@/lib/photo-edit/deep-li
 import ImagePicker from './ImagePicker'
 import EditorCanvas from './EditorCanvas'
 import TopBar from './TopBar'
-import ToolRail from './ToolRail'
 import EditPanel from './EditPanel'
+import { SECTION_KEY, SECTION_ORDER, visibleSections } from '@/lib/photo-edit/sections'
+import { readUiMode } from '@/lib/ui-mode'
 
 export default function PhotoEditor() {
   const source = usePhotoEditStore((s) => s.source)
@@ -64,14 +65,18 @@ export default function PhotoEditor() {
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
-      const openFor = (section: 'crop' | 'masks' | 'slice') => {
+      const key = e.key.toLowerCase()
+      // R / M / X open their section and arm its overlay — unless Simple hides it.
+      const section = SECTION_ORDER.find((id) => SECTION_KEY[id]?.toLowerCase() === key)
+      if (section === 'crop' || section === 'masks' || section === 'slice') {
+        if (!visibleSections(readUiMode(), s.editState).includes(section)) return
+        s.setCanvasMode(section)
         if (!s.openSections.includes(section)) s.toggleSection(section)
+        e.preventDefault()
+        return
       }
-      switch (e.key.toLowerCase()) {
+      switch (key) {
         case 'e': s.setCanvasMode('edit'); break
-        case 'r': s.setCanvasMode('crop'); openFor('crop'); break
-        case 'm': s.setCanvasMode('masks'); openFor('masks'); break
-        case 'x': s.setCanvasMode('slice'); openFor('slice'); break
         case 'escape': s.setCanvasMode('edit'); break
         case '\\':
           // Hold, not toggle — matches the Compare button.
@@ -98,20 +103,17 @@ export default function PhotoEditor() {
     return <ImagePicker />
   }
 
-  // TopBar across the top; a narrow mode rail on the left; the canvas in the
-  // middle; and one always-present edit column on the right.
+  // TopBar across the top, the canvas, and one always-present edit column on the
+  // right. Crop / Masks / Slice are its sections — opening one arms its overlay —
+  // so there is no separate tool rail to disagree with them.
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <TopBar />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-border bg-card/40 px-1 py-2">
-          <ToolRail />
-        </aside>
-
         <EditorCanvas />
 
-        <aside className="flex w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-card/40">
+        <aside className="flex w-96 shrink-0 flex-col overflow-hidden border-l border-border bg-card/40">
           <EditPanel />
         </aside>
       </div>

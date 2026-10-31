@@ -5,7 +5,7 @@ export type FeatureKind = 'core' | 'addon'
  * - 'create' → core creation surfaces (generate image/video, gallery, models).
  *   Models sits here, not in the dropdown: nothing generates without a model,
  *   so a new install must be able to find it without opening a menu.
- * - 'studio' → the paid Patreon add-ons (+ the "Patreon" store link).
+ * - 'studio' → the paid add-ons (+ the "Supporters" store link).
  * - 'manage' → utility/management surfaces (tools, logs, settings).
  *   Rendered as a single "Utilities" dropdown: these are visited rarely, and as
  *   flat tabs they pushed the top bar past its width once add-ons unlocked.
@@ -28,6 +28,8 @@ export interface FeatureDef {
   kind: FeatureKind
   /** Which visual cluster the item sits in within the top bar. */
   group: FeatureGroup
+  /** Add-on only: one line on what it does, for its card on the Supporters page. */
+  blurb?: string
   /** Add-on only: ComfyUI assets ensured on unlock (reuses the Models download flow). */
   requires?: { models?: FeatureModelReq[] }
   /**
@@ -58,16 +60,26 @@ export const FEATURES: FeatureDef[] = [
   { id: 'generate-videos', label: 'Generate Video', href: '/generate-videos', icon: 'Clapperboard',      kind: 'core',  group: 'create' },
   { id: 'gallery',         label: 'Gallery',        href: '/gallery',         icon: 'Images',            kind: 'core',  group: 'create' },
   { id: 'models',          label: 'Models',         href: '/models',          icon: 'Package',           kind: 'core',  group: 'create' },
-  { id: 'photo-editor',    label: 'Photo Editing',  href: '/photo-editing',   icon: 'SlidersHorizontal', kind: 'addon', group: 'studio' },
-  { id: 'prompt-builder',  label: 'Prompt Builder', href: '/prompt-builder',  icon: 'PencilRuler',       kind: 'addon', group: 'studio', release: 'unlisted' },
+  { id: 'photo-editor',    label: 'Photo Editing',  href: '/photo-editing',   icon: 'SlidersHorizontal', kind: 'addon', group: 'studio',
+    blurb: 'Crop, grade and mask your pictures — colour wheels, tone curves and filters.' },
+  // Lives inside Generate Image's and Generate Video's prompt boxes ("Help me
+  // write", components/generation/PromptHelper), not on a page of its own —
+  // hence navHidden, like ltx-director below.
+  { id: 'prompt-builder',  label: 'Prompt Helper',  href: '/generate',        icon: 'PencilRuler',       kind: 'addon', group: 'studio', navHidden: true,
+    blurb: 'Turn your idea into a great prompt for your pictures and videos — no tags, no guesswork.' },
   { id: 'movie-maker',     label: 'Movie Maker',    href: '/movie',           icon: 'Film',              kind: 'addon', group: 'studio', requires: { models: [] }, release: 'unlisted' },
   // A mode inside Generate Video, not a page — hence navHidden. `href` still
   // points at where it lives so the Add-ons entry can link somewhere real.
-  { id: 'ltx-director',    label: 'LTX 2.3 Director', href: '/generate-videos', icon: 'Clapperboard',    kind: 'addon', group: 'studio', navHidden: true },
+  { id: 'ltx-director',    label: 'LTX 2.3 Director', href: '/generate-videos', icon: 'Clapperboard',    kind: 'addon', group: 'studio', navHidden: true,
+    blurb: 'Plan a whole scene on a timeline and render it as one film.' },
   // A tab inside the Models page, not a page of its own — hence navHidden,
   // exactly like ltx-director above. `href` points at where it lives so the
   // Add-ons entry can link somewhere real.
-  { id: 'civitai-browser', label: 'Civitai Browser', href: '/models', icon: 'Package', kind: 'addon', group: 'studio', navHidden: true },
+  { id: 'civitai-browser', label: 'Civitai Browser', href: '/models', icon: 'Package', kind: 'addon', group: 'studio', navHidden: true,
+    blurb: 'Search Civitai and download LoRAs and checkpoints straight into the app.' },
+  // The creator's own link from their private Video Helper app into Generate Video / Qwen Edit
+  // (lib/generation/helper-handoff.ts). Never for sale and never listed: only RACCOON_PRIVATE_ADDONS opens it.
+  { id: 'video-helper-link', label: 'Video Helper link', href: '/generate-videos', icon: 'Link', kind: 'addon', group: 'manage', navHidden: true, release: 'unlisted' },
   { id: 'tools',           label: 'Tools',          href: '/tools',           icon: 'Wrench',            kind: 'core',  group: 'manage' },
   // Its own entry rather than a panel inside Tools: it is the one thing here
   // people go looking for by name, usually right before a reinstall.
@@ -95,6 +107,13 @@ export function navGroups(unlocked: string[]): { group: FeatureGroup; items: Fea
 export const coreFeatures = (): FeatureDef[] => FEATURES.filter((f) => f.kind === 'core')
 export const addonFeatures = (): FeatureDef[] => FEATURES.filter((f) => f.kind === 'addon')
 export const addonIds = (): string[] => addonFeatures().map((f) => f.id)
+
+/**
+ * An add-on's hold-back, for UI that must not promise a key unlock no key can
+ * give: a `'soon'` add-on is locked for everyone, owners included.
+ */
+export const addonRelease = (id: string): FeatureDef['release'] =>
+  FEATURES.find((f) => f.id === id)?.release
 
 /** Add-ons a key may actually unlock — everything not held back by `release`. */
 export const sellableAddonIds = (): string[] =>

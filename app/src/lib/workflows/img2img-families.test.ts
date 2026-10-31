@@ -4,12 +4,12 @@ import type { GenerationParams } from '@/types/workflow'
 
 // Integration guard: each real image family must actually rewire its KSampler
 // onto the i2i chain when a base image is set (catches a wrong KSampler/VAE id
-// that the stubbed helper test can't). Every family declares supportsImg2Img.
+// that the stubbed helper test can't). Every family that declares supportsImg2Img.
 const base = (over: Partial<GenerationParams>): GenerationParams =>
   ({ prompt: 'x', width: 832, height: 1216, seed: 1, ...over } as GenerationParams)
 
 describe('img2img wired into every image family', () => {
-  for (const wf of workflows) {
+  for (const wf of workflows.filter((w) => w.supportsImg2Img)) {
     it(`${wf.id}: txt2img leaves no i2i nodes`, () => {
       const g = wf.buildPrompt(base({}))
       expect(g['i2i:encode']).toBeUndefined()
@@ -49,9 +49,14 @@ describe('img2img wired into every image family', () => {
       )
       expect(samplers.length).toBeGreaterThan(0)
       for (const s of samplers) {
-        expect(s.inputs.denoise).toBeGreaterThan(0)
-        expect(s.inputs.denoise).toBeLessThan(1)
-        expect(s.inputs.denoise).not.toBe(0.35)
+        // A SamplerCustom (Qwen 2.1 Turbo) carries its denoise on the
+        // SplitSigmasDenoise feeding its sigmas.
+        const denoise = s.class_type === 'SamplerCustom'
+          ? g[(s.inputs.sigmas as [string, number])[0]].inputs.denoise
+          : s.inputs.denoise
+        expect(denoise).toBeGreaterThan(0)
+        expect(denoise).toBeLessThan(1)
+        expect(denoise).not.toBe(0.35)
       }
     })
 

@@ -231,6 +231,7 @@ For explicit sex act scenarios: use direct anatomical language so the model actu
 #  Live editing helpers (used by the UI "edit scenario" button)
 # ─────────────────────────────────────────────────────────────────────────────
 
+import json
 import re
 import os
 import sys
@@ -249,9 +250,10 @@ def get_scenario_data(key):
 
 
 def _python_string_literal(text: str) -> str:
-    """Escape text as a double-quoted Python string."""
-    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
-    return f'"{escaped}"'
+    """Escape text as a double-quoted Python string. JSON's escapes are valid
+    Python ones and cover every control character — a NUL written raw would
+    stop the pack from importing at the next start."""
+    return json.dumps(text, ensure_ascii=False)
 
 
 def update_scenario_in_source(key: str, new_setup: str, new_choreography: str) -> bool:

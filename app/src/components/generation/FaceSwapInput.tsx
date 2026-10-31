@@ -5,10 +5,12 @@ import { Upload, Loader2, X, ScanFace, Boxes, RefreshCw, AlertTriangle } from 'l
 import { toast } from 'sonner'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
 import { useImagePicker } from './PickImageDialog'
+import { InfoTip, SwitchTile, TileBody } from './SwitchTile'
 import { listFaceModels } from '@/lib/generation/face-models'
 import { selectionIsStale } from '@/lib/models/installed'
+import { PIXEL_BOOST_ONLY, IDENTITY_NEUTRAL } from '@/lib/workflows/face-swap'
 
-type SwapModel = 'inswapper_128.onnx' | 'hyperswap_1a_256.onnx' | 'hyperswap_1b_256.onnx' | 'hyperswap_1c_256.onnx'
+type SwapModel = 'inswapper_128.onnx' | 'hyperswap_1a_256.onnx' | 'hyperswap_1b_256.onnx' | 'hyperswap_1c_256.onnx' | 'alphaface_256.onnx'
 type PixelBoostSize = '512x512' | '768x768' | '1024x1024'
 type Source = 'upload' | 'model'
 
@@ -18,9 +20,9 @@ interface Props {
   /**
    * Whether ComfyUI actually reports the ReActor swap node. False disables the
    * toggle outright: without the pack the prompt fails validation and the user
-   * only sees a bare "Generation failed".
+   * only sees a bare "Generation failed". Null while still checking.
    */
-  available: boolean
+  available: boolean | null
   /**
    * Whether the vendored pixel-boost node is loaded. Tracked apart from
    * `available` because it ships in a different pack — ours — so it can be the
@@ -40,6 +42,8 @@ interface Props {
   pixelBoost?: boolean
   /** Pixel-boost effective resolution; defaults to 512x512. */
   pixelBoostSize?: PixelBoostSize
+  /** Identity strength 0..1; 0.5 is neutral. Pixel-boost path only. */
+  identity?: number
   onToggle: (enabled: boolean) => void
   onSourceChange: (source: Source) => void
   onChange: (filename: string | undefined) => void
@@ -47,6 +51,7 @@ interface Props {
   onModelChange: (model: SwapModel) => void
   onPixelBoostChange: (enabled: boolean) => void
   onPixelBoostSizeChange: (size: PixelBoostSize) => void
+  onIdentityChange: (identity: number) => void
 }
 
 const SWAP_MODELS: { id: SwapModel; label: string; hint: string }[] = [
@@ -54,6 +59,7 @@ const SWAP_MODELS: { id: SwapModel; label: string; hint: string }[] = [
   { id: 'hyperswap_1a_256.onnx', label: 'Hyperswap 1A', hint: '256px, more detail' },
   { id: 'hyperswap_1b_256.onnx', label: 'Hyperswap 1B', hint: '256px, balanced' },
   { id: 'hyperswap_1c_256.onnx', label: 'Hyperswap 1C', hint: '256px, best likeness' },
+  { id: 'alphaface_256.onnx', label: 'AlphaFace', hint: '256px, best on angled faces' },
 ]
 
 /**
@@ -63,15 +69,21 @@ const SWAP_MODELS: { id: SwapModel; label: string; hint: string }[] = [
  * the workflow can wire either a `LoadImage` or a `ReActorLoadFaceModel` node.
  */
 export default function FaceSwapInput({
-  available, pixelBoostAvailable, enabled, source, value, faceModel, model, pixelBoost, pixelBoostSize,
+  available, pixelBoostAvailable, enabled, source, value, faceModel, model, pixelBoost, pixelBoostSize, identity,
   onToggle, onSourceChange, onChange, onFaceModelChange, onModelChange, onPixelBoostChange, onPixelBoostSizeChange,
+  onIdentityChange,
 }: Props) {
   const activeModel: SwapModel = model ?? 'inswapper_128.onnx'
   // A stale `enabled` (restored from a previous session, or from a gallery
   // deep-link) must not render as on once the pack has gone missing — the
   // submitted params drop it either way, so the switch has to agree.
-  const active = available && enabled
-  const boostOn = pixelBoostAvailable && (pixelBoost ?? false)
+  const active = available === true && enabled
+  // Some swap models only run through the vendored node, so they turn the boost
+  // path on whether or not the checkbox is ticked — and must be unselectable
+  // when that pack is missing, or picking one 400s the job.
+  const modelForcesBoost = PIXEL_BOOST_ONLY.has(activeModel)
+  const boostOn = pixelBoostAvailable && ((pixelBoost ?? false) || modelForcesBoost)
+  const identityValue = identity ?? IDENTITY_NEUTRAL
   const inputRef = useRef<HTMLInputElement>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -138,47 +150,19 @@ export default function FaceSwapInput({
   }
 
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={active}
+    <div className="contents">
+      <SwitchTile
+        label="Face swap"
+        icon={ScanFace}
+        on={active}
+        onToggle={() => available && onToggle(!enabled)}
         disabled={!available}
-        onClick={() => available && onToggle(!enabled)}
-        className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
-          !available
-            ? 'border-border bg-muted/20 opacity-60 cursor-not-allowed'
-            : active
-            ? 'border-primary/40 bg-primary/10'
-            : 'border-border bg-muted/30 hover:bg-muted/50'
-        }`}
-      >
-        <span
-          className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${
-            active ? 'bg-primary' : 'bg-input'
-          }`}
-        >
-          <span
-            className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-sm transition-transform mt-0.5 ${
-              active ? 'translate-x-[1.375rem]' : 'translate-x-0.5'
-            }`}
-          />
-        </span>
-        <span className="min-w-0 flex items-center gap-2">
-          <ScanFace className="h-4 w-4 shrink-0 text-primary" />
-          <span>
-            <span className="block text-sm font-semibold">Face swap</span>
-            <span className="block text-xs text-muted-foreground">
-              {available
-                ? 'Swap the generated face onto a reference photo or face model'
-                : 'Requires the ReActor node — check the ComfyUI log for an import error'}
-            </span>
-          </span>
-        </span>
-      </button>
+        hint="Swap the generated face onto a reference photo or face model"
+        note={available === false ? 'Requires the ReActor node — check the ComfyUI log for an import error' : undefined}
+      />
 
       {active && (
-        <>
+        <TileBody title="Face swap">
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span>
@@ -310,17 +294,25 @@ export default function FaceSwapInput({
           <div className="grid grid-cols-2 gap-2">
             {SWAP_MODELS.map((m) => {
               const selected = activeModel === m.id
+              const unavailable = PIXEL_BOOST_ONLY.has(m.id) && !pixelBoostAvailable
               return (
                 <button
                   key={m.id}
                   type="button"
+                  disabled={unavailable}
                   onClick={() => onModelChange(m.id)}
                   className={`rounded-lg border p-2 text-left transition-colors ${
-                    selected ? 'border-primary/40 bg-primary/10' : 'border-border bg-background hover:bg-muted/50'
+                    unavailable
+                      ? 'border-border bg-background opacity-50 cursor-not-allowed'
+                      : selected
+                      ? 'border-primary/40 bg-primary/10'
+                      : 'border-border bg-background hover:bg-muted/50'
                   }`}
                 >
                   <span className="block text-sm font-medium">{m.label}</span>
-                  <span className="block text-xs text-muted-foreground">{m.hint}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {unavailable ? 'needs RaccoonSwapNodes' : m.hint}
+                  </span>
                 </button>
               )
             })}
@@ -333,15 +325,17 @@ export default function FaceSwapInput({
             <input
               type="checkbox"
               checked={boostOn}
-              disabled={!pixelBoostAvailable}
+              disabled={!pixelBoostAvailable || modelForcesBoost}
               onChange={(e) => onPixelBoostChange(e.target.checked)}
               className="h-4 w-4 accent-primary disabled:cursor-not-allowed"
             />
             <span className="font-medium">Pixel boost</span>
             <span className="text-xs text-muted-foreground">
-              {pixelBoostAvailable
-                ? 'sharper swap detail (experimental)'
-                : 'unavailable — RaccoonSwapNodes did not load'}
+              {!pixelBoostAvailable
+                ? 'unavailable — RaccoonSwapNodes did not load'
+                : modelForcesBoost
+                ? `always on for ${SWAP_MODELS.find((m) => m.id === activeModel)?.label}`
+                : 'sharper swap detail (experimental)'}
             </span>
           </label>
           {boostOn && (
@@ -364,10 +358,37 @@ export default function FaceSwapInput({
               })}
             </div>
             <p className="text-xs text-muted-foreground">512–768 recommended; 1024 can show crackled skin texture with the 256px swap models.</p>
+
+            <div className="space-y-1 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1 text-sm font-medium">
+                  Identity strength
+                  <InfoTip>
+                    Neutral is the strongest likeness. Left blends toward the generated face — softer,
+                    easier to blend, less like your reference. Right overshoots the other way, which
+                    exaggerates the difference from the generated face rather than adding likeness,
+                    and starts to caricature.
+                  </InfoTip>
+                </span>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {identityValue === IDENTITY_NEUTRAL ? 'neutral' : identityValue.toFixed(2)}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={identityValue}
+                onChange={(e) => onIdentityChange(Number(e.target.value))}
+                className="w-full accent-primary"
+                aria-label="Identity strength"
+              />
+            </div>
             </>
           )}
         </div>
-        </>
+        </TileBody>
       )}
     </div>
   )

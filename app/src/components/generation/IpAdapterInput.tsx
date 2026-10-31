@@ -6,14 +6,15 @@ import { toast } from 'sonner'
 import { useFileDrop } from '@/lib/generation/useFileDrop'
 import { uploadImageBlob } from '@/lib/generation/upload'
 import { useImagePicker } from './PickImageDialog'
+import { SwitchTile, TileBody } from './SwitchTile'
 import type { GenerationParams } from '@/types/workflow'
 
 type IpAdapter = NonNullable<GenerationParams['ipAdapter']>
 
 interface Props {
   value?: IpAdapter
-  /** ComfyUI has the IP-Adapter Plus nodes installed. */
-  available: boolean
+  /** ComfyUI has the IP-Adapter Plus nodes installed; null while still checking. */
+  available: boolean | null
   onChange: (v: IpAdapter | undefined) => void
 }
 
@@ -68,34 +69,19 @@ export default function IpAdapterInput({ value, available, onChange }: Props) {
   }
 
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={enabled}
+    <div className="contents">
+      <SwitchTile
+        label="IP-Adapter"
+        icon={ImageIcon}
+        on={enabled}
+        onToggle={toggle}
         disabled={!available}
-        onClick={toggle}
-        className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
-          !available ? 'border-border bg-muted/20 opacity-60 cursor-not-allowed'
-            : enabled ? 'border-primary/40 bg-primary/10' : 'border-border bg-muted/30 hover:bg-muted/50'
-        }`}
-      >
-        <span className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${enabled ? 'bg-primary' : 'bg-input'}`}>
-          <span className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-sm transition-transform mt-0.5 ${enabled ? 'translate-x-[1.375rem]' : 'translate-x-0.5'}`} />
-        </span>
-        <span className="min-w-0 flex items-center gap-2">
-          <ImageIcon className="h-4 w-4 shrink-0 text-primary" />
-          <span>
-            <span className="block text-sm font-semibold">IP-Adapter reference</span>
-            <span className="block text-xs text-muted-foreground">
-              {available ? 'Match the style/subject of a reference image' : 'Requires ComfyUI IP-Adapter Plus'}
-            </span>
-          </span>
-        </span>
-      </button>
+        hint="Match the style/subject of a reference image"
+        note={available === false ? 'Requires ComfyUI IP-Adapter Plus' : undefined}
+      />
 
       {enabled && (
-        <div className="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
+        <TileBody title="IP-Adapter reference">
           <div {...dragProps} className={`flex items-center gap-3 rounded-lg border bg-background p-2 transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/30' : 'border-border'}`}>
             {value?.image && preview ? (
               // eslint-disable-next-line @next/next/no-img-element -- local object-URL preview
@@ -123,7 +109,7 @@ export default function IpAdapterInput({ value, available, onChange }: Props) {
             </div>
             <input type="range" min={0.1} max={1} step={0.05} value={value?.weight ?? 0.7} onChange={(e) => value && onChange({ ...value, weight: Number(e.target.value) })} className="w-full accent-primary" aria-label="IP-Adapter weight" />
           </div>
-        </div>
+        </TileBody>
       )}
     </div>
   )

@@ -15,7 +15,8 @@ export interface ResolvedOutputMedia {
  */
 const VIDEO_FILE = /\.(mp4|webm|mkv|mov|m4v)$/i
 
-function viewUrl(item: OutputImage): string {
+/** The app's proxy URL for a ComfyUI file. */
+export function viewUrl(item: OutputImage): string {
   return `/api/comfyui/view?filename=${encodeURIComponent(item.filename)}&subfolder=${encodeURIComponent(item.subfolder)}&type=${item.type}`
 }
 

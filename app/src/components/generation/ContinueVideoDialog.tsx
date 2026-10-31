@@ -4,7 +4,8 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { FastForward } from 'lucide-react'
 import { useStudioStore } from '@/lib/generation/studio-store'
-import { continuationPrefill } from '@/lib/generation/useContinueVideo'
+import { continuationPrefill, continuesInReferenceMode, sourceParamsFor } from '@/lib/generation/useContinueVideo'
+import { useQueueStore } from '@/lib/comfyui/queue'
 import { Button } from '@/components/ui/button'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -34,13 +35,18 @@ export default function ContinueVideoDialog() {
 
   const go = (huntCount: number) => {
     if (!video) return
-    setPrefill(continuationPrefill(video, huntCount))
+    // The clip's own job, so a reference-mode clip continues with its references.
+    const source = sourceParamsFor(video, useQueueStore.getState().jobs)
+    setPrefill(continuationPrefill(video, huntCount, source))
     setContinueTarget(null)
     router.push('/generate-videos')
+    const refsNote = continuesInReferenceMode(source)
+      ? ' Its references come along.'
+      : source ? '' : ' Its settings are not in the queue history, so it continues without references.'
     toast.success(
-      huntCount === 0
-        ? 'Continuing from this clip — edit the prompt, then Generate'
-        : `Continuing from this clip — ${huntCount} takes to pick from. Edit the prompt, then Generate.`,
+      (huntCount === 0
+        ? 'Continuing from this clip — edit the prompt, then Generate.'
+        : `Continuing from this clip — ${huntCount} takes to pick from. Edit the prompt, then Generate.`) + refsNote,
     )
   }
 

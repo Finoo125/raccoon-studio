@@ -69,14 +69,19 @@ const store: Map<string, Entry> =
 
 export const transferKey = (dir: string, name: string) => `${dir}/${path.basename(name)}`
 
-/** Drop settled transfers nobody is going to ask about again. */
+/**
+ * Drop settled transfers nobody is going to ask about again — all together,
+ * once the whole store has been quiet for RETAIN_MS (nothing running, and the
+ * NEWEST end that long ago). A model's files download as a set and the browser
+ * counts the set finished only once every key reads done: pruning each file on
+ * its own age dropped a sibling that ended early on the very first poll after
+ * the last one ended, and the set read "downloading" forever.
+ */
 function prune() {
-  const now = Date.now()
-  for (const [key, e] of store) {
-    if (e.transfer.status !== 'running' && now - (e.transfer.endedAt ?? now) > RETAIN_MS) {
-      store.delete(key)
-    }
-  }
+  const all = [...store.values()].map((e) => e.transfer)
+  if (all.some((t) => t.status === 'running')) return
+  const newestEnd = Math.max(0, ...all.map((t) => t.endedAt ?? 0))
+  if (Date.now() - newestEnd > RETAIN_MS) store.clear()
 }
 
 export function listTransfers(): Transfer[] {
@@ -106,8 +111,12 @@ export interface StartResult {
  * Returns as soon as the transfer is registered — the bytes keep moving after
  * the request that started them has been answered, which is the entire point.
  */
-export function startTransfer(opts: { url: string; path: string; name: string }): StartResult {
-  const modelsDir = process.env.COMFYUI_MODELS_DIR ?? ''
+export function startTransfer(opts: {
+  url: string; path: string; name: string
+  /** Another folder to download under (an app installer, not a model); still fenced in. */
+  root?: string
+}): StartResult {
+  const modelsDir = opts.root ?? process.env.COMFYUI_MODELS_DIR ?? ''
   if (!modelsDir) return { error: 'COMFYUI_MODELS_DIR is not set in .env.local' }
 
   const safeName = path.basename(opts.name)

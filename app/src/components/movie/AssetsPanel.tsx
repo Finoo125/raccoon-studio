@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Film, FileQuestion, ImageIcon, Music, RefreshCw, Upload } from 'lucide-react'
+import { Film, FileQuestion, ImageIcon, Music, RefreshCw, ScanFace, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -9,10 +9,13 @@ import type { MovieAsset } from '@/types/movie'
 import { useEditorStore } from './editor-store'
 import { selectAssets } from './editor-selectors'
 import { useEditorActions } from './editor-actions'
+import FaceSwapDialog from '@/components/video/FaceSwapDialog'
 
 interface GalleryVideo {
   filename: string
   path: string
+  /** Output-dir-relative, which is the form a ComfyUI graph can load. */
+  relPath: string
   url: string
   sizeBytes: number
   modifiedAt: string
@@ -31,6 +34,12 @@ export default function AssetsPanel({ projectId }: { projectId: string }) {
   const [galleryVideos, setGalleryVideos] = useState<GalleryVideo[] | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [galleryRefreshKey, setGalleryRefreshKey] = useState(0)
+  /**
+   * Offered on the gallery tab only. Project assets are copies inside the
+   * project dir, which ComfyUI cannot see — the clip they came from is right
+   * here on this tab, and swapping it there keeps one code path.
+   */
+  const [swapping, setSwapping] = useState<GalleryVideo | null>(null)
   const assets = useEditorStore(selectAssets)
   const actions = useEditorActions()
 
@@ -131,7 +140,7 @@ export default function AssetsPanel({ projectId }: { projectId: string }) {
                   e.dataTransfer.setData('application/x-raccoon-gallery', JSON.stringify({ path: v.path }))
                   e.dataTransfer.effectAllowed = 'copy'
                 }}
-                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-grab active:cursor-grabbing"
+                className="group flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-grab active:cursor-grabbing"
               >
                 <Film className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
@@ -140,6 +149,15 @@ export default function AssetsPanel({ projectId }: { projectId: string }) {
                     {(v.sizeBytes / 1024 / 1024).toFixed(1)} MB · {new Date(v.modifiedAt).toLocaleDateString()}
                   </p>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
+                  title="Swap faces in this clip"
+                  onClick={() => setSwapping(v)}
+                >
+                  <ScanFace className="h-3.5 w-3.5" />
+                </Button>
               </div>
             ))
           )
@@ -183,6 +201,14 @@ export default function AssetsPanel({ projectId }: { projectId: string }) {
         <Upload className="h-3 w-3" />
         Drop video, audio or image files to import
       </div>
+
+      <FaceSwapDialog
+        open={swapping !== null}
+        onOpenChange={(v) => { if (!v) setSwapping(null) }}
+        clip={swapping ? { file: swapping.relPath, location: 'output' } : null}
+        clipUrl={swapping?.url ?? ''}
+        clipKey={swapping?.filename ?? 'clip'}
+      />
     </div>
   )
 }

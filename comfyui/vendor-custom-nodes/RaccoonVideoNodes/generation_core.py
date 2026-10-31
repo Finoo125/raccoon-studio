@@ -70,6 +70,12 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
     # are dropped here so the gates below can just ask whether the list is empty.
     image_b64 = body.get("image_b64") or ""
     images = [b for b in (image_b64 if isinstance(image_b64, (list, tuple)) else [image_b64]) if b]
+    # A reference render that continues a clip or must hit keyframes is shown
+    # THOSE pictures (the previous clip's last frame, then the keyframes) -- never
+    # the references, which stay behind `ref2v_vision`. The doctrine numbers
+    # them, so a count that does not match means a picture failed to load.
+    rc = body.get("ref_counts") if isinstance(body.get("ref_counts"), dict) else {}
+    ref2v_frames = (1 if rc.get("continuing") else 0) + len(rc.get("keyframes") or [])
     pov = bool(body.get("pov", False))
     pov_gender = body.get("pov_gender", "female")
     explicit = _infer_explicit(intent) or scenario_forces_explicit(body.get("scenario",""))
@@ -86,8 +92,11 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
     # Every frame-anchored task needs its frame(s): the doctrine's first line
     # names them, so writing blind produces a prompt that references a picture
     # that was never attached.
-    if mode in ("i2v", "fl2v", "l2v") and not images:
+    if mode in ("i2v", "fl2v", "l2v", "continue") and not images:
         return {"error": "%s needs an image" % mode.upper(), "elapsed_s": 0}
+    if mode == "ref2v" and ref2v_frames and len(images) != ref2v_frames:
+        return {"error": "Some keyframe or previous-clip pictures could not be read -- try Enhance again",
+                "elapsed_s": 0}
     if model_file == "None" and llm.is_managed():
         return {"error": "No model selected", "elapsed_s": 0}
 
@@ -112,12 +121,17 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
     #            contradicts the reference image it can actually see.
     # `h3_ab.py --arm ref2v-vision` scores both arms; flip the default here when
     # it earns it, and delete this note with it.
-    vision_modes = ("i2v", "fl2v", "l2v", "director")
-    if body.get("ref2v_vision"):
+    # `continue` is the previous clip's last frame: the person, outfit and room
+    # are already on screen, and a writer that cannot see them invents them.
+    vision_modes = ("i2v", "fl2v", "l2v", "continue", "director")
+    # Keyframes and a continuation open it too, with their own pictures (above).
+    if body.get("ref2v_vision") or ref2v_frames:
         vision_modes += ("ref2v",)
     need_vision = bool(images) and mode in vision_modes
     if need_vision and mmproj_file == "None (text-only)" and llm.is_managed():
-        return {"error": "I2V needs an mmproj (vision) file", "elapsed_s": 0}
+        # Say what actually needs the pictures: reference mode has no I2V.
+        who = "Keyframes or a continuation" if mode == "ref2v" else "I2V"
+        return {"error": "%s needs an mmproj (vision) file" % who, "elapsed_s": 0}
 
     status_log = []
     try:
@@ -148,6 +162,9 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
             # {images, videos, audios} — lets the H3 ref2va doctrine name only
             # the reference types actually attached. Ignored by the LTX brain.
             ref_counts=body.get("ref_counts"),
+            # One continuous shot instead of the duration table's 2-5. Ignored
+            # by the LTX brain, which swallows unknown kwargs.
+            single_shot=bool(body.get("single_shot")),
         )
         messages = brain.build_messages(
             system, intent, duration_s, mode,
@@ -264,9 +281,12 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
         full = doctrine.finalize("".join(acc), mode=mode, intent=intent,
                                  ref_counts=body.get("ref_counts"),
                                  duration_s=duration_s)
+        # Also an answer with no description in it: h3_brain.finalize returns ""
+        # rather than ship its own repair lines as the script.
         if not full:
-            await emit({"type": "error", "msg": "Empty response"})
-            return {"error": "Empty response", "status": status_log, "elapsed_s": time.time() - t0}
+            msg = "The writer sent back no script. Try again."
+            await emit({"type": "error", "msg": msg})
+            return {"error": msg, "status": status_log, "elapsed_s": time.time() - t0}
 
         # Carry the finalized text (i2v anchor, fence/think stripping) — the
         # client otherwise only has the raw deltas, which finalize() may differ from.

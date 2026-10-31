@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { expandWildcards, hasWildcards } from './wildcards-expand'
+import { expandWildcards, hasWildcards, wildcardTokens } from './wildcards-expand'
 
 // Deterministic rng: always picks index 0 (first option / first line).
 const first = () => 0
@@ -37,5 +37,12 @@ describe('expandWildcards', () => {
     expect(hasWildcards('plain')).toBe(false)
     expect(hasWildcards('a {x|y}')).toBe(true)
     expect(hasWildcards('a __c__')).toBe(true)
+  })
+})
+
+describe('wildcardTokens', () => {
+  it('lists every token and top-level group verbatim, once', () => {
+    expect(wildcardTokens('a __hair-color__ girl in a {red|blue {light|dark}} dress, __hair-color__')).toEqual(['__hair-color__', '{red|blue {light|dark}}'])
+    expect(wildcardTokens('a plain prompt')).toEqual([])
   })
 })

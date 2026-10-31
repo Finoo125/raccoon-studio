@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ltx23Workflow, ltxDimsForImage } from './ltx23'
+import { ltx23Workflow, ltxDimsForImage, ltxRifeFps } from './ltx23'
 import type { VideoGenerationParams } from '@/types/video-workflow'
 import type { ComfyUIPrompt, ComfyUIPromptNode } from '@/types/comfyui'
 
@@ -260,6 +260,26 @@ describe('ltx23Workflow.buildPrompt', () => {
   it('keeps RIFE interpolation in the graph by default', () => {
     const wf = ltx23Workflow.buildPrompt(base) as unknown as Wf
     expect(Object.values(wf).some((n) => n.class_type === 'RIFEInterpolation')).toBe(true)
+  })
+
+  it('retargets RIFE to 1.5x the render fps, container fps included', () => {
+    // The graph ships a fixed 60 on that slider — 2x at 30 fps and 2.5x at 24,
+    // so it has to follow the fps dial rather than sit at a constant.
+    for (const fps of [30, 24]) {
+      const wf = ltx23Workflow.buildPrompt({ ...base, fps }) as unknown as Wf
+      const rife = byClass(wf as unknown as ComfyUIPrompt, 'RIFEInterpolation')
+      const [sliderId] = rife.inputs.target_fps as [string, number]
+      expect(wf[sliderId].inputs.Xf, `${fps} fps`).toBe(ltxRifeFps(fps))
+      // isfloatX picks Xf, but the int face of the slider has to agree.
+      expect(wf[sliderId].inputs.Xi).toBe(Math.round(ltxRifeFps(fps)))
+      // The saving combine reads the same node, so the container fps cannot
+      // disagree with the frames — a mismatch plays the clip out of sync with
+      // its own generated soundtrack.
+      const saver = Object.values(wf).find(
+        (n) => n.class_type === 'VHS_VideoCombine' && n.inputs.save_output === true,
+      )!
+      expect(saver.inputs.frame_rate).toEqual(rife.inputs.target_fps)
+    }
   })
 
   it('splices RIFE out (images + frame_rate rewired) when rife is false', () => {

@@ -7,6 +7,12 @@ export interface ZImageControlNetRefs {
   ksamplerId: string
   /** VAE source ref — the QwenImageDiffsynthControlnet patch needs a vae. */
   vae: [string, number]
+  /**
+   * Which Fun ControlNet patch to load. Z-Image's by default; Qwen-Image 2.1
+   * passes its own — the same core node dispatches on the patch's type
+   * (`nodes_model_patch.py`, QwenImageDiffsynthControlnet).
+   */
+  model?: string
 }
 
 /**
@@ -16,6 +22,10 @@ export interface ZImageControlNetRefs {
  * availability probe so the name can never drift between download and lookup.
  */
 export const FUN_MODEL = 'Z-Image-Turbo-Fun-Controlnet-Union-2.1-2601-8steps.safetensors'
+
+/** Qwen-Image 2.1's Fun ControlNet Union (Comfy-Org int8 build, 3.6 GiB).
+ *  Shared with the form's availability probe and the Models page. */
+export const QWEN21_FUN_MODEL = 'qwen_image_2.1_fun_controlnet_union_int8_convrot.safetensors'
 
 /**
  * Inserts the Z-Image Fun Union ControlNet when `params.controlNet` is set.
@@ -36,7 +46,7 @@ export function appendZImageControlNet(
 
   wf['zcn:image'] = { class_type: 'LoadImage', inputs: { image: cn.image, upload: 'image' } }
   wf['zcn:pre'] = { class_type: CN_PREPROCESSOR[cn.mode], inputs: { image: ['zcn:image', 0], resolution: 1024 } }
-  wf['zcn:patch'] = { class_type: 'ModelPatchLoader', inputs: { name: FUN_MODEL } }
+  wf['zcn:patch'] = { class_type: 'ModelPatchLoader', inputs: { name: refs.model ?? FUN_MODEL } }
   wf['zcn:apply'] = {
     class_type: 'QwenImageDiffsynthControlnet',
     inputs: {

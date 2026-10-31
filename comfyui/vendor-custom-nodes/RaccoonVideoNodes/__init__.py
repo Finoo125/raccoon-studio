@@ -13,6 +13,8 @@ from .ltx_reference_enable import NODE_CLASS_MAPPINGS as _REFEN_NODES, NODE_DISP
 # reference tokens — see ltx_face_identity.py) and needs ltx_reference_enable at
 # >= v1.9.6, which is why that file was bumped to v1.9.7 alongside it.
 from .ltx_face_identity import NODE_CLASS_MAPPINGS as _FACEID_NODES, NODE_DISPLAY_NAME_MAPPINGS as _FACEID_NAMES
+# H3 continuation that freezes the previous tail (video + audio) in the latent.
+from .h3_masked_prefix import NODE_CLASS_MAPPINGS as _H3MASK_NODES, NODE_DISPLAY_NAME_MAPPINGS as _H3MASK_NAMES
 
 NODE_CLASS_MAPPINGS = {
     **_PROMPT_NODES,
@@ -22,6 +24,7 @@ NODE_CLASS_MAPPINGS = {
     **_REFCOND_NODES,
     **_REFEN_NODES,
     **_FACEID_NODES,
+    **_H3MASK_NODES,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     **_PROMPT_NAMES,
@@ -31,6 +34,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **_REFCOND_NAMES,
     **_REFEN_NAMES,
     **_FACEID_NAMES,
+    **_H3MASK_NAMES,
 }
 
 # ASCII only, deliberately. This runs at import, and ComfyUI is launched with

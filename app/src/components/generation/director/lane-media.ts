@@ -90,46 +90,89 @@ export function poster(filename: string, file?: File, max = 96): Promise<string 
   const key = `${filename}|${max}`
   let p = posters.get(key)
   if (!p) {
-    p = new Promise<string | null>((resolve) => {
+    p = (async () => {
       const objectUrl = file ? URL.createObjectURL(file) : null
-      const video = document.createElement('video')
-      const done = (out: string | null) => {
+      try {
+        // Frame 0 is black in a lot of encodes, so nudge past it before grabbing.
+        return await grabFrame(objectUrl ?? comfyInputUrl(filename), max, (d) => Math.min(0.1, (d || 1) / 2))
+      } finally {
         if (objectUrl) URL.revokeObjectURL(objectUrl)
-        resolve(out)
       }
-      video.preload = 'metadata'
-      video.muted = true
-      // Frame 0 is black in a lot of encodes, so nudge past it before grabbing.
-      video.onloadedmetadata = () => {
-        video.currentTime = Math.min(0.1, (video.duration || 1) / 2)
-      }
-      video.onseeked = () => {
-        try {
-          const canvas = document.createElement('canvas')
-          // Fit the clip's own aspect rather than a fixed 16:9 box — a portrait
-          // clip used to be squashed flat, which the vision pass would read as
-          // the shot's actual framing.
-          const w = video.videoWidth || 16
-          const h = video.videoHeight || 9
-          const scale = Math.min(1, max / Math.max(w, h))
-          canvas.width = Math.max(1, Math.round(w * scale))
-          canvas.height = Math.max(1, Math.round(h * scale))
-          canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
-          done(canvas.toDataURL('image/jpeg', 0.6))
-        } catch {
-          done(null)
-        }
-      }
-      video.onerror = () => done(null)
-      video.src = objectUrl ?? comfyInputUrl(filename)
-    })
+    })()
     posters.set(key, p)
   }
   return p
 }
 
-/** Longest side of a shot picture handed to the enhancer's vision pass. */
+/**
+ * One frame of the video at `src` as a JPEG data URL, `max` px on the longest
+ * side. `seek` picks the moment once the duration is known. Resolves null on
+ * any failure rather than throwing — a missing picture must never take down
+ * the caller's whole pass.
+ */
+function grabFrame(src: string, max: number, seek: (duration: number) => number): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.muted = true
+    video.onloadedmetadata = () => {
+      video.currentTime = seek(video.duration || 0)
+    }
+    video.onseeked = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        // Fit the clip's own aspect rather than a fixed 16:9 box — a portrait
+        // clip used to be squashed flat, which the vision pass would read as
+        // the shot's actual framing.
+        const w = video.videoWidth || 16
+        const h = video.videoHeight || 9
+        const scale = Math.min(1, max / Math.max(w, h))
+        canvas.width = Math.max(1, Math.round(w * scale))
+        canvas.height = Math.max(1, Math.round(h * scale))
+        canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+        resolve(canvas.toDataURL('image/jpeg', 0.6))
+      } catch {
+        resolve(null)
+      }
+    }
+    video.onerror = () => resolve(null)
+    video.src = src
+  })
+}
+
+/** Longest side of a picture handed to the enhancer's vision pass. */
 const VISION_PX = 512
+
+/** Raw base64 JPEG of one frame of the clip at `src` for a writer's vision pass, or null. */
+async function clipFrameB64(src: string, seek: (duration: number) => number): Promise<string | null> {
+  // Fetched whole and played from a blob URL on purpose: Chromium only seeks
+  // a source that answers byte ranges, and one that does not fires `seeked`
+  // with the clip still at 0.000 — the "last" frame silently comes back as
+  // the first (measured in Edge, before /api/comfyui/view forwarded Range).
+  // The app's own proxy does now; a blob URL is seekable whatever proxy sits
+  // in front of it (LAN, RunPod), and the clip is a few MB.
+  let objectUrl: string | null = null
+  try {
+    objectUrl = URL.createObjectURL(await (await fetch(src)).blob())
+    const url = await grabFrame(objectUrl, VISION_PX, seek)
+    return url ? (url.split(',', 2)[1] ?? null) : null
+  } catch {
+    return null
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl)
+  }
+}
+
+/**
+ * The LAST frame of the clip at `src`, for the continuation writer's vision
+ * pass: it is the frame the next clip opens on, so it is what the writer has
+ * to describe rather than invent.
+ */
+// A hair before the end: seeking to exactly `duration` can land past the last decodable frame and paint nothing.
+export const lastFrameB64 = (src: string) => clipFrameB64(src, (d) => Math.max(0, d - 0.03))
+
+/** The MIDDLE frame of the clip at `src`: what Edit's writer names in its "keep …" clause. */
+export const midFrameB64 = (src: string) => clipFrameB64(src, (d) => d / 2)
 
 /**
  * One shot's picture as a raw base64 JPEG for the prompt enhancer — the still

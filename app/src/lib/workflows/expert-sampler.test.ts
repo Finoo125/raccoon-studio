@@ -101,7 +101,19 @@ describe('expert mode through the workflow registry', () => {
   // registration rather than per builder. Params that suit all of them: no LoRAs,
   // no base image, upscale/detailer left at their defaults.
   it.each(workflows.map((w) => w.id))('%s honours expert overrides', (id) => {
-    const wf = getWorkflow(id)!.buildPrompt({ ...BASE, ...EXPERT })
+    const w = getWorkflow(id)!
+    const wf = w.buildPrompt({ ...BASE, ...EXPERT })
+    if (w.distilledSchedule) {
+      // Sampler and CFG only: steps and scheduler would take it off the sigma
+      // list it was distilled for (qwen21.ts).
+      const main = wf['q:sampler']
+      expect(main.class_type).toBe('SamplerCustom')
+      expect(main.inputs.cfg).toBe(3.5)
+      expect(wf[(main.inputs.sampler as [string, number])[0]].inputs.sampler_name).toBe('euler_ancestral')
+      expect(String(wf[(main.inputs.sigmas as [string, number])[0]].inputs.sigmas).split(',').length)
+        .toBe((w.defaultParams.steps ?? 0) + 1)
+      return
+    }
     const main = Object.entries(wf).filter(
       ([nodeId, n]) => n.class_type === 'KSampler' && !nodeId.startsWith('hires:'),
     )
@@ -119,8 +131,18 @@ describe('expert mode through the workflow registry', () => {
     const off = w.buildPrompt({ ...BASE, ...EXPERT, expertMode: false })
     // Falls back to the family's own budget, which defaultParams also advertises.
     const [, main] = Object.entries(off).find(
-      ([nodeId, n]) => n.class_type === 'KSampler' && !nodeId.startsWith('hires:'),
+      ([nodeId, n]) => (n.class_type === 'KSampler' || n.class_type === 'SamplerCustom') && !nodeId.startsWith('hires:'),
     )!
+    if (main.class_type === 'SamplerCustom') {
+      // A distilled preset (Qwen-Image 2.1 Turbo) samples its own sigma list:
+      // the budget is that list's length, the sampler comes from KSamplerSelect.
+      const [selectId] = main.inputs.sampler as [string, number]
+      const [sigmasId] = main.inputs.sigmas as [string, number]
+      expect(main.inputs.cfg).toBe(w.defaultParams.cfg)
+      expect(off[selectId].inputs.sampler_name).toBe(w.defaultParams.sampler)
+      expect(String(off[sigmasId].inputs.sigmas).split(',').length).toBe((w.defaultParams.steps ?? 0) + 1)
+      return
+    }
     expect(main.inputs.steps).toBe(w.defaultParams.steps)
     expect(main.inputs.cfg).toBe(w.defaultParams.cfg)
     expect(main.inputs.sampler_name).toBe(w.defaultParams.sampler)

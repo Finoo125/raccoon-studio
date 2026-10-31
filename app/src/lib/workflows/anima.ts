@@ -41,6 +41,7 @@ function animaFamily(v: AnimaVariant): WorkflowDefinition {
     supportsNegativePrompt: v.negativePrompt,
     supportsLoRA: true,
     loraFamily: 'anima',
+    promptStyle: 'tags',
     supportsPromptEnhancer: false,
     supportsInputImage: false,
     supportsUpscale: true,

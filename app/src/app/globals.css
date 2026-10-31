@@ -275,9 +275,60 @@ body::after {
 .animate-ember {
   animation: ember-glow 5s ease-in-out infinite;
 }
+
+/* Camera move cards (video Prompt Helper): the scene moves under a still frame,
+   one way, then holds — so the direction reads. Names match cameraAnim(). */
+.cam-anim {
+  animation-duration: 2.8s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+@keyframes cam-push {
+  0%, 10% { transform: scale(1); }
+  75%, 100% { transform: scale(1.45); }
+}
+@keyframes cam-pull {
+  0%, 10% { transform: scale(1.45); }
+  75%, 100% { transform: scale(1); }
+}
+/* Turning the camera left slides the scene right, with a little turn in it. */
+@keyframes cam-pan-left {
+  0%, 10% { transform: perspective(200px) translateX(-9%) rotateY(-10deg); }
+  75%, 100% { transform: perspective(200px) translateX(9%) rotateY(10deg); }
+}
+@keyframes cam-pan-right {
+  0%, 10% { transform: perspective(200px) translateX(9%) rotateY(10deg); }
+  75%, 100% { transform: perspective(200px) translateX(-9%) rotateY(-10deg); }
+}
+@keyframes cam-tilt-up {
+  0%, 10% { transform: perspective(200px) translateY(-9%) rotateX(10deg); }
+  75%, 100% { transform: perspective(200px) translateY(9%) rotateX(-10deg); }
+}
+@keyframes cam-tilt-down {
+  0%, 10% { transform: perspective(200px) translateY(9%) rotateX(-10deg); }
+  75%, 100% { transform: perspective(200px) translateY(-9%) rotateX(10deg); }
+}
+/* Moving the camera itself: a straight slide, no turn. */
+@keyframes cam-truck-left {
+  0%, 10% { transform: translateX(-13%); }
+  75%, 100% { transform: translateX(13%); }
+}
+@keyframes cam-truck-right {
+  0%, 10% { transform: translateX(13%); }
+  75%, 100% { transform: translateX(-13%); }
+}
+@keyframes cam-handheld {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(2%, -1.5%) rotate(1deg); }
+  40% { transform: translate(-1.5%, 1%) rotate(-0.8deg); }
+  60% { transform: translate(1.5%, 1.5%) rotate(0.6deg); }
+  80% { transform: translate(-2%, -1%) rotate(-1deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-ember,
-  .animate-ambient {
+  .animate-ambient,
+  .cam-anim {
     animation: none !important;
   }
 }

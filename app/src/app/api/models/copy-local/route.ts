@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 
 const ALLOWED_SUBFOLDERS = [
-  'diffusion_models', 'text_encoders', 'vae', 'loras', 'checkpoints',
+  'diffusion_models', 'text_encoders', 'vae', 'loras', 'checkpoints', 'model_patches',
   'ultralytics/bbox', 'sams',
 ]
 const ALLOWED_EXTENSIONS = ['.safetensors', '.ckpt', '.pt', '.bin', '.gguf', '.pth']

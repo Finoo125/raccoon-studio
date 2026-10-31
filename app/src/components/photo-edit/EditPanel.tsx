@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { usePhotoEditStore } from '@/lib/photo-edit/store'
-import { SECTION_ORDER, type SectionId } from '@/lib/photo-edit/sections'
+import { SECTION_ORDER, visibleSections, type SectionId } from '@/lib/photo-edit/sections'
+import { useUiMode } from '@/lib/ui-mode'
 import HistogramView from './HistogramView'
 import Section from './Section'
 import GroupSliders from './GroupSliders'
@@ -40,6 +41,18 @@ export default function EditPanel() {
   const setOpenSections = usePhotoEditStore((s) => s.setOpenSections)
   const dismissedHints = usePhotoEditStore((s) => s.dismissedHints)
   const setDismissedHints = usePhotoEditStore((s) => s.setDismissedHints)
+  const editState = usePhotoEditStore((s) => s.editState)
+  const canvasMode = usePhotoEditStore((s) => s.canvasMode)
+  const setCanvasMode = usePhotoEditStore((s) => s.setCanvasMode)
+  const mode = useUiMode()
+  const shown = visibleSections(mode, editState)
+
+  // Switching to Simple (or deleting the last mask there) can hide the section
+  // whose overlay is armed; hand the canvas back rather than leave it orphaned.
+  const orphaned = canvasMode !== 'edit' && !shown.includes(canvasMode)
+  useEffect(() => {
+    if (orphaned) setCanvasMode('edit')
+  }, [orphaned, setCanvasMode])
 
   // Gates the writer below until the restore has run. It has to be state, not a
   // ref: both effects fire in the same commit, so a ref set by the reader is
@@ -69,11 +82,13 @@ export default function EditPanel() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-border px-3 pb-1 pt-2">
-        <HistogramView />
-      </div>
+      {mode === 'advanced' && (
+        <div className="shrink-0 border-b border-border px-3 pb-1 pt-2">
+          <HistogramView />
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {SECTION_ORDER.map((id) => (
+        {shown.map((id) => (
           <Section key={id} id={id}>{BODY[id]}</Section>
         ))}
       </div>

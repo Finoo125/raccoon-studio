@@ -9,7 +9,7 @@ import { cancelVideoJobs } from '@/lib/comfyui/cancel-video'
 import { submitPrompt } from '@/lib/comfyui/submit'
 import { ltx23Workflow } from '@/lib/workflows/ltx23'
 import { getVideoWorkflow, promoteSeedHunt } from '@/lib/workflows/video-index'
-import { minimaxH3Workflow, H3_TURBO, H3_STEPS, h3UsesEros } from '@/lib/workflows/minimax-h3'
+import { minimaxH3Workflow, H3_TURBO, H3_STEPS, h3Profile } from '@/lib/workflows/minimax-h3'
 import { assetInstalled } from '@/lib/models/ltx23-assets'
 import { Button } from '@/components/ui/button'
 import type { VideoGenerationParams } from '@/types/video-workflow'
@@ -63,7 +63,7 @@ export default function SeedHuntGrid({ jobs }: { jobs: GenerationJob[] }) {
   // does the Eros checkpoint, whose distillation is merged into its weights —
   // offering the row there would promise a speed the promoted render ignores.
   const isH3 =
-    jobs.length > 0 && workflowOf(jobs[0]).id === minimaxH3Workflow.id && !h3UsesEros(first)
+    jobs.length > 0 && workflowOf(jobs[0]).id === minimaxH3Workflow.id && !h3Profile(first)
 
   // ponytail: the same one-shot LoraLoader probe the video form does. This grid
   // is also rendered by Movie Maker, which sits OUTSIDE VideoFormProvider, so

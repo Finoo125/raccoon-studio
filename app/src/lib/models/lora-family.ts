@@ -7,11 +7,14 @@
 import { selectionIsStale } from './installed'
 
 /**
- * Families the app can generate with, plus the two it can only recognise well
- * enough to rule out (`sd15`, `flux` match no workflow, so they get filtered
- * out of every picker rather than offered and failing at validation).
+ * Families the app can generate with, plus the ones it can only recognise well
+ * enough to rule out (`sd15`, `flux` and `qwenimage` — Qwen-Image 2509/2511/2512
+ * — match no workflow, so they get filtered out of every picker rather than
+ * offered and failing at validation).
  */
-export type LoraFamily = 'sdxl' | 'zimage' | 'anima' | 'ernie' | 'krea2' | 'ltx' | 'h3' | 'sd15' | 'flux'
+export type LoraFamily =
+  | 'sdxl' | 'zimage' | 'anima' | 'ernie' | 'krea2' | 'qwen21' | 'ltx' | 'h3'
+  | 'sd15' | 'flux' | 'qwenimage'
 
 /**
  * Narrow a list of ComfyUI model filenames to the ones that belong to `family` —

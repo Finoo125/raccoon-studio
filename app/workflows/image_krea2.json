@@ -50,7 +50,7 @@
       "sampling_mode.repetition_penalty": 1.05,
       "sampling_mode.seed": 0,
       "sampling_mode.presence_penalty": 0,
-      "thinking": false,
+      "thinking": true,
       "use_default_template": true,
       "clip": ["k:clip", 0]
     },

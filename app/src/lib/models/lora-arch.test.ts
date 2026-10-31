@@ -105,6 +105,105 @@ describe('classifyLoraHeader — tensor-key fingerprints', () => {
   })
 })
 
+/** Like `h`, but with each tensor's shape spelled out — the Qwen split reads the attention width. */
+const hs = (tensors: Record<string, number[]>): SafetensorsHeader =>
+  Object.fromEntries(
+    Object.entries(tensors).map(([n, shape]) => [n, { dtype: 'BF16', shape }]),
+  ) as SafetensorsHeader
+
+describe('classifyLoraHeader — Qwen-Image 2.1 vs Qwen-Image 1.x', () => {
+  // Key shapes read from the real files' headers over HTTP range requests,
+  // 2026-10-01 (spec: 2026-10-01-qwen-image-21-family-design.md).
+  it('identifies BFS head-swap v1.1 for Qwen 2.1 (ComfyUI keys, fused gate_up)', () => {
+    expect(classifyLoraHeader(hs({
+      'diffusion_model.transformer_blocks.0.attn.to_k.lora_A.weight': [64, 4096],
+      'diffusion_model.transformer_blocks.0.img_mlp.gate_up.lora_A.weight': [64, 4096],
+      'diffusion_model.transformer_blocks.0.img_mlp.out.lora_B.weight': [4096, 64],
+    }))).toBe('qwen21')
+  })
+
+  it('identifies the Pruna 8-step LoRA (diffusers keys, split gate_layer/proj)', () => {
+    expect(classifyLoraHeader(hs({
+      'transformer.transformer_blocks.0.attn.to_q.lora_A.weight': [64, 4096],
+      'transformer.transformer_blocks.0.img_mlp.gate_layer.lora_A.weight': [64, 4096],
+      'transformer.transformer_blocks.0.img_mlp.proj.lora_B.weight': [12288, 64],
+    }))).toBe('qwen21')
+  })
+
+  it('identifies attention-only Viggle turbo by its 4096 attention width', () => {
+    expect(classifyLoraHeader(hs({
+      'transformer.modulation.1.lora_A.weight': [128, 4096],
+      'transformer.time_text_embed.timestep_embedder.linear_1.lora_A.weight': [128, 256],
+      'transformer.transformer_blocks.0.attn.to_k.lora_A.weight': [128, 4096],
+      'transformer.transformer_blocks.0.attn.to_k.lora_B.weight': [4096, 128],
+    }))).toBe('qwen21')
+  })
+
+  it('identifies bare keys with no .weight suffix (Alibaba Fun-Acc)', () => {
+    expect(classifyLoraHeader(hs({
+      'transformer_blocks.0.attn.to_k.lora_down': [64, 4096],
+      'transformer_blocks.0.attn.to_k.lora_up': [4096, 64],
+      'transformer_blocks.0.attn.norm_k.weight': [128],
+    }))).toBe('qwen21')
+  })
+
+  it('identifies sd-scripts underscore keys', () => {
+    expect(classifyLoraHeader(hs({
+      'lora_unet_transformer_blocks_3_img_mlp_gate_up.lora_down.weight': [32, 4096],
+    }))).toBe('qwen21')
+  })
+
+  it('files a Qwen-Image-Edit 2511 LoRA as qwenimage, not LTX', () => {
+    // verified: BFS head v5 for 2511 — 60 dual-stream blocks at width 3072.
+    expect(classifyLoraHeader(hs({
+      'diffusion_model.transformer_blocks.0.attn.add_k_proj.lora_A.weight': [4, 3072],
+      'diffusion_model.transformer_blocks.0.attn.to_k.lora_A.weight': [4, 3072],
+      'diffusion_model.transformer_blocks.0.txt_mlp.net.0.proj.lora_A.weight': [4, 3072],
+      'diffusion_model.transformer_blocks.0.img_mod.1.lora_A.weight': [4, 3072],
+    }))).toBe('qwenimage')
+  })
+
+  it('files an attention-only Qwen-Image 1.x LoRA in ComfyUI keys as qwenimage', () => {
+    expect(classifyLoraHeader(hs({
+      'diffusion_model.transformer_blocks.0.attn.add_q_proj.lora_A.weight': [16, 3072],
+      'diffusion_model.transformer_blocks.0.attn.to_q.lora_A.weight': [16, 3072],
+    }))).toBe('qwenimage')
+  })
+
+  it('keeps LTX on attn1/attn2, even at the same 4096 width', () => {
+    expect(classifyLoraHeader(hs({
+      'diffusion_model.transformer_blocks.0.attn1.to_q.lora_A.weight': [32, 4096],
+      'diffusion_model.transformer_blocks.0.ff.net.0.proj.lora_A.weight': [32, 4096],
+    }))).toBe('ltx')
+  })
+
+  it('does not claim a diffusers Flux LoRA, which also spells attn.to_q', () => {
+    expect(classifyLoraHeader(hs({
+      'transformer.transformer_blocks.0.attn.to_q.lora_A.weight': [16, 3072],
+      'transformer.transformer_blocks.0.attn.add_q_proj.lora_A.weight': [16, 3072],
+      'transformer.single_transformer_blocks.0.attn.to_q.lora_A.weight': [16, 3072],
+    }))).toBeNull()
+  })
+
+  it('leaves an attention-only Qwen-style LoRA of unknown width unrecognised', () => {
+    expect(classifyLoraHeader(h(['transformer.transformer_blocks.0.attn.to_q.lora_A.weight']))).toBeNull()
+  })
+
+  it('still finds Krea2 first — its diffusers LoRAs share the transformer. prefix', () => {
+    expect(classifyLoraHeader(hs({
+      'transformer.text_fusion.projector.lora_A.weight': [1, 12],
+      'transformer.transformer_blocks.0.attn.to_q.lora_A.weight': [16, 4096],
+    }))).toBe('krea2')
+  })
+
+  it('hides Qwen-Image 1.x LoRAs from the Qwen 2.1 and LTX pickers', () => {
+    const families = { 'a.safetensors': 'qwen21', 'b.safetensors': 'qwenimage', 'c.safetensors': 'ltx' } as const
+    const names = Object.keys(families)
+    expect(visibleForFamily(names, families, 'qwen21')).toEqual(['a.safetensors'])
+    expect(visibleForFamily(names, families, 'ltx')).toEqual(['c.safetensors'])
+  })
+})
+
 describe('classifyLoraHeader — SDXL vs SD1.5', () => {
   it('calls it SDXL when a second text encoder is present', () => {
     expect(classifyLoraHeader(h([
@@ -283,6 +382,22 @@ describe('classifyBaseHeader - checkpoints and diffusion models', () => {
       'model.diffusion_model.blocks.0.adaln_modulation_cross_attn.1.weight',
       'model.diffusion_model.blocks.0.attention.wq.weight',
     ]))).toBe('anima')
+  })
+
+  it('identifies the Qwen-Image 2.1 diffusion model and splits it from Qwen-Image 1.x', () => {
+    // verified: qwen_image_2.1_int8_convrot (txt_in.text_norm is the key
+    // ComfyUI's own model_detection keys 2.1 on).
+    expect(classifyBaseHeader(h([
+      'img_in.weight',
+      'txt_in.text_norm.weight',
+      'transformer_blocks.0.img_mlp.gate_up.weight',
+    ]))).toBe('qwen21')
+    expect(classifyBaseHeader(h(['model.diffusion_model.txt_in.text_norm.weight']))).toBe('qwen21')
+    expect(classifyBaseHeader(h([
+      'txt_norm.weight',
+      'transformer_blocks.0.img_mod.1.weight',
+      'transformer_blocks.0.txt_mlp.net.0.proj.weight',
+    ]))).toBe('qwenimage')
   })
 
   it('falls back to metadata, then to null for an unknown architecture', () => {

@@ -7,7 +7,7 @@ import { FolderOpen, Loader2, Check, X } from 'lucide-react'
 import type { ModelFolder } from '@/lib/models/detect-folder'
 
 /** Everything ComfyUI's loaders read, in the order people reach for them. */
-const FOLDERS = ['loras', 'checkpoints', 'diffusion_models', 'vae', 'text_encoders'] as const
+const FOLDERS = ['loras', 'checkpoints', 'diffusion_models', 'vae', 'text_encoders', 'model_patches'] as const
 type Folder = (typeof FOLDERS)[number]
 
 interface Row { name: string; folder: Folder; status: 'importing' | 'done' | 'error'; error?: string }

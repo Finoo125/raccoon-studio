@@ -1343,7 +1343,7 @@ else {
     $uvExe = Get-ExePath 'uv'
     if (-not $uvExe) {
         Write-Fail ('uv could not be installed, by winget or directly. Install it with: ' +
-                    'curl.exe -fsSL -o uv-install.ps1 https://astral.sh/uv/install.ps1 && ' +
+                    'curl.exe -fsSL --ssl-revoke-best-effort -o uv-install.ps1 https://astral.sh/uv/install.ps1 && ' +
                     'powershell -ExecutionPolicy Bypass -File uv-install.ps1   then run this ' +
                     'installer again.')
     }

@@ -41,8 +41,8 @@ export function presetStamp(workflowId: string) {
  *
  * The gallery records `metadata.workflow` from the **folder** an image was
  * written to (`images/<folder>/<date>/`), which comes from each workflow JSON's
- * `filename_prefix` — so the values are `ZIT`, `ERNIE`, `KREA2`, `Anima`,
- * `SDXL`, and none of them is a workflow id or name. Matching them against
+ * `filename_prefix` — so the values are `ZIT`, `ERNIE`, `KREA2`, `QWEN21`,
+ * `Anima`, `SDXL`, and none of them is a workflow id or name. Matching them against
  * `id`/`name` therefore always failed, and "Send to Generate" landed on the
  * first preset in the list with the prompt pasted into it.
  *
@@ -55,6 +55,7 @@ const FOLDER_DEFAULT_WORKFLOW: Record<string, string> = {
   ZIT: 'z-image-turbo',
   ERNIE: 'ernie-turbo',
   KREA2: 'krea2-turbo',
+  QWEN21: 'qwen21-turbo',
   ANIMA: 'anima',
   SDXL: 'sdxl',
 }

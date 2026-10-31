@@ -5,6 +5,7 @@ import { Clapperboard, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useQueueStore } from '@/lib/comfyui/queue'
 import { useStudioStore } from '@/lib/generation/studio-store'
 import { useRecentVideosStore } from '@/lib/generation/recent-videos-store'
+import VideoPoster from '@/components/gallery/VideoPoster'
 
 /**
  * Right-side rail of the latest rendered videos, sourced from the on-disk gallery
@@ -69,14 +70,7 @@ export default function RecentVideoRail({ collapsible = false }: { collapsible?:
               }`}
               title="Inspect video"
             >
-              {/* First-frame poster via #t — preload metadata only, no streaming. */}
-              <video
-                src={`${vid.url}#t=0.1`}
-                muted
-                playsInline
-                preload="metadata"
-                className="h-full w-full object-cover pointer-events-none"
-              />
+              <VideoPoster video={vid} className="h-full w-full object-cover pointer-events-none" />
               <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-black/60 p-1 text-white">
                 <Clapperboard className="h-3 w-3" />
               </span>

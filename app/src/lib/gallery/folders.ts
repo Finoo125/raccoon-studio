@@ -7,10 +7,8 @@ export interface GalleryFolder {
   label: string
   /** Number of images in this folder (within the current filter scope). */
   count: number
-  /** Thumbnail of the newest item in the folder, used as the folder cover. */
-  coverUrl: string
-  /** Whether the cover is a video (render with <video>, not <img>). */
-  coverIsVideo: boolean
+  /** The newest item in the folder, shown as the folder cover. */
+  cover: GalleryImage
 }
 
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -62,8 +60,7 @@ export function buildFolders(images: GalleryImage[]): GalleryFolder[] {
       key,
       label: labelFor(key),
       count,
-      coverUrl: cover.thumbnailUrl,
-      coverIsVideo: cover.media === 'video',
+      cover,
     }))
     .sort((a, b) => b.key.localeCompare(a.key))
 }

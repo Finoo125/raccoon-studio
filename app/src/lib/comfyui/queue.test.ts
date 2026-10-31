@@ -124,6 +124,34 @@ describe('useQueueStore', () => {
       expect(useQueueStore.getState().jobs).toHaveLength(2)
       expect(useQueueStore.getState().jobs.map((j) => j.id)).toEqual(['job-1', 'job-2'])
     })
+
+    // The video panel's cost estimate divides a finished render's wall time by
+    // its work units, so it needs both ends of that render. `endedAt` always
+    // survived a reload and `startedAt` did not, which left the estimate able to
+    // learn only from renders made since the page loaded — so it was blank on
+    // every fresh load, which is every load.
+    it('keeps both render timestamps, so a reloaded job can still be timed', () => {
+      const record: JobRecord = {
+        id: 'timed-1',
+        promptId: 'prompt-1',
+        kind: 'video',
+        workflowId: 'minimax-h3',
+        workflowName: 'MiniMax H3 Video',
+        prompt: '{}',
+        generationParams: {},
+        status: 'done',
+        createdAt: 1_000,
+        startedAt: 2_000,
+        endedAt: 5_000,
+        outputImages: [],
+      }
+
+      useQueueStore.getState().hydrateHistory([record])
+
+      const [job] = useQueueStore.getState().jobs
+      expect(job.startedAt).toBe(2_000)
+      expect(job.endedAt).toBe(5_000)
+    })
   })
 
   describe('removeJob', () => {

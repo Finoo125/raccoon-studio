@@ -1,28 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { hasBaseModel, comboOptions, selectionIsStale, presetAvailable, fileInstalled } from './installed'
+import { comboOptions, selectionIsStale, presetAvailable, fileInstalled, withoutPresetModels } from './installed'
+import { QWEN21_BASE_UNET, QWEN21_TURBO_UNET } from '../workflows/qwen21'
 import { workflows } from '../workflows'
 
 const ckpt = (names: string[]) => ({ CheckpointLoaderSimple: { input: { required: { ckpt_name: [names] } } } })
 const unet = (names: string[]) => ({ UNETLoader: { input: { required: { unet_name: [names] } } } })
-
-describe('hasBaseModel', () => {
-  it('is false on a fresh install (both loaders offer nothing)', () => {
-    expect(hasBaseModel(ckpt([]), unet([]))).toBe(false)
-  })
-
-  it('is true with only an SDXL-family checkpoint', () => {
-    expect(hasBaseModel(ckpt(['ponyXL.safetensors']), unet([]))).toBe(true)
-  })
-
-  it('is true with only a diffusion model', () => {
-    expect(hasBaseModel(ckpt([]), unet(['z-image.safetensors']))).toBe(true)
-  })
-
-  it('is false for error bodies (ComfyUI unreachable)', () => {
-    expect(hasBaseModel({ error: 'ComfyUI unreachable' }, { error: 'ComfyUI unreachable' })).toBe(false)
-    expect(hasBaseModel(null, undefined)).toBe(false)
-  })
-})
 
 describe('comboOptions', () => {
   it('reads the classic [[...names], config] shape', () => {
@@ -101,6 +83,18 @@ describe('presetAvailable', () => {
   })
 })
 
+describe('withoutPresetModels', () => {
+  const presetModels = workflows.map((w) => w.baseModel)
+
+  // A base-only Qwen install lit up the Turbo button and the form fell back to
+  // the base model — which then ran on the Turbo's 6 distilled sigmas.
+  it("drops a sibling preset's own model, so it neither enables nor stands in for another preset", () => {
+    const family = withoutPresetModels(['QWEN21/' + QWEN21_BASE_UNET, 'aria-qwen.safetensors'], presetModels)
+    expect(family).toEqual(['aria-qwen.safetensors'])
+    expect(presetAvailable(QWEN21_TURBO_UNET, [QWEN21_BASE_UNET], withoutPresetModels([QWEN21_BASE_UNET], presetModels), true)).toBe(false)
+  })
+})
+
 describe('selectionIsStale', () => {
   it('is false for a name still on offer', () => {
     expect(selectionIsStale('here.safetensors', ['here.safetensors'], true)).toBe(false)
@@ -125,5 +119,35 @@ describe('selectionIsStale', () => {
   it('is false when nothing is selected', () => {
     expect(selectionIsStale(undefined, ['here.safetensors'], true)).toBe(false)
     expect(selectionIsStale('', [], true)).toBe(false)
+  })
+})
+
+describe('comboOptions — optional inputs', () => {
+  // RaccoonVideoFaceSwap.swap_model is optional (the builder omits it so it can
+  // never name a file that is not on disk), and reading only `required` left
+  // every picker of it empty with no error anywhere.
+  const node = 'RaccoonVideoFaceSwap'
+
+  it('reads a combo declared optional', () => {
+    const data = { [node]: { input: { optional: { swap_model: [['a.onnx', 'b.onnx']] } } } }
+    expect(comboOptions(data, node, 'swap_model')).toEqual(['a.onnx', 'b.onnx'])
+  })
+
+  it('still prefers required when a field somehow appears in both', () => {
+    const data = {
+      [node]: {
+        input: { required: { m: [['req']] }, optional: { m: [['opt']] } },
+      },
+    }
+    expect(comboOptions(data, node, 'm')).toEqual(['req'])
+  })
+
+  it('handles the new schema form in optional too', () => {
+    const data = { [node]: { input: { optional: { m: ['COMBO', { options: ['x'] }] } } } }
+    expect(comboOptions(data, node, 'm')).toEqual(['x'])
+  })
+
+  it('returns empty for a field in neither', () => {
+    expect(comboOptions({ [node]: { input: { required: {} } } }, node, 'nope')).toEqual([])
   })
 })

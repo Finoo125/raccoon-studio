@@ -69,6 +69,8 @@ interface SdxlConfig {
    * expose it, matching the film-grain split.
    */
   faceSwap: boolean
+  /** 'tags' for the Danbooru-tag checkpoints (Pony, Illustrious). */
+  promptStyle?: 'tags'
 }
 
 // SDXL renders natively around 1024px; same ratio set the anime models use.
@@ -99,6 +101,7 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
     controlNetKind: 'sdxl-union',
     supportsIpAdapter: true,
     ariaModelKind: 'checkpoint',
+    promptStyle: config.promptStyle,
     aspectRatios: SDXL_RATIOS,
     defaultParams: {
       width: 832,
@@ -238,8 +241,30 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
         })
       }
 
+      const faceFromModel = params.faceSwapSource === 'model'
+      const faceSwapActive = Boolean(
+        config.faceSwap && params.faceSwap && (faceFromModel ? params.faceModel : params.inputImage),
+      )
+
       // Face detailer (optional, on by default): detect-crop-redraw-paste over faces.
-      if (params.detailer !== false) {
+      // Kept ON alongside the face swap, and that is load-bearing rather than
+      // cosmetic. Measured 2026-09-05 on ComfyUI v0.34.2: with the detailer in
+      // the graph, repeated face-swap renders are clean (12/12 across 3 fresh
+      // ComfyUI sessions); WITHOUT it, only the first render of a session works
+      // and every one after comes back a pure black frame (3/12). Removing this
+      // pass to save its ~3 s puts users straight into that failure.
+      //
+      // It also has to run BEFORE the swap. A redraw over an already-swapped
+      // face destroys the identity: ArcFace cosine vs the source photo is 0.853
+      // detailer-then-swap, 0.851 swap-only, and 0.534 swap-then-detailer even
+      // at 0.15 denoise. See swap-detailer-order.test.ts.
+      // Forced ON whenever a swap is active, overriding an explicit `detailer:
+      // false`. This is a workaround for a live bug, not a preference: without the
+      // detailer in the graph, only the FIRST face-swap render of a ComfyUI session
+      // succeeds and every one after comes back a pure black frame (measured
+      // 2026-09-05 on ComfyUI v0.34.2 -- 12/12 renders clean with it, 3/12 without).
+      // The user's toggle is honoured for every render that has no swap.
+      if (params.detailer !== false || faceSwapActive) {
         appendFaceDetailer(wf, {
           saveNodeId: '9',
           model: modelSrc,
@@ -258,11 +283,14 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
       }
 
       // FaceFusion-grade swap (mask + color-match + tuned enhancer), applied
-      // after the detailer — a latent resample / face redraw would otherwise
-      // erode the swapped identity. The source face is either an uploaded photo
-      // or a saved face model (built in the Tools tab). Photoreal base only.
-      const faceFromModel = params.faceSwapSource === 'model'
-      if (config.faceSwap && params.faceSwap && (faceFromModel ? params.faceModel : params.inputImage)) {
+      // LAST — after the detailer — because a face redraw over a swapped face
+      // destroys the identity. Measured 2026-09-05, 3 seeds, ArcFace cosine vs
+      // the source photo: detailer-then-swap 0.853, swap only 0.851,
+      // swap-then-detailer at just 0.15 denoise **0.534**. The detailer runs on
+      // ALL faces while the swap only replaces one, so this order is also what
+      // keeps the other faces detailed. The source face is either an uploaded
+      // photo or a saved face model (built in the Tools tab). Photoreal base only.
+      if (faceSwapActive) {
         appendFaceSwap(wf, {
           saveNodeId: '9',
           ...(faceFromModel
@@ -271,6 +299,7 @@ function makeSdxlWorkflow(config: SdxlConfig): WorkflowDefinition {
           swapModel: params.faceSwapModel,
           pixelBoost: params.faceSwapPixelBoost,
           pixelBoostSize: params.faceSwapPixelBoostSize,
+          identity: params.faceSwapIdentity,
         })
       }
 
@@ -330,6 +359,7 @@ export const ponyWorkflow = makeSdxlWorkflow({
   clipSkip: true,
   filmGrain: false,
   faceSwap: false,
+  promptStyle: 'tags',
 })
 
 export const illustriousWorkflow = makeSdxlWorkflow({
@@ -357,4 +387,5 @@ export const illustriousWorkflow = makeSdxlWorkflow({
   clipSkip: true,
   filmGrain: false,
   faceSwap: false,
+  promptStyle: 'tags',
 })

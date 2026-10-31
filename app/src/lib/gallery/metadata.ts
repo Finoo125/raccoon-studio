@@ -1,4 +1,13 @@
 import type { ImageMetadata } from '@/types/gallery'
+import { KREA2_KROMA_LORA, KREA2_PROJECTOR_LORA, KREA2_REFUSAL_LORA } from '@/lib/workflows/krea2'
+import { QWEN21_BFS_LORAS } from '@/lib/workflows/qwen21'
+
+/** LoRAs a builder patches in itself: no user picked them, and sending them back would apply them twice. */
+const BUILT_IN_LORAS = new Set([KREA2_REFUSAL_LORA, KREA2_PROJECTOR_LORA, KREA2_KROMA_LORA, ...Object.values(QWEN21_BFS_LORAS)])
+
+// An input wired to another node is a link ([nodeId, output]), not its value —
+// the gallery's search and Reuse expect strings.
+const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
 export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadata {
   try {
@@ -9,7 +18,7 @@ export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadat
     const loras: NonNullable<ImageMetadata['loras']> = []
 
     const addLora = (name: unknown, strength: unknown) => {
-      if (typeof name !== 'string' || !name || name === 'None') return
+      if (typeof name !== 'string' || !name || name === 'None' || BUILT_IN_LORAS.has(name)) return
       const parsedStrength =
         typeof strength === 'number' ? strength :
           typeof strength === 'string' && strength.trim() !== '' ? Number(strength) :
@@ -27,7 +36,7 @@ export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadat
       const inp = node.inputs ?? {}
 
       if (ct === 'CLIPTextEncode') {
-        const text = inp.text as string | undefined
+        const text = str(inp.text)
         if (!text) continue
         // Heuristic: negative prompts tend to contain quality penalty words
         const looksNegative = /worst quality|low quality|score_1|nsfw/i.test(text)
@@ -42,12 +51,12 @@ export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadat
         meta.seed = Number(inp.seed)
         meta.steps = Number(inp.steps)
         meta.cfg = Number(inp.cfg)
-        meta.sampler = inp.sampler_name as string
-        meta.scheduler = inp.scheduler as string
+        meta.sampler = str(inp.sampler_name)
+        meta.scheduler = str(inp.scheduler)
       }
 
-      if (ct === 'UNETLoader') meta.model = inp.unet_name as string
-      if (ct === 'CheckpointLoaderSimple') meta.model = inp.ckpt_name as string
+      if (ct === 'UNETLoader') meta.model = str(inp.unet_name)
+      if (ct === 'CheckpointLoaderSimple') meta.model = str(inp.ckpt_name)
 
       if (ct === 'LoraLoader' || ct === 'LoraLoaderModelOnly') {
         addLora(inp.lora_name, inp.strength_model)
@@ -67,7 +76,7 @@ export function extractMetadataFromPromptChunk(promptJson: string): ImageMetadat
 
       // Ernie / ZIT use PrimitiveStringMultiline for main prompt
       if (ct === 'PrimitiveStringMultiline') {
-        if (!meta.prompt) meta.prompt = inp.value as string
+        if (!meta.prompt) meta.prompt = str(inp.value)
       }
     }
 

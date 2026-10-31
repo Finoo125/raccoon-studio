@@ -33,6 +33,10 @@ export default function MoviePage() {
     void (async () => {
       try {
         const res = await fetch('/api/movies', { cache: 'no-store' })
+        // No key: AddonGuard is about to send the user to Supporters. The JSX below is built
+        // before the guard decides, so a refusal must never land in `projects` as data.
+        if (res.status === 403) { if (!cancelled) setProjects([]); return }
+        if (!res.ok) throw new Error(`movies ${res.status}`)
         const data = (await res.json()) as { projects: MovieProjectSummary[] }
         if (!cancelled) setProjects(data.projects)
       } catch {

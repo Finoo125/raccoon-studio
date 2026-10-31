@@ -100,6 +100,16 @@ export const KREA2_PROJECTOR_ON = 0.05
  * intent, which is the exact failure the refusal-reduction LoRA is here to fix.
  * Everything that makes the enhancer *useful* — faithfulness, T2I structure,
  * text rendering, medium preservation — is kept verbatim.
+ *
+ * The template's `k:enhance` also runs with `thinking: true`, where the stock
+ * template defaults to false. False makes ComfyUI append an empty
+ * `<think></think>` block (Qwen3's hybrid-thinking convention), which
+ * Qwen3-VL-4B-Instruct was never trained on; against the "think step by step"
+ * line above it wrote its reasoning — or echoed this whole prompt — into the
+ * answer in 17 of 50 samples (0 of 50 with true, and ~20% faster). That answer
+ * goes straight into CLIPTextEncode, and Krea2 painted the rule names into the
+ * picture as text. The seed is fixed at 0, one of the bad draws for 4 of 5
+ * test prompts, so for most prompts it failed every single time.
  */
 const ENHANCER_SYSTEM_PROMPT = `You are an expert prompt engineer for text-to-image models. Your task is to expand the user's prompt into a highly effective image-generation prompt.
 
@@ -324,7 +334,24 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
       }
 
       // Face detailer (on by default): detect-crop-redraw-paste over faces.
-      if (params.detailer !== false) {
+      // Kept ON alongside the face swap, and that is load-bearing rather than
+      // cosmetic. Measured 2026-09-05 on ComfyUI v0.34.2: with the detailer in
+      // the graph, repeated face-swap renders are clean (12/12 across 3 fresh
+      // ComfyUI sessions); WITHOUT it, only the first render of a session works
+      // and every one after comes back a pure black frame (3/12). Removing this
+      // pass to save its ~3 s puts users straight into that failure.
+      //
+      // It also has to run BEFORE the swap. A redraw over an already-swapped
+      // face destroys the identity: ArcFace cosine vs the source photo is 0.853
+      // detailer-then-swap, 0.851 swap-only, and 0.534 swap-then-detailer even
+      // at 0.15 denoise. See swap-detailer-order.test.ts.
+      // Forced ON whenever a swap is active, overriding an explicit `detailer:
+      // false`. This is a workaround for a live bug, not a preference: without the
+      // detailer in the graph, only the FIRST face-swap render of a ComfyUI session
+      // succeeds and every one after comes back a pure black frame (measured
+      // 2026-09-05 on ComfyUI v0.34.2 -- 12/12 renders clean with it, 3/12 without).
+      // The user's toggle is honoured for every render that has no swap.
+      if (params.detailer !== false || faceSwapActive) {
         appendFaceDetailer(wf, {
           saveNodeId: 'k:save',
           model: ['k:loras', 0],
@@ -343,7 +370,12 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
       }
 
       // FaceFusion-grade swap (mask + color-match + tuned enhancer), applied
-      // last so the swapped identity survives the diffusion passes above.
+      // LAST — after the detailer — because a face redraw over a swapped
+      // face destroys the identity. Measured 2026-09-05, 3 seeds, ArcFace
+      // cosine vs the source photo: detailer-then-swap 0.853, swap only
+      // 0.851, swap-then-detailer at just 0.15 denoise **0.534**. The
+      // detailer runs on ALL faces while the swap only replaces one, so
+      // this order is also what keeps the other faces detailed.
       if (faceSwapActive) {
         appendFaceSwap(wf, {
           saveNodeId: 'k:save',
@@ -353,6 +385,7 @@ function krea2Workflow(v: Krea2Variant): WorkflowDefinition {
           swapModel: params.faceSwapModel,
           pixelBoost: params.faceSwapPixelBoost,
           pixelBoostSize: params.faceSwapPixelBoostSize,
+          identity: params.faceSwapIdentity,
         })
       }
 

@@ -117,9 +117,10 @@ export const MINIMAX_H3_ASSETS: ModelAsset[] = [
      * node is involved. So the no-custom-packs property of this graph holds.
      *
      * Deliberately the 8-step and not the sibling `4step_v1.0_768p`: the 8-step
-     * is documented as usable at 8 *or* 4, and 768p is above the pixel budget
-     * every VRAM tier here actually renders at (`BUDGET_MP` tops out at 0.8 MP),
-     * so the 768p build's one advantage would never be exercised.
+     * is documented as usable at 8 *or* 4. That also used to rest on 768p being
+     * above every tier's pixel budget, which stopped being true when `high` rose
+     * to the model's 1.03 MP canvas — a 1.75 aspect now renders exactly 1344x768.
+     * Re-measure the pair before assuming the 8-step still wins.
      *
      * **drbaph's rank-21 resize, not lightx2v's original — 327 MB instead of
      * 1.96 GB for the same weights** (2026-08-16). Same author lineage; the
@@ -189,6 +190,88 @@ export const MINIMAX_H3_ASSETS: ModelAsset[] = [
   },
   {
     /**
+     * Plaguekind's V11 recipe as a third checkpoint (`H3_HYBRID`): smhfacct's
+     * fl2va+ref2va merge, b25-49 (the card's "balanced default"). int8
+     * convrot, 932 tensors — read off the header 2026-10-02. Inherits the
+     * MiniMax H3 community licence of the two checkpoints it merges.
+     */
+    name: 'minimax_h3_hybrid_fl2va_ref2va_b25-49-int8.safetensors',
+    folder: 'diffusion_models',
+    sizeMb: 20970,
+    url: 'https://huggingface.co/smhfacct/Minimax-H3-fl2va-ref2va-hybrid-models/resolve/main/minimax_h3_hybrid_fl2va_ref2va_b25-49-int8.safetensors',
+    source: 'smhfacct (Plaguekind V11 recipe) — optional, enables the Hybrid checkpoint',
+    optional: true,
+  },
+  {
+    /**
+     * Aki7777777's SparseRef15 Hybrid (`H3_SPARSEREF`). No `url`: Civitai
+     * answers 401 without a login (2026-10-16), and the download route sends no token.
+     */
+    name: 'minimaxH3Sparseref15_prunedPartialINT8V10.safetensors',
+    folder: 'diffusion_models',
+    sizeMb: 20968,
+    source: 'Aki7777777 on Civitai (H3_SparseRef15_Hybrid, Pruned Partial-INT8 v1.0, version 3301688) — optional, enables the SparseRef15 checkpoint; download it there (Civitai login) into models/diffusion_models',
+    optional: true,
+  },
+  {
+    name: 'minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors',
+    folder: 'loras',
+    sizeMb: 1956,
+    url: 'https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors',
+    source: 'lightx2v/Minimax-h3-Turbo — the full fl2v 8-step LoRA SparseRef15 runs with (optional)',
+    optional: true,
+  },
+  {
+    /**
+     * Edit mode, "Change something": Alissonerdx's VFX edit LoRA (Apache-2.0).
+     * Measured 2026-10-02 on Eros — blazer to red leather, fire on fists, pool
+     * to night — each with face, pose and background kept. The FFP sibling is
+     * offered separately for edited first frames.
+     */
+    name: 'minimax_h3_vfx_edit_v1.0_r128.safetensors',
+    folder: 'loras',
+    sizeMb: 1240,
+    url: 'https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/resolve/main/loras/minimax_h3_vfx_edit_v1.0_r128.safetensors',
+    source: 'Alissonerdx (Apache-2.0) — optional, enables Edit video: Change something',
+    optional: true,
+  },
+  {
+    /** Edit mode, "Restyle": Alissonerdx's style-transfer LoRA (Apache-2.0). */
+    name: 'minimax_h3_style_transfer_v1.0_r64.safetensors',
+    folder: 'loras',
+    sizeMb: 620,
+    url: 'https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/resolve/main/loras/minimax_h3_style_transfer_v1.0_r64.safetensors',
+    source: 'Alissonerdx (Apache-2.0) — optional, enables Edit video: Restyle',
+    optional: true,
+  },
+  {
+    /**
+     * Edit mode, "Swap head": Alissonerdx's head swap LoRA (Apache-2.0). Replaces
+     * the whole head — face and hair — from one picture and keeps body, outfit
+     * and motion (measured 2026-10-03: ArcFace 0.69 / 0.47 on two clips).
+     */
+    name: 'minimax_h3_head_swap_v1.0_r32.safetensors',
+    folder: 'loras',
+    sizeMb: 310,
+    url: 'https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/resolve/main/loras/minimax_h3_head_swap_v1.0_r32.safetensors',
+    source: 'Alissonerdx (Apache-2.0) — optional, enables Edit video: Swap head. Only swap people who agreed to it.',
+    optional: true,
+  },
+  {
+    /**
+     * Edit mode, "Start from an edited first frame": the FFP version of the vfx
+     * edit LoRA (Alissonerdx, Apache-2.0) — carries a first frame the user edited
+     * elsewhere through the whole clip.
+     */
+    name: 'minimax_h3_vfx_edit_v1.0_r128_ffp.safetensors',
+    folder: 'loras',
+    sizeMb: 1240,
+    url: 'https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/resolve/main/loras/minimax_h3_vfx_edit_v1.0_r128_ffp.safetensors',
+    source: 'Alissonerdx (Apache-2.0) — optional, enables Edit video: start from an edited first frame',
+    optional: true,
+  },
+  {
+    /**
      * ref2va — reference-to-video. **Separate weights, not a flag**: the fl2va
      * checkpoint above cannot take reference conditioning at all. The mode is
      * hidden behind an install check the way the Turbo tiers are. Same
@@ -204,10 +287,11 @@ export const MINIMAX_H3_ASSETS: ModelAsset[] = [
   },
   {
     /**
-     * TenStrip's **10Eros Max**, beta4 — an uncensored H3 finetune that keeps
+     * TenStrip's **10Eros Max**, beta6 — an uncensored H3 finetune that keeps
      * base-model behaviour, built by grafting character data out of Wan 2.2,
      * Krea 2 and LTX 2.3 onto H3's attention layers at a level the author says
-     * leaves its visual and audio quality alone.
+     * leaves its visual and audio quality alone (his `h3_graft_methodology.md`
+     * on the repo is the write-up).
      *
      * Two things make this a checkpoint *pick* rather than one more LoRA:
      *
@@ -215,25 +299,51 @@ export const MINIMAX_H3_ASSETS: ModelAsset[] = [
      *   already in the weights, so the Draft/Fast LoRAs must NOT be stacked on
      *   top. `H3_EROS` is the profile that replaces them, and the video form's
      *   Speed row retires while this is selected.
-     * - beta3's turbo "harms referenced starts in i2v and reference mode", and
-     *   the card calls beta3 "somewhat corrupted and technically only a t2v
-     *   model". beta4 is the fix for both, which is why it is the only build
-     *   here and beta3 is deliberately absent.
+     * - **beta6 replaced beta5 on 2026-10-14** (owner's pick from a 3-way
+     *   test against beta5 and the Hybrid: brighter, sharper, same speed —
+     *   see `H3_EROS`). Its card samples at shift 10/3, which `H3_EROS.shift`
+     *   carries. The header has no file-level `_quantization_metadata` any
+     *   more: 195 int8 layers carry per-layer `comfy_quant` blobs (metadata
+     *   `modelutils_adaln_fold`), and the two `adaln_basis`/`adaln_mean`
+     *   tensors ComfyUI used to drop as unexpected are gone. Loads as is.
+     * - **beta5 replaced beta4 on 2026-09-13.** The card now calls beta3 AND
+     *   beta4 "corrupted test versions" and beta5 "the only true functional one
+     *   so far" — a different normalisation, seven concept-grouped grafts and
+     *   consensus merges of 20+ LoRAs instead of direct LoRA merges. Measured
+     *   against beta4 over five of the user's own clips at identical seeds
+     *   (t2v / i2v / character LoRA / ref2v): detail up on 4 of 5, identity vs
+     *   the source photo up ~0.04 in i2v and flat in ref2v, face consistency
+     *   across the clip up on all 5, audio a wash, wall time identical, and the
+     *   two ref2v picks followed their scripted action beats more literally.
+     *   Renders brighter and punchier across the board (mean luma +6–9).
      *
      * Same quantisation reasoning as every other H3 checkpoint in this list:
-     * int8 convrot, never an fp8_scaled sibling. The repo also holds a 40 GB
-     * bf16 build of this same beta4 (no benefit at 2x the download) and a
-     * separate `TURBO_ref2va_beta2` with **no int8 build at all** — hence
-     * reference mode staying on the stock ref2va weights.
+     * int8 convrot, never an fp8_scaled sibling. **The filename only says
+     * `_int8`** — the header (`__metadata__._quantization_metadata`, read
+     * 2026-09-13) declares `int8_tensorwise` + `convrot: true`, groupsize 256,
+     * the same 200 layers beta4 quantised; ComfyUI converts that file-level
+     * form into the per-layer blobs beta4 carried, so it is a drop-in load.
+     * Three siblings deliberately not offered: the 40 GB bf16 build (nothing
+     * for 2x the download); the 14 GB `w4a8_14gb_optimized` build (a custom
+     * converter's `asym_w4a8_int8` experiment — the format is in v0.34.2's
+     * table, but its edge layers carry a `per_row` key nothing in ComfyUI
+     * reads, and the author's own notes say "w4a8 causes GPU compatibility
+     * issues"; a 16 GB lever to measure on real 16 GB hardware, not here); and
+     * the non-turbo `hybrid_beta5` line, which the author says has better
+     * audio at full steps but would need the Draft/Fast LoRAs and the Speed
+     * row back. Reference mode: 211 of beta4's 220 unquantized tensors were
+     * bit-identical to the stock ref2va build, and beta5 keeps beta4's exact
+     * key set and shapes, so this one file serves reference mode as well (see
+     * `H3_EROS`).
      *
      * Licence is MiniMax's H3 community agreement plus — the author is explicit
      * — the Wan 2.2, Krea 2 and LTX 2.3 community licences covering the
      * character each contributed. Linked, never mirrored, like everything here.
      */
-    name: '10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors',
+    name: '10Eros_Max_h3_8stepTURBO_beta6_int8.safetensors',
     folder: 'diffusion_models',
-    sizeMb: 20968,
-    url: 'https://huggingface.co/TenStrip/10Eros-Max/resolve/main/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors',
+    sizeMb: 21710,
+    url: 'https://huggingface.co/TenStrip/10Eros-Max/resolve/main/10Eros_Max_h3_8stepTURBO_beta6_int8.safetensors',
     source: 'TenStrip/10Eros-Max — optional, uncensored finetune with Turbo built in',
     optional: true,
   },

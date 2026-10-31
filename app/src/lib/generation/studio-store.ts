@@ -7,7 +7,8 @@ import type { GalleryImage } from '@/types/gallery'
 import { emptyTimeline, type DirectorTimeline } from '@/lib/workflows/director-timeline'
 
 export interface StudioPrefill {
-  workflowId: string
+  /** Absent = keep the model in use and only fill in `params` (the empty canvas's example prompts). */
+  workflowId?: string
   /** Partial — merged over the workflow's defaults by the form's prefill effect. */
   params: Partial<GenerationParams & VideoGenerationParams>
   /**

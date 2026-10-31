@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
 import { Readable } from 'stream'
-import { PROJECTS_DIR } from '@/lib/movies/projects'
+import { isMovieMediaPath } from '@/lib/movies/projects'
 import { assertEntitled } from '@/lib/addons/guard'
-
-const OUTPUT_DIR = process.env.COMFYUI_OUTPUT_DIR ?? ''
 
 const MIME: Record<string, string> = {
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
@@ -16,18 +14,13 @@ const MIME: Record<string, string> = {
   '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp',
 }
 
-function isAllowed(filePath: string): boolean {
-  const roots = [path.resolve(PROJECTS_DIR), OUTPUT_DIR ? path.resolve(OUTPUT_DIR) : '']
-  return roots.some((root) => root && filePath.startsWith(root + path.sep))
-}
-
 export async function GET(req: NextRequest) {
   const denied = await assertEntitled('movie-maker')
   if (denied) return denied
   const raw = req.nextUrl.searchParams.get('path')
   if (!raw) return NextResponse.json({ error: 'Missing path' }, { status: 400 })
   const filePath = path.resolve(raw)
-  if (!isAllowed(filePath)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!isMovieMediaPath(filePath)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   let stat: fs.Stats
   try {
     stat = fs.statSync(filePath)

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { crc32 } from 'zlib'
 import { extractMetadataFromPromptChunk, extractPreset, injectPngTextChunks, parsePngTextChunks } from './metadata'
+import { KREA2_KROMA_LORA, KREA2_PROJECTOR_LORA, KREA2_REFUSAL_LORA } from '@/lib/workflows/krea2'
+import { QWEN21_BFS_LORAS } from '@/lib/workflows/qwen21'
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 
@@ -103,6 +105,17 @@ describe('extractMetadataFromPromptChunk LoRAs', () => {
     ])
   })
 
+  it("leaves out the LoRAs a builder adds itself (Krea2's refusal/projector/Kroma, Qwen's head swap)", () => {
+    const prompt = JSON.stringify({
+      '1': { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: KREA2_REFUSAL_LORA, strength_model: 1 } },
+      '2': { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: KREA2_PROJECTOR_LORA, strength_model: 1 } },
+      '3': { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: KREA2_KROMA_LORA, strength_model: 0.8 } },
+      '4': { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: Object.values(QWEN21_BFS_LORAS)[0], strength_model: 1 } },
+      '5': { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'mine.safetensors', strength_model: 0.7 } },
+    })
+    expect(extractMetadataFromPromptChunk(prompt).loras).toEqual([{ name: 'mine.safetensors', strength: 0.7 }])
+  })
+
   it('extracts populated rgthree stack rows and ignores None', () => {
     const prompt = JSON.stringify({
       stack: {
@@ -133,5 +146,29 @@ describe('extractPreset', () => {
     expect(extractPreset({ prompt: '{}' })).toBeUndefined()
     expect(extractPreset({ raccoon: 'not json' })).toBeUndefined()
     expect(extractPreset({ raccoon: '{"preset": 42}' })).toBeUndefined()
+  })
+})
+
+describe('extractMetadataFromPromptChunk — linked inputs', () => {
+  // A Krea2 enhancer render: the prompt comes out of TextGenerate, so CLIPTextEncode.text
+  // is a link. Stored as the prompt it crashed every gallery search (`.toLowerCase` on an array).
+  it('keeps only real strings — a link is not a prompt, a model or a sampler', () => {
+    const meta = extractMetadataFromPromptChunk(JSON.stringify({
+      'k:enhance': { class_type: 'TextGenerate', inputs: { prompt: 'You are an expert…' } },
+      'k:pos': { class_type: 'CLIPTextEncode', inputs: { text: ['k:enhance', 0] } },
+      'k:unet': { class_type: 'UNETLoader', inputs: { unet_name: ['k:pick', 0] } },
+      'k:s': { class_type: 'KSampler', inputs: { seed: 1, steps: 8, cfg: 1, sampler_name: ['x', 0], scheduler: 'simple' } },
+      'k:p': { class_type: 'PrimitiveStringMultiline', inputs: { value: ['y', 0] } },
+    }))
+    expect(meta.prompt).toBeUndefined()
+    expect(meta.model).toBeUndefined()
+    expect(meta.sampler).toBeUndefined()
+    expect(meta.scheduler).toBe('simple')
+  })
+  it('a plain prompt still comes through', () => {
+    const meta = extractMetadataFromPromptChunk(JSON.stringify({
+      '6': { class_type: 'CLIPTextEncode', inputs: { text: 'a raccoon barista' } },
+    }))
+    expect(meta.prompt).toBe('a raccoon barista')
   })
 })

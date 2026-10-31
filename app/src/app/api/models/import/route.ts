@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { guard } from '@/lib/system/request-guard'
 import fs from 'fs'
 import path from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 
 const ALLOWED_SUBFOLDERS = [
-  'diffusion_models', 'text_encoders', 'vae', 'loras', 'checkpoints',
+  'diffusion_models', 'text_encoders', 'vae', 'loras', 'checkpoints', 'model_patches',
   'ultralytics/bbox', 'sams',
 ]
 const ALLOWED_EXTENSIONS = ['.safetensors', '.ckpt', '.pt', '.bin', '.gguf', '.pth']
 
 export async function POST(req: NextRequest) {
+  const refused = guard(req)
+  if (refused) return refused
   const modelsDir = process.env.COMFYUI_MODELS_DIR ?? ''
   if (!modelsDir) {
     return NextResponse.json({ error: 'COMFYUI_MODELS_DIR is not configured' }, { status: 500 })

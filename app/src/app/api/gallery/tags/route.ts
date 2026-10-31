@@ -9,6 +9,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
   const ids = body.ids ?? []
+  // Same rule as the sidecar writer: a bad id fails the request before any file is touched.
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(id))) {
+    return NextResponse.json({ error: 'Invalid image id' }, { status: 400 })
+  }
   const sidecars = readAllSidecars()
   for (const id of ids) {
     const current = sidecars.get(id)?.tags ?? []

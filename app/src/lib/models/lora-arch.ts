@@ -56,19 +56,50 @@ export interface SafetensorsHeader {
 /** Headers run ~60 KB–700 KB in practice; anything past this is corrupt or hostile. */
 const MAX_HEADER_BYTES = 32 * 1024 * 1024
 
+/** 2.1's MLP sits directly under `img_mlp` (`gate_up` fused, or `gate_layer`/`proj`
+ *  split, plus `out`); Qwen-Image 1.x nests it as `img_mlp.net.N`. */
+const QWEN21_MLP = /(?:^|[._])transformer_blocks[._]\d+[._]img_mlp[._](?:gate_up|gate_layer|proj|out)[._]/
+
+/** Qwen-Image 1.x (2509/2511/2512): the separate text stream 2.1 dropped. The
+ *  attention half is anchored on ComfyUI's `diffusion_model.` prefix because
+ *  diffusers-format Flux and SD3 LoRAs also carry `attn.add_q_proj`. */
+const QWEN_IMAGE_STEM =
+  /(?:^|[._])transformer_blocks[._]\d+[._](?:txt_mlp|img_mod|txt_mod|img_mlp[._]net)[._]|^diffusion_model\.transformer_blocks\.\d+\.attn\.(?:add_[qkv]_proj|to_add_out)\./
+
+const QWEN_ATTN_DOWN = /(?:^|[._])transformer_blocks[._]\d+[._]attn[._]to_[qkv][._]lora_(?:a|down)\b/i
+const DUAL_STREAM = /[._](?:add_[qkv]_proj|to_add_out)[._]/
+
+/**
+ * Qwen-Image 2.1. Its MLP names are unique to it; an attention-only adapter
+ * (Viggle's turbo is one) carries no MLP key, so the projection's input width
+ * decides — 4096 on 2.1, 3072 on Qwen-Image 1.x and on Flux, which also spells
+ * `attn.to_q` but is dual-stream (`add_*_proj`) or has single blocks.
+ */
+function isQwen21Lora(header: SafetensorsHeader, names: string[]): boolean {
+  if (names.some((k) => QWEN21_MLP.test(k))) return true
+  if (names.some((k) => DUAL_STREAM.test(k) || k.includes('single_transformer_blocks'))) return false
+  const down = names.find((k) => QWEN_ATTN_DOWN.test(k))
+  return down !== undefined && (header[down] as TensorInfo | undefined)?.shape?.[1] === 4096
+}
+
 /**
  * Tensor-name prefixes that identify an architecture. Verified against real
  * files where noted; the rest follow the published key layout for that format.
  * Prefixes are disjoint, so rule order is documentation rather than precedence —
  * except that `lora_unet_blocks_` (Anima) is NOT a prefix of
  * `lora_unet_input_blocks_` (SDXL), which is why both can be matched with a
- * plain startsWith.
+ * plain startsWith; and that krea2 must precede the Qwen rows, which must
+ * precede ltx.
  */
-const KEY_RULES: { family: LoraFamily; prefixes?: string[]; pattern?: RegExp }[] = [
-  // verified: LTX2.3_DMD_reshaped_r256.safetensors
-  { family: 'ltx', prefixes: ['diffusion_model.transformer_blocks.', 'diffusion_model.audio_'] },
-  // verified: ZIT_muscgi_1.safetensors (dim 3840)
-  { family: 'zimage', prefixes: ['diffusion_model.layers.'] },
+const KEY_RULES: {
+  family: LoraFamily
+  prefixes?: string[]
+  pattern?: RegExp
+  /** For rules a prefix cannot express — the Qwen split reads a tensor's shape. */
+  match?: (header: SafetensorsHeader, names: string[]) => boolean
+}[] = [
+  // Krea2 first: its diffusers LoRAs share the `transformer.` prefix with
+  // Qwen-Image's, and only the TextFusion keys tell them apart.
   // verified: Krea2_TextFusion_Refusal_Reduction (ComfyUI keys), the Beinsezii
   // projector-scale LoRA (diffusers keys) and Comfy-Org's official
   // krea2_darkbrush style LoRA (diffusers keys, *empty* metadata — the key rule
@@ -81,6 +112,18 @@ const KEY_RULES: { family: LoraFamily; prefixes?: string[]; pattern?: RegExp }[]
   // carries `lora_unet_blocks_*`, which is sd-scripts' generic block naming
   // rather than an architecture marker, so anima would otherwise claim it.
   { family: 'krea2', prefixes: ['diffusion_model.txtfusion.', 'transformer.text_fusion.', 'lora_unet_txtfusion_'] },
+  // Qwen-Image, both generations, ABOVE ltx: the ltx row claims every
+  // `diffusion_model.transformer_blocks.` key, which is how ComfyUI-format Qwen
+  // LoRAs were filed as LTX until 2026-10-01. LTX names its attention
+  // `attn1`/`attn2`; Qwen names it `attn`. Verified: BFS head v1.1 + body v1.0
+  // (Qwen 2.1, ComfyUI keys), Pruna 8-step and Viggle r128 (Qwen 2.1, diffusers
+  // keys), Alibaba Fun-Acc (bare keys), BFS head v5 (Qwen-Image-Edit 2511).
+  { family: 'qwen21', match: isQwen21Lora },
+  { family: 'qwenimage', pattern: QWEN_IMAGE_STEM },
+  // verified: LTX2.3_DMD_reshaped_r256.safetensors
+  { family: 'ltx', prefixes: ['diffusion_model.transformer_blocks.', 'diffusion_model.audio_'] },
+  // verified: ZIT_muscgi_1.safetensors (dim 3840)
+  { family: 'zimage', prefixes: ['diffusion_model.layers.'] },
   // verified: MysticXXX_MMH3-V2 (ComfyUI keys, MLP-only) and -V4 (sd-scripts
   // keys). The two builds of one LoRA share no prefix, which is why this row
   // needs a pattern as well: musubi-tuner spells H3 blocks `lora_unet_blocks_<n>_`,
@@ -134,7 +177,12 @@ const BASE_KEY_RULES: { family: LoraFamily; prefixes?: string[]; pattern?: RegEx
   { family: 'sd15', prefixes: ['cond_stage_model.transformer.'] },
   // verified: krea2_turbo_fp8_scaled
   { family: 'krea2', prefixes: ['txtfusion.'] },
-  // verified: minimax_h3_fl2va_pruned_int8_convrot, 10Eros_Max beta4
+  // verified: qwen_image_2.1_int8_convrot — the key ComfyUI's model_detection
+  // itself keys Qwen-Image 2.1 on.
+  { family: 'qwen21', prefixes: ['txt_in.text_norm.'] },
+  // Qwen-Image 1.x keeps a separate text stream (`txt_mlp`, `img_mod`), which 2.1 dropped.
+  { family: 'qwenimage', pattern: /^transformer_blocks\.\d+\.(?:img_mod|txt_mlp)\./ },
+  // verified: minimax_h3_fl2va_pruned_int8_convrot, 10Eros_Max beta4, beta5 + beta6
   { family: 'h3', prefixes: ['audio_patch_proj.', 'adaln_t_table'] },
   // verified: z_image_turbo_bf16, aria_zit_01_00001_
   { family: 'zimage', prefixes: ['cap_embedder.'] },
@@ -190,7 +238,10 @@ export function classifyLoraHeader(header: SafetensorsHeader | null): LoraFamily
   const names = tensorNames(header)
 
   for (const rule of KEY_RULES) {
-    if (names.some((k) => rule.prefixes?.some((p) => k.startsWith(p)) || rule.pattern?.test(k))) {
+    if (
+      rule.match?.(header, names) ||
+      names.some((k) => rule.prefixes?.some((p) => k.startsWith(p)) || rule.pattern?.test(k))
+    ) {
       return rule.family
     }
   }

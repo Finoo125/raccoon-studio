@@ -60,6 +60,10 @@ The model renders EXACTLY what you write and nothing you don't. Unwritten = abse
 
 _I2V_ANCHOR = "Use the provided start image exactly as the first frame."
 
+# The image writer's rule (app/src/lib/prompt-builder/enhance.ts); last in the prompt, so no intent outranks it.
+_ADULTS_ONLY = ("All people are adults: never describe anyone as a child, teenager or minor. Never write sexual "
+                "content involving animals, robots or other non-human beings, or anyone who has not consented.\n")
+
 
 def _energy(level):
     lv = max(1, min(10, int(level or 5)))
@@ -359,6 +363,7 @@ def build_system(*, mode="i2v", duration_s=12.0, pov=False, pov_gender="female",
         "\n━━ PRECEDENCE ━━\nThe user's intent outranks every preset block above "
         "(scenario, environment, camera, music, dialogue pools). When they conflict, bend the "
         "preset to serve the intent — never the reverse.\n")
+    parts.append(_ADULTS_ONLY)
 
     return "".join(parts)
 

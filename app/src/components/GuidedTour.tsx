@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Package, Wand2, Clapperboard, Images, LayoutGrid, Puzzle, Sparkles,
+  Rocket, Wand2, Clapperboard, Images, LayoutGrid, Puzzle, Sparkles,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -29,10 +29,10 @@ const STEPS: TourStep[] = [
     Icon: Sparkles,
   },
   {
-    title: 'Models — start here',
-    body: 'Nothing generates without a model. Pick a family, hit Download, and the row fills in as it lands. Krea2 Turbo is the everyday all-rounder; Anima, Pony and Illustrious are the anime ones. Video models live further down the same page.',
-    Icon: Package,
-    href: '/models',
+    title: 'Start here — get your models',
+    body: 'Nothing generates without a model. Start here looks at your computer, shows every model that fits it, and downloads the ones you tick. The Models page has the full catalog.',
+    Icon: Rocket,
+    href: '/setup',
   },
   {
     title: 'Generate Image',
@@ -59,8 +59,8 @@ const STEPS: TourStep[] = [
     href: '/tools',
   },
   {
-    title: 'Patreon',
-    body: 'Supporter add-ons — the Director timeline, Photo Editing and more — unlock with a membership key you paste on this page. Everything else stays free and local.',
+    title: 'Supporters',
+    body: 'Subscriber add-ons — the Director timeline, Photo Editing and more — unlock with a key you paste on this page. Everything else stays free and local.',
     Icon: Puzzle,
     href: '/add-ons',
   },
@@ -83,7 +83,7 @@ export default function GuidedTour() {
     // Deferred a tick rather than opened straight from the effect: the page gets
     // to paint first (so the tour lands on top of a real studio, not a blank
     // one), and a synchronous setState here is a cascading render.
-    const t = setTimeout(() => { if (tourPending()) setOpen(true) }, 0)
+    const t = setTimeout(() => { if (tourPending() && window.location.pathname !== '/setup') setOpen(true) }, 0)
     const replay = () => { setStep(0); setOpen(true) }
     window.addEventListener(TOUR_EVENT, replay)
     return () => { clearTimeout(t); window.removeEventListener(TOUR_EVENT, replay) }
@@ -173,10 +173,10 @@ export default function GuidedTour() {
               onClick={() => {
                 if (!last) return go(step + 1)
                 finish()
-                router.push('/models')
+                router.push('/setup')
               }}
             >
-              {last ? 'Get models' : step === 0 ? 'Show me around' : 'Next'}
+              {last ? 'Start here' : step === 0 ? 'Show me around' : 'Next'}
             </Button>
           </div>
         </DialogFooter>

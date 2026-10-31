@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { workflows } from './index'
 import type { GenerationParams } from '@/types/workflow'
+import { QWEN21_FUN_MODEL } from './zimage-controlnet'
 
 const base = (over: Partial<GenerationParams>): GenerationParams =>
   ({ prompt: 'x', width: 832, height: 1216, seed: 1, ...over } as GenerationParams)
 
 const sdxlFamily = workflows.filter((w) => w.controlNetKind === 'sdxl-union')
 const zimage = workflows.filter((w) => w.controlNetKind === 'zimage-fun')
+const qwen21 = workflows.filter((w) => w.controlNetKind === 'qwen21-fun')
 const others = workflows.filter((w) => !w.supportsControlNet)
 
 describe('ControlNet/IP-Adapter wiring per family', () => {
@@ -14,8 +16,11 @@ describe('ControlNet/IP-Adapter wiring per family', () => {
     expect(sdxlFamily.map((w) => w.id).sort()).toEqual(['illustrious', 'pony', 'sdxl'])
     expect(zimage.map((w) => w.id).sort()).toEqual(['z-image-turbo'])
     // Krea2 sits here because no Krea2 ControlNet model has been published.
+    expect(qwen21.map((w) => w.id).sort()).toEqual(['qwen21', 'qwen21-turbo'])
     expect(others.map((w) => w.id).sort()).toEqual([
       'anima', 'anima-turbo', 'ernie-turbo', 'krea2-raw', 'krea2-turbo',
+      // The Qwen Edit preset: its canvas is picture 1, ControlNet does not apply.
+      'qwen21-edit',
     ])
   })
 
@@ -66,6 +71,21 @@ describe('ControlNet/IP-Adapter wiring per family', () => {
     it(`${wf.id}: txt2img leaves no zcn: nodes`, () => {
       const g = wf.buildPrompt(base({}))
       expect(g['zcn:apply']).toBeUndefined()
+    })
+  }
+
+  for (const wf of qwen21) {
+    it(`${wf.id}: ControlNet patches the main pass with the Qwen 2.1 Fun Union model`, () => {
+      const g = wf.buildPrompt(base({ controlNet: { mode: 'depth', image: 'r.png', strength: 0.6 } }))
+      expect(g['zcn:patch'].inputs.name).toBe(QWEN21_FUN_MODEL)
+      expect(g['zcn:apply'].class_type).toBe('QwenImageDiffsynthControlnet')
+      expect(g['q:sampler'].inputs.model).toEqual(['zcn:apply', 0])
+      // Main pass only — the HiRes fix keeps the plain model, like Z-Image.
+      expect(g['hires:sample'].inputs.model).toEqual(['q:loras', 0])
+    })
+
+    it(`${wf.id}: txt2img leaves no zcn: nodes`, () => {
+      expect(wf.buildPrompt(base({}))['zcn:apply']).toBeUndefined()
     })
   }
 

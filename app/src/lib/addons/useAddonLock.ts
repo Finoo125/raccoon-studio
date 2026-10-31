@@ -6,6 +6,9 @@ import { useAddonStore } from './store'
 /** Entitlement id for Director mode inside Generate Video. */
 export const LTX_DIRECTOR_ADDON = 'ltx-director'
 
+/** Entitlement id for the Prompt Helper inside Generate Image (id kept from its Prompt Builder days). */
+export const PROMPT_HELPER_ADDON = 'prompt-builder'
+
 /**
  * Is `featureId` locked for this install?
  *

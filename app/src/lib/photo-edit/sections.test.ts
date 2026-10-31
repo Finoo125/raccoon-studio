@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clearSection, sectionStatus, SECTION_ORDER, adjustmentLabel, CONTROL_HINT } from './sections'
+import { clearSection, sectionStatus, SECTION_ORDER, adjustmentLabel, CONTROL_HINT, visibleSections } from './sections'
 import { ADJUSTMENT_KEYS, defaultEditState, ZERO_ADJUSTMENTS } from './types'
 
 describe('sectionStatus', () => {
@@ -139,5 +139,22 @@ describe('CONTROL_HINT', () => {
       expect(hint.length, `"${label}" is ${hint.length} chars`).toBeLessThanOrEqual(64)
       expect(hint.endsWith('.'), `"${label}" should read as a sentence`).toBe(true)
     }
+  })
+})
+
+describe('visibleSections', () => {
+  it('shows every section in Advanced', () => {
+    expect(visibleSections('advanced', defaultEditState())).toEqual(SECTION_ORDER)
+  })
+
+  it('shows the everyday sections in Simple', () => {
+    expect(visibleSections('simple', defaultEditState())).toEqual(['presets', 'light', 'color', 'effects', 'crop'])
+  })
+
+  it('never hides a section that is changing the picture', () => {
+    const state = defaultEditState()
+    state.masks = [{ id: 'm1' } as never]
+    state.slice = { a: { x: 0, y: 0 }, b: { x: 1, y: 1 }, keep: 'a' } as never
+    expect(visibleSections('simple', state)).toEqual(['presets', 'light', 'color', 'effects', 'crop', 'masks', 'slice'])
   })
 })

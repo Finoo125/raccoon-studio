@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import { useState, useEffect } from 'react'
-import { Heart, X, Send, ChevronLeft, ChevronRight, FolderOpen, Maximize2, Download, Pencil, Trash2, Clapperboard, ImagePlus, Film, Loader2, FastForward } from 'lucide-react'
+import { Heart, X, Send, ChevronLeft, ChevronRight, FolderOpen, Maximize2, Download, Pencil, Trash2, Clapperboard, ImagePlus, Film, Loader2, FastForward, ScanFace, Wand2, LayoutGrid } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -11,12 +11,15 @@ import { Separator } from '@/components/ui/separator'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import MoviePickerDialog from './MoviePickerDialog'
 import SendToVideoDialog from '@/components/generation/SendToVideoDialog'
+import FaceSwapDialog from '@/components/video/FaceSwapDialog'
 import { useGalleryStore } from '@/lib/gallery/store'
 import { useSendToVideo } from '@/lib/generation/useSendToVideo'
-import { useContinueVideo, canContinue } from '@/lib/generation/useContinueVideo'
+import { useContinueVideo, canContinue, clipOutputPath, editVideoPrefill } from '@/lib/generation/useContinueVideo'
 import { useRouter } from 'next/navigation'
+import { useStudioStore } from '@/lib/generation/studio-store'
 import { serializeGalleryLoras } from '@/lib/gallery/lora-transfer'
 import { galleryMetadataToGenerationParams, resolveWorkflowFromMetadata } from '@/lib/gallery/reuse-settings'
+import { qwen21EditHref } from '@/lib/workflows/qwen21'
 import { useKiosk } from '@/app/providers'
 
 export default function GalleryInspector() {
@@ -25,10 +28,12 @@ export default function GalleryInspector() {
   const { sendToVideo, busy: videoBusy } = useSendToVideo()
   const continueVideo = useContinueVideo()
   const router = useRouter()
+  const setPrefill = useStudioStore((s) => s.setPrefill)
   // Full-size lightbox shown in front of the gallery when the preview is clicked.
   const [lightbox, setLightbox] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [movieOpen, setMovieOpen] = useState(false)
+  const [swapOpen, setSwapOpen] = useState(false)
   const [sendVideoOpen, setSendVideoOpen] = useState(false)
   const [tagInput, setTagInput] = useState('')
 
@@ -258,6 +263,19 @@ export default function GalleryInspector() {
               <ImagePlus className="h-4 w-4 mr-2" /> Send as base image
             </Button>
           )}
+          {/* Qwen-Image 2.1 Edit with this picture as picture 1 — a plain edit,
+              or the character-sheet chip already on. Generate opens pre-filled;
+              nothing is queued from here. */}
+          {!isVideo && (
+            <>
+              <Button variant="outline" className="w-full h-11 text-sm font-semibold" onClick={() => router.push(qwen21EditHref(selected.url))}>
+                <Wand2 className="h-4 w-4 mr-2" /> Edit with Qwen
+              </Button>
+              <Button variant="outline" className="w-full h-11 text-sm font-semibold" onClick={() => router.push(qwen21EditHref(selected.url, 'sheet'))}>
+                <LayoutGrid className="h-4 w-4 mr-2" /> Character sheet
+              </Button>
+            </>
+          )}
           {isVideo && canContinue(selected) && (
             <Button
               variant="outline"
@@ -265,6 +283,27 @@ export default function GalleryInspector() {
               onClick={() => continueVideo(selected)}
             >
               <FastForward className="h-4 w-4 mr-2" /> Continue this clip
+            </Button>
+          )}
+          {/* Every video in the gallery, not just app-rendered ones: an
+              imported clip loads the same way once it is in ComfyUI's dirs. */}
+          {isVideo && (
+            <Button
+              variant="outline"
+              className="w-full h-11 text-sm font-semibold"
+              onClick={() => setSwapOpen(true)}
+            >
+              <ScanFace className="h-4 w-4 mr-2" /> Swap faces
+            </Button>
+          )}
+          {/* Any family's clip: an H3 edit needs only the frames. */}
+          {isVideo && (
+            <Button
+              variant="outline"
+              className="w-full h-11 text-sm font-semibold"
+              onClick={() => { setPrefill(editVideoPrefill(selected)); router.push('/generate-videos') }}
+            >
+              <Wand2 className="h-4 w-4 mr-2" /> Edit video
             </Button>
           )}
           {/* One button, four destinations — the dialog asks which model and
@@ -477,6 +516,15 @@ export default function GalleryInspector() {
       confirmLabel="Delete" destructive onConfirm={() => void handleDelete()}
     />
     <MoviePickerDialog open={movieOpen} onOpenChange={setMovieOpen} item={{ dir: selected.dir, filename: selected.filename }} />
+    {/* The gallery holds filename and subfolder outright, so the clip is
+        addressed from those rather than parsed back out of its player URL. */}
+    <FaceSwapDialog
+      open={swapOpen}
+      onOpenChange={setSwapOpen}
+      clip={{ file: clipOutputPath(selected), location: 'output' }}
+      clipUrl={selected.url}
+      clipKey={selected.filename.replace(/\.[a-z0-9]+$/i, '')}
+    />
     </>
   )
 }

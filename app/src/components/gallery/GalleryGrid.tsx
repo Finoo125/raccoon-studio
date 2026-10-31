@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Heart, Images, Wand2, Play, Check } from 'lucide-react'
-import { useGalleryStore } from '@/lib/gallery/store'
-import { dateKeyOf } from '@/lib/gallery/folders'
+import { useGalleryStore, visibleImages } from '@/lib/gallery/store'
 import type { GalleryImage } from '@/types/gallery'
+import VideoPoster from './VideoPoster'
 
 const PAD = 16 // p-4 around the grid
 const GAP = 12 // gap-3 between tiles
@@ -21,7 +21,7 @@ function colsForWidth(width: number): number {
 
 /**
  * Windowed image grid: only the rows near the viewport are mounted, so the DOM
- * (and the number of full-size images loaded) stays bounded no matter how many
+ * (and the number of thumbnails loaded) stays bounded no matter how many
  * thousands of images exist. The grid is uniform fixed-aspect, so row geometry
  * is computed directly rather than measured per item.
  */
@@ -34,7 +34,7 @@ export default function GalleryGrid({ onPick }: { onPick?: (img: GalleryImage) =
 
   // Scope to the browsed date folder; null = all images.
   const visible = useMemo(
-    () => (selectedFolder ? images.filter((img) => dateKeyOf(img) === selectedFolder) : images),
+    () => visibleImages(images, selectedFolder),
     [images, selectedFolder],
   )
 
@@ -197,13 +197,8 @@ function GalleryCard({
       <div className="aspect-[3/4] bg-muted relative">
         {img.media === 'video' ? (
           <>
-            {/* preload="metadata" pulls just enough to render the first frame as
-                the tile poster, without streaming the whole clip. */}
-            <video
-              src={img.url}
-              muted
-              playsInline
-              preload="metadata"
+            <VideoPoster
+              video={img}
               className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04]"
             />
             <span className="absolute bottom-2 left-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white">

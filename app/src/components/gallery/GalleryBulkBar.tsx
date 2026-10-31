@@ -6,25 +6,29 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
-import { useGalleryStore } from '@/lib/gallery/store'
+import { useGalleryStore, visibleImages } from '@/lib/gallery/store'
 import { orderClipsForJoin } from '@/lib/video/join'
 
 export default function GalleryBulkBar({ onCompare, onJoined }: { onCompare: () => void; onJoined: () => void }) {
-  const { selectedIds, images, clearSelection, selectAll, removeImages } = useGalleryStore()
+  const { selectedIds, images, selectedFolder, clearSelection, selectAll, removeImages } = useGalleryStore()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [tagOpen, setTagOpen] = useState(false)
   const [tagValue, setTagValue] = useState('')
   const [joining, setJoining] = useState(false)
 
-  if (selectedIds.length === 0) return null
-  const count = selectedIds.length
-  const selectedItems = images.filter((i) => selectedIds.includes(i.id))
+  // Every action works on what is selected AND on screen — one list, so Delete,
+  // Download and the count can never disagree about which files they mean.
+  const visible = visibleImages(images, selectedFolder)
+  const selectedItems = visible.filter((i) => selectedIds.includes(i.id))
+  const ids = selectedItems.map((i) => i.id)
+  const count = ids.length
+  if (count === 0) return null
   const allVideos = selectedItems.length > 0 && selectedItems.every((i) => i.media === 'video')
 
   const doDelete = async () => {
     const res = await fetch('/api/gallery/delete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: selectedIds }),
+      body: JSON.stringify({ ids }),
     })
     const { deleted } = (await res.json()) as { deleted: string[] }
     removeImages(deleted)
@@ -32,14 +36,13 @@ export default function GalleryBulkBar({ onCompare, onJoined }: { onCompare: () 
   }
 
   const doFavorite = async () => {
-    await Promise.all(selectedIds.map((id) =>
+    await Promise.all(ids.map((id) =>
       fetch('/api/gallery/favorite', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, value: true }),
       })))
-    selectedIds.forEach((id) => {
-      const img = images.find((i) => i.id === id)
-      if (img && !img.favorite) useGalleryStore.getState().toggleFavorite(id)
+    selectedItems.forEach((img) => {
+      if (!img.favorite) useGalleryStore.getState().toggleFavorite(img.id)
     })
     toast.success(`Favorited ${count}`)
   }
@@ -49,11 +52,11 @@ export default function GalleryBulkBar({ onCompare, onJoined }: { onCompare: () 
     if (!tag) return
     await fetch('/api/gallery/tags', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: selectedIds, add: tag }),
+      body: JSON.stringify({ ids, add: tag }),
     })
     useGalleryStore.setState((s) => ({
       images: s.images.map((i) =>
-        selectedIds.includes(i.id) && !i.tags?.includes(tag)
+        ids.includes(i.id) && !i.tags?.includes(tag)
           ? { ...i, tags: [...(i.tags ?? []), tag] } : i),
     }))
     setTagOpen(false); setTagValue('')
@@ -106,7 +109,7 @@ export default function GalleryBulkBar({ onCompare, onJoined }: { onCompare: () 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border bg-primary/[0.06] px-4 py-2">
       <span className="text-sm font-medium">{count} selected</span>
-      <Button size="sm" variant="ghost" className="h-8 gap-1.5" onClick={() => selectAll(images.map((i) => i.id))}>
+      <Button size="sm" variant="ghost" className="h-8 gap-1.5" onClick={() => selectAll(visible.map((i) => i.id))}>
         <CheckSquare className="h-3.5 w-3.5" /> Select all
       </Button>
       <div className="mx-1 h-5 w-px bg-border" />

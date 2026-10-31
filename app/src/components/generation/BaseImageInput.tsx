@@ -71,40 +71,38 @@ export default function BaseImageInput({
 
   if (!hasBase) {
     return (
-      <div className="space-y-2">
+      <div className="flex items-center gap-2 rounded-xl border border-dashed border-border bg-muted/20 px-3 py-2">
         {inputs}
-        <div className="rounded-xl border border-dashed border-border bg-muted/20 p-3">
-          <div className="mb-2.5 flex items-center gap-2 text-sm font-semibold">
-            <ImagePlus className="h-4 w-4 text-primary" /> Start from an image
-            <span className="text-xs font-normal text-muted-foreground">img2img · inpaint · outpaint</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={openPicker}
-              disabled={busy}
-              className="flex flex-col items-center gap-1 rounded-lg border border-border bg-background px-2 py-3 text-xs font-medium hover:bg-muted/50 disabled:opacity-60"
-            >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              Upload
-            </button>
-            <Link
-              href="/gallery"
-              className="flex flex-col items-center gap-1 rounded-lg border border-border bg-background px-2 py-3 text-xs font-medium hover:bg-muted/50"
-            >
-              <FolderOpen className="h-4 w-4" /> From gallery
-            </Link>
-            <button
-              type="button"
-              onClick={onUseLastResult}
-              disabled={busy || !lastResultUrl}
-              title={lastResultUrl ? 'Use the most recent generated image' : 'Generate an image first'}
-              className="flex flex-col items-center gap-1 rounded-lg border border-border bg-background px-2 py-3 text-xs font-medium hover:bg-muted/50 disabled:opacity-50"
-            >
-              <History className="h-4 w-4" /> Last result
-            </button>
-          </div>
-        </div>
+        <span
+          className="mr-auto flex items-center gap-2 text-sm font-semibold"
+          title="img2img · inpaint · outpaint"
+        >
+          <ImagePlus className="h-4 w-4 text-primary" /> Start from an image
+        </span>
+        <button
+          type="button"
+          onClick={openPicker}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted/50 disabled:opacity-60"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+          Upload
+        </button>
+        <Link
+          href="/gallery"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted/50"
+        >
+          <FolderOpen className="h-3.5 w-3.5" /> Gallery
+        </Link>
+        <button
+          type="button"
+          onClick={onUseLastResult}
+          disabled={busy || !lastResultUrl}
+          title={lastResultUrl ? 'Use the most recent generated image' : 'Generate an image first'}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted/50 disabled:opacity-50"
+        >
+          <History className="h-3.5 w-3.5" /> Last result
+        </button>
       </div>
     )
   }
