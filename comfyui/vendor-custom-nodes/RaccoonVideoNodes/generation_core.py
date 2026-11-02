@@ -188,7 +188,7 @@ async def generate_prompt(body: dict, *, on_event=None) -> dict:
                     acc.append(cc)
                     await emit({"type": "delta", "text": cc})
 
-        async with aiohttp.ClientSession() as sess:
+        async with aiohttp.ClientSession(headers=llm.auth_headers()) as sess:
             if llm.conn_backend() == "Ollama":
                 # Ollama's native endpoint is the only one where think:false
                 # reliably disables qwen-style reasoning — through the OpenAI

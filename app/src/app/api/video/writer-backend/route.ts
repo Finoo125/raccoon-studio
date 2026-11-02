@@ -3,7 +3,7 @@ import { writerErrorMessage } from '@/lib/ai-writers/errors'
 import { currentLmsPort } from '@/lib/ai-writers/lmstudio'
 import { nodeBackend } from '@/lib/ai-writers/node-backend'
 import { ensureRunning } from '@/lib/ai-writers/start'
-import { serverAddress } from '@/lib/ai-writers/write'
+import { findServer, serverAddress } from '@/lib/ai-writers/write'
 import { parseWriterId } from '@/lib/ai-writers/writer-id'
 import { getComfyUIBase } from '@/lib/comfyui/server-state'
 import { migrateWriterId } from '@/lib/prompt-builder/video-picks'
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
 
   const { ollamaBaseUrl, aiServers } = getSettings()
   const address = ref.kind === 'server' ? serverAddress(ref.server, aiServers) ?? undefined : undefined
-  const backend = nodeBackend(ref, { ollamaBaseUrl, lmsPort: currentLmsPort(), serverAddress: (id) => serverAddress(id, aiServers) })
+  const backend = nodeBackend(ref, { ollamaBaseUrl, lmsPort: currentLmsPort(), server: (id) => findServer(id, aiServers) })
   if (!backend) {
     return fail(ref.kind === 'builtin'
       ? 'The built-in writer can’t write video scripts. Pick another writer.'

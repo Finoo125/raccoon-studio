@@ -33,7 +33,8 @@ export function writerOptions(scan: ScanResult): WriterOption[] {
   for (const s of scan.servers) {
     if (!s.reachable) continue
     for (const m of s.models) {
-      out.push({ id: m.id, name: m.name, detail: s.kind, group: `Server ${hostOf(s.address)}`, app: 'server', off: false, tags: m.tags })
+      const group = s.kind === 'Unsloth Studio' ? s.kind : `Server ${hostOf(s.address)}`
+      out.push({ id: m.id, name: m.name, detail: group === s.kind ? '' : s.kind, group, app: 'server', off: false, tags: m.tags })
     }
   }
   return out
@@ -64,7 +65,10 @@ const driveOf = (root: string) => root.replace(/[\\/]$/, '') || root
 /** "What we found on your PC", one plain row per thing the setup looked for. */
 export function scanRows(scan: ScanResult): ScanRow[] {
   const { gpu, disk, ollama, lmstudio } = scan
-  const servers = scan.servers.map((s) => `${s.kind} at ${hostOf(s.address)} · ${s.reachable ? count(s.models.length) : 'not answering'}`)
+  const servers = scan.servers.map((s) => `${s.kind} at ${hostOf(s.address)} · ${
+    !s.reachable ? 'not answering' : s.needsKey ? 'needs its API key'
+      : s.kind === 'Unsloth Studio' && !s.models.length ? 'no model loaded (load one, or turn on Settings → API → Model auto-switch)'
+        : count(s.models.length)}`)
   return [
     gpu
       ? { key: 'gpu', title: 'Graphics card', state: 'ok', detail: `${gpu.name} · ${gpu.vramGb} GB video memory` }
@@ -92,9 +96,9 @@ export function scanRows(scan: ScanResult): ScanRow[] {
         ? { key: 'lmstudio', title: 'LM Studio', state: 'warn', detail: `Installed · switched off · ${count(lmstudio.models.length)}`, action: 'start-lmstudio' }
         : { key: 'lmstudio', title: 'LM Studio', state: 'none', detail: 'Not installed' },
     servers.length
-      ? { key: 'servers', title: 'Other AI servers', state: scan.servers.some((s) => s.reachable) ? 'ok' : 'warn', detail: servers.join(' · '), action: 'add-address' }
+      ? { key: 'servers', title: 'Other AI servers', state: scan.servers.some((s) => s.reachable && !s.needsKey) ? 'ok' : 'warn', detail: servers.join(' · '), action: 'add-address' }
       : { key: 'servers', title: 'Other AI servers', state: 'none', action: 'add-address',
-          detail: 'llama.cpp, KoboldCpp, Jan and similar: none running on the usual addresses' },
+          detail: 'llama.cpp, KoboldCpp, Jan, Unsloth Studio and similar: none running on the usual addresses' },
   ]
 }
 

@@ -173,7 +173,8 @@ function HelperDialog({ onClose, workflow, prompt, onUse }: {
               </Button>
             </div>
             <AiWriterCard kind={cardKind(scan, picked, { starting, writing: !!busy })} options={options} picked={picked}
-              rendering={rendering} onPick={pickEngine} onSetup={() => setSetupOpen(true)} onStart={(app) => void start(app)} />
+              rendering={rendering} onPick={pickEngine} onSetup={() => setSetupOpen(true)} onStart={(app) => void start(app)}
+              scan={scan} onRescan={rescan} />
           </div>
         </>}
         rows={<>

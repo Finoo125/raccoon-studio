@@ -145,6 +145,27 @@ describe('OpenAI-style servers', () => {
     await addServer('http://127.0.0.1:8080/', deps)
     expect(saved).toHaveLength(1)
   })
+  it('sends a key, keeps only loaded models, and says when the key is missing or wrong (Unsloth Studio)', async () => {
+    let autoSwitch = false
+    const unsloth: typeof fetch = async (input, init) => {
+      const auth = new Headers(init?.headers).get('authorization')
+      if (auth !== 'Bearer sk-unsloth-good') return new Response('', { status: 401 })
+      if (String(input).endsWith('/api/settings/openai-auto-switch')) return Response.json({ enabled: autoSwitch })
+      return Response.json({ data: [{ id: 'unsloth/gemma-4-26B-A4B-it-GGUF', owned_by: 'unsloth-studio', loaded: true },
+        { id: 'ollama/qwen3.5:9b', owned_by: 'unsloth-studio', loaded: false }] })
+    }
+    expect(await listServerModels('http://a', unsloth, 50)).toEqual({ kind: 'AI server', models: [], needsKey: true })
+    expect(await listServerModels('http://a', unsloth, 50, 'sk-unsloth-good')).toEqual({ kind: 'Unsloth Studio', models: ['unsloth/gemma-4-26B-A4B-it-GGUF'] })
+    autoSwitch = true
+    expect(await listServerModels('http://a', unsloth, 50, 'sk-unsloth-good'))
+      .toEqual({ kind: 'Unsloth Studio', models: ['unsloth/gemma-4-26B-A4B-it-GGUF', 'ollama/qwen3.5:9b'] })
+    const saved: { id: string; address: string; apiKey?: string }[] = [{ id: 'old', address: 'http://127.0.0.1:8888', apiKey: 'sk-unsloth-revoked' }]
+    const deps = { fetcher: unsloth, list: () => saved, save: (s: typeof saved) => { saved.splice(0, saved.length, ...s) }, timeoutMs: 50 }
+    expect(await addServer('127.0.0.1:8888', deps)).toEqual({ error: 'This server wants an API key. In Unsloth Studio: Settings → API → Create.' })
+    expect(await addServer('127.0.0.1:8888', deps, 'sk-unsloth-bad')).toEqual({ error: 'The server refused that API key. Check it and try again.' })
+    await addServer('127.0.0.1:8888', deps, ' sk-unsloth-good ')
+    expect(saved).toEqual([{ id: serverIdOf('http://127.0.0.1:8888'), address: 'http://127.0.0.1:8888', apiKey: 'sk-unsloth-good' }])
+  })
 })
 
 describe('scanWriters', () => {
@@ -187,6 +208,7 @@ describe('scanWriters', () => {
       'http://127.0.0.1:11434/api/tags': { models: [{ name: 'qwen3.8-heretic:q5_k_m', size: 19_860_000_000 }, { name: 'nomic-embed-text:latest', size: 1 }] },
       'http://127.0.0.1:11434/api/show': { capabilities: ['completion', 'thinking'] },
       'http://127.0.0.1:8080/v1/models': { data: [{ id: 'qwen3-8b.gguf', owned_by: 'llamacpp' }] },
+      'http://127.0.0.1:8888/v1/models': 401,
     })
     // /api/show answers the same for every model; the embedding is dropped by its name's capabilities below.
     const show: typeof fetch = async (input, init) => {
@@ -205,9 +227,10 @@ describe('scanWriters', () => {
       models: [{ id: 'ollama:qwen3.8-heretic:q5_k_m', name: 'qwen3.8-heretic:q5_k_m', sizeGb: 19.9, tags: ['Uncensored'] }] })
     expect(r.lmstudio).toEqual({ state: 'off', canStart: true, models: [{ id: 'lmstudio:S/pe/pe.gguf', name: 'Prompt Enhancer', tags: [] }] })
     expect(r.servers).toEqual([
-      { id: 'sx', address: 'http://10.0.0.2:5000', kind: 'AI server', saved: true, reachable: false, models: [] },
-      { id: serverIdOf('http://127.0.0.1:8080'), address: 'http://127.0.0.1:8080', kind: 'llama.cpp server', saved: false, reachable: true,
+      { id: 'sx', address: 'http://10.0.0.2:5000', kind: 'AI server', saved: true, reachable: false, needsKey: false, models: [] },
+      { id: serverIdOf('http://127.0.0.1:8080'), address: 'http://127.0.0.1:8080', kind: 'llama.cpp server', saved: false, reachable: true, needsKey: false,
         models: [{ id: `server:${serverIdOf('http://127.0.0.1:8080')}:qwen3-8b.gguf`, name: 'qwen3-8b.gguf', tags: [] }] },
+      { id: serverIdOf('http://127.0.0.1:8888'), address: 'http://127.0.0.1:8888', kind: 'Unsloth Studio', saved: false, reachable: true, needsKey: true, models: [] },
     ])
   })
 

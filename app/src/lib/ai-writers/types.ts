@@ -17,6 +17,8 @@ export interface ScanServer {
   /** The user added it; the others were found on the usual ports. */
   saved: boolean
   reachable: boolean
+  /** It answered 401/403: it wants an API key, or refused the saved one. */
+  needsKey: boolean
   models: WriterModel[]
 }
 

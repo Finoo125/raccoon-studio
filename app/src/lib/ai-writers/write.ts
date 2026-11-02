@@ -2,13 +2,13 @@ import { chatText, type ChatMessage } from '@/lib/director/ollama'
 import { runBuiltinWriter } from '@/lib/prompt-builder/writer'
 import { getSettings } from '@/lib/settings/settings'
 import { currentLmsPort } from './lmstudio'
-import { PROBE_PORTS, probeAddress, serverIdOf, type SavedServer } from './openai-server'
+import { authHeaders, PROBE_PORTS, probeAddress, serverIdOf, type SavedServer } from './openai-server'
 import { parseWriterId } from './writer-id'
 
 export interface WriteDeps {
   builtin: (messages: ChatMessage[]) => Promise<string>
   ollama: (model: string, messages: ChatMessage[], opts: { think?: boolean }) => Promise<string>
-  openai: (baseUrl: string, model: string, messages: ChatMessage[], extra: Record<string, unknown>) => Promise<string>
+  openai: (baseUrl: string, model: string, messages: ChatMessage[], extra: Record<string, unknown>, apiKey?: string) => Promise<string>
   thinks: (model: string) => Promise<boolean>
   saved: () => SavedServer[]
   lmsPort: () => number
@@ -17,11 +17,15 @@ export interface WriteDeps {
 const lmsQueue = ((globalThis as unknown as { __raccoonLmsQueue?: { tail: Promise<unknown> } }).__raccoonLmsQueue ??=
   { tail: Promise.resolve() })
 
-/** A server id → its address: one the user added, or one of the usual local ports. Never a URL from a request. */
-export function serverAddress(id: string, saved: readonly SavedServer[]): string | null {
-  const known = [...saved.map((s) => s.address), ...PROBE_PORTS.map((p) => probeAddress(p.port))]
-  return saved.find((s) => s.id === id)?.address ?? known.find((a) => serverIdOf(a) === id) ?? null
+/** A server id → its address and key: one the user added, or one of the usual local ports. Never a URL from a request. */
+export function findServer(id: string, saved: readonly SavedServer[]): { address: string; apiKey?: string } | null {
+  const hit = saved.find((s) => s.id === id)
+  if (hit) return hit
+  const address = PROBE_PORTS.map((p) => probeAddress(p.port)).find((a) => serverIdOf(a) === id)
+  return address ? { address } : null
 }
+
+export const serverAddress = (id: string, saved: readonly SavedServer[]) => findServer(id, saved)?.address ?? null
 
 /** One answer from the writer an id names. Start a switched-off app first (ensureRunning) — once, not per version. */
 export async function writeWith(id: string, messages: ChatMessage[], over: Partial<WriteDeps> = {}): Promise<string> {
@@ -44,19 +48,25 @@ export async function writeWith(id: string, messages: ChatMessage[], over: Parti
       return turn
     }
     case 'server': {
-      const address = serverAddress(ref.server, d.saved())
-      if (!address) throw new Error('That AI server isn’t in the list any more. Scan again.')
-      return d.openai(address, ref.model, messages, {})
+      const server = findServer(ref.server, d.saved())
+      if (!server) throw new Error('That AI server isn’t in the list any more. Scan again.')
+      // A thinking model (qwen3.5 in Unsloth Studio) otherwise spends the whole answer on
+      // reasoning_content and leaves `content` empty. A server that refuses the switch gets a plain retry.
+      const noThink = { chat_template_kwargs: { enable_thinking: false } }
+      return d.openai(server.address, ref.model, messages, noThink, server.apiKey).catch((err: unknown) => {
+        if (!/^400: /.test(err instanceof Error ? err.message : '')) throw err
+        return d.openai(server.address, ref.model, messages, {}, server.apiKey)
+      })
     }
   }
 }
 
 /** An OpenAI-style chat call (LM Studio, llama.cpp, KoboldCpp, Jan, …). */
 export async function chatOpenAI(baseUrl: string, model: string, messages: ChatMessage[], extra: Record<string, unknown> = {},
-  fetcher: typeof fetch = fetch, timeoutMs = 90_000): Promise<string> {
+  fetcher: typeof fetch = fetch, timeoutMs = 90_000, apiKey?: string): Promise<string> {
   const res = await fetcher(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders(apiKey) },
     body: JSON.stringify({ model, messages: messages.map(({ role, content }) => ({ role, content })),
       temperature: 0.8, max_tokens: 800, stream: false, ...extra }),
     signal: AbortSignal.timeout(timeoutMs),
@@ -90,7 +100,7 @@ function defaults(): WriteDeps {
   return {
     builtin: (m) => runBuiltinWriter(m),
     ollama: (model, m, opts) => chatText(model, m, undefined, opts),
-    openai: (base, model, m, extra) => chatOpenAI(base, model, m, extra),
+    openai: (base, model, m, extra, apiKey) => chatOpenAI(base, model, m, extra, fetch, 90_000, apiKey),
     thinks: ollamaThinks,
     saved: () => getSettings().aiServers,
     lmsPort: currentLmsPort,

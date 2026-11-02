@@ -86,7 +86,7 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
   const [jobs, setJobs] = useState<SetupJob[]>([])
   const [mine, setMine] = useState<ReadonlySet<string>>(new Set())
   const [tier, setTier] = useState<Tier | null>(null)
-  const [addr, setAddr] = useState<{ open: boolean; value: string; error?: string; busy?: boolean }>({ open: false, value: 'http://127.0.0.1:8080' })
+  const [addr, setAddr] = useState<{ open: boolean; value: string; key: string; error?: string; busy?: boolean }>({ open: false, value: 'http://127.0.0.1:8080', key: '' })
   const [manual, setManual] = useState(false)
   const [copied, setCopied] = useState(false)
   // Kinds that finished during this opening: their cards stay to show the result.
@@ -178,10 +178,10 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
 
   const addServer = async () => {
     setAddr((a) => ({ ...a, busy: true, error: undefined }))
-    const r = await fetch('/api/ai-writers/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: addr.value }) })
+    const r = await fetch('/api/ai-writers/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: addr.value, apiKey: addr.key }) })
     const j = (await r.json().catch(() => ({}))) as { error?: string }
     if (!r.ok) { setAddr((a) => ({ ...a, busy: false, error: j.error ?? 'That did not work' })); return }
-    setAddr({ open: false, value: 'http://127.0.0.1:8080' })
+    setAddr({ open: false, value: 'http://127.0.0.1:8080', key: '' })
     await onRescan()
   }
 
@@ -293,7 +293,11 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
                     {!scanning && !busy && r.action && (
                       <span className="col-start-2 sm:col-start-3">
                         {r.action === 'add-address'
-                          ? <Button type="button" size="xs" variant="outline" onClick={() => setAddr((a) => ({ ...a, open: true, error: undefined }))}>
+                          ? <Button type="button" size="xs" variant="outline" onClick={() => {
+                              // A server that wants its key opens the form on its own address.
+                              const keyless = scan?.servers.find((s) => s.needsKey)
+                              setAddr((a) => ({ ...a, open: true, error: undefined, value: keyless?.address ?? a.value }))
+                            }}>
                               {scan?.servers.length ? 'Add another' : 'Add an address'}
                             </Button>
                           : <Button type="button" size="xs" variant="outline"
@@ -314,6 +318,10 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
                   <Input id="ai-server-address" value={addr.value} spellCheck={false} className="h-8 min-w-0 flex-1 font-mono text-xs"
                     onChange={(e) => setAddr((a) => ({ ...a, value: e.target.value, error: undefined }))}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !addr.busy) void addServer() }} />
+                  <Input aria-label="API key" type="password" placeholder="API key, if it wants one" value={addr.key} spellCheck={false} autoComplete="off"
+                    className="h-8 min-w-0 flex-1 font-mono text-xs"
+                    onChange={(e) => setAddr((a) => ({ ...a, key: e.target.value, error: undefined }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !addr.busy) void addServer() }} />
                   <Button type="button" size="sm" disabled={addr.busy} onClick={() => void addServer()}>
                     {addr.busy ? <Loader2 className="animate-spin" /> : null} Connect
                   </Button>
@@ -321,7 +329,8 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
                 </div>
                 {addr.error && <p className="text-xs text-amber-400">{addr.error}</p>}
                 <p className="text-[11px] text-muted-foreground">
-                  Any server with the OpenAI-style interface works: llama.cpp, KoboldCpp, Jan, text-generation-webui, vLLM. We remember it and check it on every scan.
+                  Any server with the OpenAI-style interface works: llama.cpp, KoboldCpp, Jan, text-generation-webui, vLLM, Unsloth Studio. We remember it and check it on every scan.
+                  Unsloth Studio wants a key: Settings → API → Create, then load a model on its Chat page.
                 </p>
               </div>
             )}

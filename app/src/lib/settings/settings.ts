@@ -15,7 +15,7 @@ export interface AppSettings {
    */
   sharedModelsDir: string
   /** AI servers the user added in the Prompt Helper's writer setup (llama.cpp and similar). */
-  aiServers: { id: string; address: string }[]
+  aiServers: { id: string; address: string; apiKey?: string }[]
 }
 
 const num = (v: string | undefined, d: number): number => {

@@ -185,7 +185,7 @@ export default function VideoEditHelper({ onClose }: { onClose: () => void }) {
             </p>
             <AiWriterCard kind={cardKind(scan, picked, { starting, writing: busy })} options={writers} picked={picked}
               rendering={false} offerBuiltin={false} onPick={setChosen} onSetup={() => setSetupOpen(true)}
-              onStart={(app) => void start(app)} />
+              onStart={(app) => void start(app)} scan={scan} onRescan={rescan} />
             {showsFrame && sees === false && (
               <p className="text-[11px] text-amber-400" data-writer-blind>
                 The writer can’t see your clip — it keeps the face, pose, motion and setting in general words.

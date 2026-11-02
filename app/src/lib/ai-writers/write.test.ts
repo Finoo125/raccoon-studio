@@ -17,6 +17,8 @@ function deps(over: Partial<WriteDeps> = {}): WriteDeps {
   }
 }
 
+const noThink = { chat_template_kwargs: { enable_thinking: false } }
+
 describe('writeWith', () => {
   it('runs the built-in writer in ComfyUI', async () => {
     const d = deps()
@@ -59,9 +61,22 @@ describe('writeWith', () => {
   it('finds a server by id among the usual ports and the saved ones', async () => {
     const d = deps()
     await writeWith(`server:${serverIdOf('http://127.0.0.1:8080')}:qwen3-8b.gguf`, msgs, d)
-    expect(d.openai).toHaveBeenLastCalledWith('http://127.0.0.1:8080', 'qwen3-8b.gguf', msgs, {})
+    expect(d.openai).toHaveBeenLastCalledWith('http://127.0.0.1:8080', 'qwen3-8b.gguf', msgs, noThink, undefined)
     await writeWith('server:sx:m', msgs, d)
-    expect(d.openai).toHaveBeenLastCalledWith('http://10.0.0.2:5000', 'm', msgs, {})
+    expect(d.openai).toHaveBeenLastCalledWith('http://10.0.0.2:5000', 'm', msgs, noThink, undefined)
+  })
+  it('sends a saved server its key', async () => {
+    const d = deps({ saved: () => [{ id: 'su', address: 'http://127.0.0.1:8888', apiKey: 'sk-unsloth-x' }] })
+    await writeWith('server:su:unsloth/gemma-4-26B-A4B-it-GGUF', msgs, d)
+    expect(d.openai).toHaveBeenLastCalledWith('http://127.0.0.1:8888', 'unsloth/gemma-4-26B-A4B-it-GGUF', msgs, noThink, 'sk-unsloth-x')
+  })
+  it('asks a server once without the thinking switch when it refuses it', async () => {
+    const d = deps({ openai: vi.fn().mockRejectedValueOnce(new Error('400: unknown field')).mockResolvedValue('plain') })
+    expect(await writeWith('server:sx:m', msgs, d)).toBe('plain')
+    expect(d.openai).toHaveBeenLastCalledWith('http://10.0.0.2:5000', 'm', msgs, {}, undefined)
+    const e = deps({ openai: vi.fn().mockRejectedValue(new Error('500: boom')) })
+    await expect(writeWith('server:sx:m', msgs, e)).rejects.toThrow('500: boom')
+    expect(e.openai).toHaveBeenCalledTimes(1)
   })
   it('never contacts a server it does not know', async () => {
     const d = deps()

@@ -193,6 +193,7 @@ def register_routes():
             remote_model=body.get("remote_model"),
             models_dir=body.get("models_dir"),
             llama_exe=body.get("llama_exe"),
+            api_key=body.get("api_key"),
         )
         return web.json_response({"ok": True, **res})
 

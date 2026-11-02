@@ -54,7 +54,14 @@ CONN = {
     "remote_model": "local",                 # model id for connect-only backends
     "models_dir":   MODELS_DIR,              # gguf folder for managed backend
     "llama_exe":    LLAMA_EXE,               # path to llama-server.exe
+    "api_key":      "",                      # Bearer key (Unsloth Studio); "" = none
 }
+
+
+def auth_headers():
+    """The picked server's key, for servers that want one (Unsloth Studio)."""
+    key = CONN.get("api_key") or ""
+    return {"Authorization": "Bearer " + key} if key else {}
 
 
 def is_managed(backend=None):
@@ -81,7 +88,7 @@ def conn_llama_exe():
     return CONN.get("llama_exe") or LLAMA_EXE
 
 
-def set_conn(backend=None, server_url=None, remote_model=None, models_dir=None, llama_exe=None):
+def set_conn(backend=None, server_url=None, remote_model=None, models_dir=None, llama_exe=None, api_key=None):
     """The cog panel's single entry point. Updates shared CONN, frees a managed
     server if we're switching away from managed, and returns a status dict the
     UI uses for its green/red dot. EVERY brain sees the change immediately."""
@@ -91,6 +98,8 @@ def set_conn(backend=None, server_url=None, remote_model=None, models_dir=None, 
     if not url:
         url = DEFAULT_PORTS.get(CONN["backend"], DEFAULT_URL)
     CONN["server_url"] = url.rstrip("/")
+    if api_key is not None:
+        CONN["api_key"] = api_key.strip()
     if remote_model is not None:
         CONN["remote_model"] = (remote_model or "local").strip() or "local"
     if models_dir:
@@ -123,7 +132,7 @@ def is_healthy(server_url=DEFAULT_URL, backend="llama.cpp (managed)"):
     path = {"Ollama": "/api/tags",
             "LM Studio (OpenAI-compatible)": "/v1/models"}.get(backend, "/health")
     try:
-        req = urllib.request.Request(server_url.rstrip("/") + path)
+        req = urllib.request.Request(server_url.rstrip("/") + path, headers=auth_headers())
         with urllib.request.urlopen(req, timeout=3) as r:
             return r.status == 200
     except Exception:
@@ -260,7 +269,7 @@ def chat(messages, *, temperature=0.8, max_tokens=1024, seed=None,
         payload.update(extra)
     data = _json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(conn_url() + "/v1/chat/completions", data=data,
-                                 headers={"Content-Type": "application/json"},
+                                 headers={"Content-Type": "application/json", **auth_headers()},
                                  method="POST")
     with urllib.request.urlopen(req, timeout=180) as r:
         resp = _json.loads(r.read().decode("utf-8"))
@@ -307,7 +316,7 @@ def _evict_remote():
             body = _json.dumps({"model": model, "ttl": 0, "max_tokens": 1,
                                 "messages": [{"role": "user", "content": "."}]}).encode()
             req = urllib.request.Request(base + "/v1/chat/completions", data=body,
-                                         headers={"Content-Type": "application/json"},
+                                         headers={"Content-Type": "application/json", **auth_headers()},
                                          method="POST")
             with urllib.request.urlopen(req, timeout=15) as r:
                 ok = ok or (r.status == 200)

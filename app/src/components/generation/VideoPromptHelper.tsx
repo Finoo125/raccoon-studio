@@ -250,7 +250,8 @@ function HelperDialog({ onClose }: { onClose: () => void }) {
             )}
             <AiWriterCard kind={cardKind(scan, picked, { starting, writing: busy })} options={writers} picked={picked}
               rendering={false} offerBuiltin={false} writingLabel="Writing your script…"
-              onPick={setChosen} onSetup={() => setSetupOpen(true)} onStart={(app) => void start(app)} />
+              onPick={setChosen} onSetup={() => setSetupOpen(true)} onStart={(app) => void start(app)}
+              scan={scan} onRescan={rescan} />
             {blind && (
               <p className="text-[11px] text-amber-400" data-writer-blind>
                 This model can’t see pictures — pick one that can, like qwen3.5.

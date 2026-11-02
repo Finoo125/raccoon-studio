@@ -1,7 +1,10 @@
 'use client'
 
-import { Check, Download, Loader2, Pause } from 'lucide-react'
+import { useState } from 'react'
+import { Check, Download, KeyRound, Loader2, Pause } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import type { ScanServer } from '@/lib/ai-writers/types'
 import { startsByItself, type CardKind, type WriterApp, type WriterOption } from '@/lib/ai-writers/view'
 
 export const APP_NAME: Record<WriterApp, string> = { builtin: 'Raccoon Studio', ollama: 'Ollama', lmstudio: 'LM Studio', server: 'your AI server' }
@@ -27,11 +30,47 @@ function WriterSelect({ options, picked, onPick, disabled }: {
 }
 
 /**
+ * A server the scan found that wants an API key (Unsloth Studio), asked for right
+ * here so nobody has to find the setup's "Add an address". Saved the same way.
+ */
+function ServerKeyField({ server, onSaved }: { server: ScanServer; onSaved: () => Promise<unknown> }) {
+  const [key, setKey] = useState('')
+  const [state, setState] = useState<{ busy?: boolean; error?: string }>({})
+  const save = async () => {
+    setState({ busy: true })
+    const r = await fetch('/api/ai-writers/servers', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: server.address, apiKey: key }),
+    }).catch(() => null)
+    const j = (await r?.json().catch(() => ({}))) as { error?: string } | undefined
+    if (!r?.ok) { setState({ error: j?.error ?? 'That did not work' }); return }
+    await onSaved()
+  }
+  const unsloth = server.kind === 'Unsloth Studio'
+  return (
+    <div className="space-y-1.5 rounded-md border border-amber-500/40 p-2" data-server-key>
+      <p className="flex items-center gap-1.5 text-[12px] font-semibold"><KeyRound className="h-3.5 w-3.5 text-amber-400" /> {server.kind} found — it needs its API key</p>
+      <div className="flex gap-1.5">
+        <Input aria-label={`${server.kind} API key`} type="password" autoComplete="off" spellCheck={false} value={key}
+          placeholder={unsloth ? 'sk-unsloth-…' : 'API key'} className="h-7 min-w-0 flex-1 font-mono text-xs"
+          onChange={(e) => { setKey(e.target.value); setState({}) }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && key.trim() && !state.busy) void save() }} />
+        <Button type="button" size="xs" disabled={!key.trim() || state.busy} onClick={() => void save()}>
+          {state.busy ? <Loader2 className="animate-spin" /> : null} Connect
+        </Button>
+      </div>
+      {state.error
+        ? <p className="text-[11px] text-amber-400">{state.error}</p>
+        : unsloth && <p className="text-[11px] text-muted-foreground">In Unsloth Studio: your avatar (bottom left) → Settings → API → Create, then paste it here.</p>}
+    </div>
+  )
+}
+
+/**
  * The writing bar's AI writer: which writer writes, whether it can right now,
  * and the one button that fixes it when it cannot.
  */
 export default function AiWriterCard({ kind, options, picked, rendering, onPick, onSetup, onStart,
-  offerBuiltin = true, writingLabel = 'Writing 3 versions…' }: {
+  offerBuiltin = true, writingLabel = 'Writing 3 versions…', scan, onRescan }: {
   kind: CardKind
   options: readonly WriterOption[]
   picked: WriterOption | null
@@ -44,6 +83,9 @@ export default function AiWriterCard({ kind, options, picked, rendering, onPick,
   offerBuiltin?: boolean
   /** The card's title while a write runs. */
   writingLabel?: string
+  /** The scan's servers: one that wants a key gets a key field; an idle Unsloth gets its hint. */
+  scan?: { servers: ScanServer[] } | null
+  onRescan?: () => Promise<unknown>
 }) {
   const more = <Button type="button" size="xs" variant="ghost" onClick={onSetup}>Set up or find more</Button>
   const icon = (tone: 'ok' | 'warn' | 'busy', I: typeof Check) => (
@@ -62,6 +104,9 @@ export default function AiWriterCard({ kind, options, picked, rendering, onPick,
     </div>
   )
   const app = picked ? APP_NAME[picked.app] : ''
+  const keyless = scan?.servers.find((s) => s.reachable && s.needsKey)
+  const idleUnsloth = scan?.servers.find((s) => s.reachable && !s.needsKey && s.kind === 'Unsloth Studio' && !s.models.length)
+  const busy = kind === 'loading' || kind === 'writing' || kind === 'starting'
 
   return (
     <div className="space-y-2 rounded-lg border border-border bg-background/60 p-2.5" aria-live="polite" data-ai-writer={kind}>
@@ -98,6 +143,15 @@ export default function AiWriterCard({ kind, options, picked, rendering, onPick,
             </div>
           )}
         </>
+      )}
+      {!busy && keyless && onRescan && <ServerKeyField key={keyless.id} server={keyless} onSaved={onRescan} />}
+      {!busy && idleUnsloth && (
+        <div className="space-y-1.5" data-unsloth-idle>
+          <p className="text-[11px] text-amber-400">
+            Unsloth Studio has no model loaded. Load one on its Chat page, or turn on Settings → API → Model auto-switch.
+          </p>
+          {onRescan && <Button type="button" size="xs" variant="outline" onClick={() => void onRescan()}>Check again</Button>}
+        </div>
       )}
     </div>
   )

@@ -64,10 +64,12 @@ export async function scanWriters(over: Partial<ScanDeps> = {}): Promise<ScanRes
     probeOllama(d.ollamaUrl, d.fetcher, ms),
     probeLms(d.lmsPort, d.fetcher, ms),
     Promise.all([
-      ...d.savedServers.map(async (s) => ({ s, saved: true, r: await listServerModels(s.address, d.fetcher, ms) })),
+      ...d.savedServers.map(async (s) => ({ s, saved: true, r: await listServerModels(s.address, d.fetcher, ms, s.apiKey) })),
       ...PROBE_PORTS.filter((p) => !d.savedServers.some((s) => s.address === probeAddress(p.port))).map(async (p) => {
         const address = probeAddress(p.port)
-        return { s: { id: serverIdOf(address), address }, saved: false, r: await listServerModels(address, d.fetcher, ms) }
+        const r = await listServerModels(address, d.fetcher, ms)
+        // The port names the program when its answer does not (Unsloth Studio answers only with its key).
+        return { s: { id: serverIdOf(address), address }, saved: false, r: r && r.kind === 'AI server' ? { ...r, kind: p.kind } : r }
       }),
     ]),
     d.modelsDir ? freeGb(d.modelsDir) : Promise.resolve(null),
@@ -98,7 +100,7 @@ export async function scanWriters(over: Partial<ScanDeps> = {}): Promise<ScanRes
   const servers: ScanServer[] = found
     .filter((f) => f.saved || f.r)
     .map(({ s, saved, r }) => ({
-      id: s.id, address: s.address, kind: r?.kind ?? 'AI server', saved, reachable: !!r,
+      id: s.id, address: s.address, kind: r?.kind ?? 'AI server', saved, reachable: !!r, needsKey: !!r?.needsKey,
       models: (r?.models ?? []).map((m) => ({ id: writerIdOf({ kind: 'server', server: s.id, model: m }), name: m, tags: tagsFor(m) })),
     }))
 

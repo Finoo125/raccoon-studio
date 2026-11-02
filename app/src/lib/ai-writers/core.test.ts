@@ -49,9 +49,9 @@ const found: ScanResult = {
     { id: 'lmstudio:Sulphur/pe/pe.gguf', name: 'Sulphur Prompt Enhancer', sizeGb: 10.4, tags: [] },
   ] },
   servers: [
-    { id: 'sa', address: 'http://127.0.0.1:8080', kind: 'llama.cpp server', saved: false, reachable: true,
+    { id: 'sa', address: 'http://127.0.0.1:8080', kind: 'llama.cpp server', saved: false, reachable: true, needsKey: false,
       models: [{ id: 'server:sa:qwen3-8b.gguf', name: 'qwen3-8b.gguf', tags: [] }] },
-    { id: 'sb', address: 'http://192.168.1.20:5001', kind: 'AI server', saved: true, reachable: false, models: [] },
+    { id: 'sb', address: 'http://192.168.1.20:5001', kind: 'AI server', saved: true, reachable: false, needsKey: false, models: [] },
   ],
 }
 
@@ -138,7 +138,7 @@ describe('scanRows', () => {
     expect(r.ollama).toMatchObject({ state: 'none', detail: 'Not installed' })
     expect(r.lmstudio).toMatchObject({ state: 'none', detail: 'Not installed' })
     expect(r.servers).toMatchObject({ state: 'none', action: 'add-address',
-      detail: 'llama.cpp, KoboldCpp, Jan and similar: none running on the usual addresses' })
+      detail: 'llama.cpp, KoboldCpp, Jan, Unsloth Studio and similar: none running on the usual addresses' })
   })
   it('reports what runs, what is switched off, and offers to start it', () => {
     const r = rows({ ...found, gpu: { name: 'NVIDIA GeForce RTX 5090', vramGb: 31.8 }, disk: { path: 'C:\\', freeGb: 176.8 } })

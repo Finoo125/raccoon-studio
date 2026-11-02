@@ -4,6 +4,8 @@ export interface NodeBackend {
   backend: 'Ollama' | 'LM Studio (OpenAI-compatible)'
   server_url: string
   remote_model: string
+  /** Always sent, so switching away from a keyed server clears its key in the node. */
+  api_key: string
 }
 
 /**
@@ -13,14 +15,14 @@ export interface NodeBackend {
  */
 export function nodeBackend(
   ref: WriterRef,
-  d: { ollamaBaseUrl: string; lmsPort: number; serverAddress: (id: string) => string | null },
+  d: { ollamaBaseUrl: string; lmsPort: number; server: (id: string) => { address: string; apiKey?: string } | null },
 ): NodeBackend | null {
   switch (ref.kind) {
-    case 'ollama': return { backend: 'Ollama', server_url: d.ollamaBaseUrl, remote_model: ref.model }
-    case 'lmstudio': return { backend: 'LM Studio (OpenAI-compatible)', server_url: `http://127.0.0.1:${d.lmsPort}`, remote_model: ref.model }
+    case 'ollama': return { backend: 'Ollama', server_url: d.ollamaBaseUrl, remote_model: ref.model, api_key: '' }
+    case 'lmstudio': return { backend: 'LM Studio (OpenAI-compatible)', server_url: `http://127.0.0.1:${d.lmsPort}`, remote_model: ref.model, api_key: '' }
     case 'server': {
-      const address = d.serverAddress(ref.server)
-      return address ? { backend: 'LM Studio (OpenAI-compatible)', server_url: address, remote_model: ref.model } : null
+      const s = d.server(ref.server)
+      return s ? { backend: 'LM Studio (OpenAI-compatible)', server_url: s.address, remote_model: ref.model, api_key: s.apiKey ?? '' } : null
     }
     default: return null
   }

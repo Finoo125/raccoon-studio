@@ -45,7 +45,7 @@ describe('POST /api/video/writer-backend', () => {
     expect(res.status).toBe(200)
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('http://comfy:8188/rvn/set_backend')
-    expect(JSON.parse(init.body)).toEqual({ backend: 'Ollama', server_url: 'http://127.0.0.1:11434', remote_model: 'qwen3.5:9b' })
+    expect(JSON.parse(init.body)).toEqual({ backend: 'Ollama', server_url: 'http://127.0.0.1:11434', remote_model: 'qwen3.5:9b', api_key: '' })
   })
 
   it('treats a bare Ollama model name as Ollama (old saved forms)', async () => {
