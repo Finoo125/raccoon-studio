@@ -87,6 +87,7 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
   const [mine, setMine] = useState<ReadonlySet<string>>(new Set())
   const [tier, setTier] = useState<Tier | null>(null)
   const [addr, setAddr] = useState<{ open: boolean; value: string; key: string; error?: string; busy?: boolean }>({ open: false, value: 'http://127.0.0.1:8080', key: '' })
+  const [removing, setRemoving] = useState<string | null>(null)
   const [manual, setManual] = useState(false)
   const [copied, setCopied] = useState(false)
   // Kinds that finished during this opening: their cards stay to show the result.
@@ -183,6 +184,14 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
     if (!r.ok) { setAddr((a) => ({ ...a, busy: false, error: j.error ?? 'That did not work' })); return }
     setAddr({ open: false, value: 'http://127.0.0.1:8080', key: '' })
     await onRescan()
+  }
+
+  const removeServer = async (id: string) => {
+    setRemoving(id)
+    const r = await fetch('/api/ai-writers/servers', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).catch(() => null)
+    if (r?.ok) await onRescan()
+    else toast.error('That server could not be removed')
+    setRemoving(null)
   }
 
   const copyCmd = async () => {
@@ -309,6 +318,14 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
                   </div>
                 )
               })}
+              {scan?.servers.filter((s) => s.saved).map((s) => (
+                <div key={s.id} data-saved-server={s.address} className="flex items-center gap-3 border-t border-border py-1.5 pl-[50px] pr-3.5">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{s.address}</span>
+                  <Button type="button" size="xs" variant="ghost" aria-label={`Remove ${s.address}`} disabled={scanning || !!removing} onClick={() => void removeServer(s.id)}>
+                    {removing === s.id ? <Loader2 className="animate-spin" /> : null} Remove
+                  </Button>
+                </div>
+              ))}
               {!scan && <p className="flex items-center gap-2 px-3.5 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Looking…</p>}
             </div>
             {addr.open && (
@@ -416,7 +433,7 @@ export default function AiWriterSetup({ open, onClose, scan, onRescan, offerBuil
           </p>
           {options.length > 0 ? (
             <>
-              <Button type="button" variant="outline" disabled={!pick || test?.state === 'running'} onClick={() => void runTest()}>Test write</Button>
+              <Button type="button" variant="outline" disabled={!options.some((o) => o.id === pick) || test?.state === 'running'} onClick={() => void runTest()}>Test write</Button>
               <Button type="button" disabled={!options.some((o) => o.id === pick)} onClick={() => { onUse(pick); onClose() }}>Use this writer</Button>
             </>
           ) : (
